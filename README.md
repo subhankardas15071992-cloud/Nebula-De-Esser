@@ -11,6 +11,8 @@ Nebula DeEsser is a high-performance, pure 64-bit CLAP de-esser plugin built for
 
 ---
 
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/32db7293-7599-4178-9a99-fa1171af4ccd" />
+
 ## Features
 
 ### Detection & Metering
