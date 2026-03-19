@@ -4,18 +4,34 @@ on:
   push:
     branches: [main, master]
   pull_request:
-  workflow_dispatch:   # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
-  # ─── Linux 64-bit ────────────────────────────────────────────────────────
+  # ─── Linux 64-bit ─────────────────────────────────────────────────────────
   build-linux:
     name: Linux x86_64
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            pkg-config
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -24,7 +40,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: linux-cargo-${{ hashFiles('Cargo.lock') }}
+          key: linux-cargo-${{ hashFiles('Cargo.toml') }}
           restore-keys: linux-cargo-
 
       - name: Install cargo-nih-plug
@@ -42,10 +58,12 @@ jobs:
           path: target/bundled/*.clap
           if-no-files-found: error
 
-  # ─── Windows 64-bit ──────────────────────────────────────────────────────
+  # ─── Windows 64-bit ───────────────────────────────────────────────────────
   build-windows:
     name: Windows x86_64
     runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
@@ -58,10 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            C:\Users\runneradmin\.cargo\registry
+            C:\Users\runneradmin\.cargo\git
             target
-          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
+          key: windows-cargo-${{ hashFiles('Cargo.toml') }}
           restore-keys: windows-cargo-
 
       - name: Install cargo-nih-plug
@@ -79,10 +97,12 @@ jobs:
           path: target/bundled/*.clap
           if-no-files-found: error
 
-  # ─── macOS Universal ─────────────────────────────────────────────────────
+  # ─── macOS Universal ──────────────────────────────────────────────────────
   build-mac:
     name: macOS Universal (arm64 + x86_64)
     runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +118,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: mac-cargo-${{ hashFiles('Cargo.lock') }}
+          key: mac-cargo-${{ hashFiles('Cargo.toml') }}
           restore-keys: mac-cargo-
 
       - name: Install cargo-nih-plug
