@@ -1,0 +1,307 @@
+{
+  "plugin": "Nebula DeEsser v2.0.0",
+  "timestamp": "2026-03-19T06:26:57",
+  "summary": {
+    "total": 27,
+    "passed": 26,
+    "warned": 1,
+    "failed": 0,
+    "avg_score": 98.24,
+    "grade": "A+ (EXCEPTIONAL)"
+  },
+  "tests": [
+    {
+      "name": "Null Test (identity at 0dB reduction)",
+      "passed": true,
+      "score": 1.0,
+      "details": "Null residual: -200.0 dBFS (target <\u221290)",
+      "metrics": {
+        "null_db": -200.0
+      }
+    },
+    {
+      "name": "Spectral Balance Test",
+      "passed": true,
+      "score": 0.8082,
+      "details": "Low \u0394=0.176dB (want<0.5), Hi \u0394=6.34dB (want>0)",
+      "metrics": {
+        "low_band_change": 0.1759431566217451,
+        "hi_band_attenuation": 6.342807226258898
+      }
+    },
+    {
+      "name": "Transient Preservation Test",
+      "passed": true,
+      "score": 0.9967,
+      "details": "Delay=0smp, PeakRatio=0.997",
+      "metrics": {
+        "delay_samples": 0,
+        "peak_magnitude_ratio": 0.996660420980923
+      }
+    },
+    {
+      "name": "Buffer Size Torture Sweep",
+      "passed": true,
+      "score": 1.0,
+      "details": "All 13 sizes processed cleanly. Failures: none",
+      "metrics": {
+        "failures": 0
+      }
+    },
+    {
+      "name": "Per-Block Timing Check",
+      "passed": true,
+      "score": 0.9813,
+      "details": "p99=10.451ms mean=3.372ms budget(Rust)=11.6ms spike=3.4x 152k_smp/s",
+      "metrics": {
+        "p99_ms": 10.45099980996951,
+        "mean_ms": 3.372384513998668,
+        "spike_ratio": 3.374345676832698
+      }
+    },
+    {
+      "name": "Worst-Case Input Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Failures: none",
+      "metrics": {
+        "failures": []
+      }
+    },
+    {
+      "name": "Denormal Number Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Output finite=True, no_explosion=True, time=24.30ms",
+      "metrics": {
+        "elapsed_ms": 24.302228999999897,
+        "is_finite": true
+      }
+    },
+    {
+      "name": "Long-Run CPU Stability Test",
+      "passed": true,
+      "score": 0.9417,
+      "details": "10k blocks: p99=11.90ms drift=38.2% failures=0 maxOut=1.2dBFS",
+      "metrics": {
+        "p99_ms": 11.89945153005283,
+        "drift_pct": 38.15834700666362,
+        "failures": 0
+      }
+    },
+    {
+      "name": "Iterative Stress Loop Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "1M samples in 7.00s (143k smp/s), failures=0",
+      "metrics": {
+        "failures": 0,
+        "smp_per_s": 142799.39786103537
+      }
+    },
+    {
+      "name": "Parameter Automation Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "MaxJump=0.5768, Glitches(>0.5)=0",
+      "metrics": {
+        "max_jump": 0.5767535246719895,
+        "glitches": 0
+      }
+    },
+    {
+      "name": "Thread Safety Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "8 threads \u00d7 200 blocks. Errors: none",
+      "metrics": {
+        "errors": 0
+      }
+    },
+    {
+      "name": "State Reset Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "PostReset silence=-200.0dBFS, diff_vs_fresh=-200.0dB",
+      "metrics": {
+        "post_reset_db": -200.0,
+        "diff_db": -200.0
+      }
+    },
+    {
+      "name": "Silence Edge Case Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "MaxOut=0.00e+00, MaxDet=2.00e+02",
+      "metrics": {
+        "max_output": 0.0
+      }
+    },
+    {
+      "name": "Sample Rate Switching Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Tested [22050, 44100, 48000, 88200, 96000, 192000]. Failures: none",
+      "metrics": {
+        "failures": [],
+        "rates_tested": 6
+      }
+    },
+    {
+      "name": "Randomized Fuzz Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "10k iterations, failures=0 (0.00%)",
+      "metrics": {
+        "failures": 0,
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "name": "Null Consistency Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Max sample diff = 0.00e+00 (target: 0)",
+      "metrics": {
+        "max_diff": 0.0
+      }
+    },
+    {
+      "name": "Envelope Tracking Stability Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Reduction: mean=-12.00dB, std=0.0000dB, stability=1.000",
+      "metrics": {
+        "mean_reduction": -11.999999999999975,
+        "std_reduction": 3.552713678800501e-15,
+        "stability": 0.9999999999999997
+      }
+    },
+    {
+      "name": "LUFS Stability Test",
+      "passed": true,
+      "score": 0.8557,
+      "details": "Clean \u0394LU=0.59 (want<2), Sib reduction=1.78LU",
+      "metrics": {
+        "clean_change": 0.5923776123368398,
+        "sib_reduction": 1.7823976199176208
+      }
+    },
+    {
+      "name": "Transient Integrity Test",
+      "passed": true,
+      "score": 1,
+      "details": "RiseTime: in=0smp, out=0smp, ratio=1.000",
+      "metrics": {
+        "rise_in": 0,
+        "rise_out": 0,
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "Harmonic Musicality Index",
+      "passed": true,
+      "score": 1.0,
+      "details": "HarmonicRatio: in=1.0000, out=1.0000, preservation=1.0000",
+      "metrics": {
+        "ratio": 0.9999999991051988
+      }
+    },
+    {
+      "name": "Dynamic Responsiveness Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "50% response in 0.0ms (target <10ms)",
+      "metrics": {
+        "response_ms": 0.0
+      }
+    },
+    {
+      "name": "Stereo Image Coherence Test",
+      "passed": true,
+      "score": 0.9995,
+      "details": "Corr: in=0.9758, out=0.9757, \u0394=0.0001 (target<0.05)",
+      "metrics": {
+        "corr_in": 0.9757541202869,
+        "corr_out": 0.9756640140619405,
+        "corr_change": 9.010622495952969e-05
+      }
+    },
+    {
+      "name": "Null Residual Character Analysis",
+      "passed": true,
+      "score": 0.9418,
+      "details": "Band concentration=0.942 (target>0.6), target_E=0.0028, low_E=0.0002",
+      "metrics": {
+        "concentration": 0.9418019995934539
+      }
+    },
+    {
+      "name": "Multi-Source Musical Benchmarking",
+      "passed": true,
+      "score": 1.0,
+      "details": "Voice/HiHat/Mix scores: ['1.00', '1.00', '1.00']",
+      "metrics": {
+        "source_scores": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "Temporal Smoothness (Anti-Zipper) Test",
+      "passed": true,
+      "score": 0.9998,
+      "details": "Zipper ratio=0.0000 (target<0.001)",
+      "metrics": {
+        "zipper_ratio": 1.8915755628966914e-06
+      }
+    },
+    {
+      "name": "Groove Preservation Test",
+      "passed": true,
+      "score": 1.0,
+      "details": "Transients preserved: 15/15 (100.0%)",
+      "metrics": {
+        "preservation_pct": 100.0
+      }
+    },
+    {
+      "name": "Golden Industry Standard Reference",
+      "passed": true,
+      "score": 1.0,
+      "details": "Actual attenuation=4.28dB (want 2\u20138), PeakRed=6.00dB",
+      "metrics": {
+        "actual_attenuation": 4.27650390059441,
+        "peak_reduction": 5.99999999999998
+      }
+    }
+  ],
+  "refinements": [
+    {
+      "area": "DSP / Filter Quality",
+      "issue": "Spectral balance score 80.8% \u2014 low-band leakage detected",
+      "priority": "HIGH",
+      "code_loc": "dsp.rs: update_filters(), ChannelDsp struct"
+    },
+    {
+      "area": "GUI / Spectrum Analyzer",
+      "issue": "Spectrum may have bin-aliasing at high frequencies due to linear FFT bin spacing",
+      "priority": "MEDIUM",
+      "code_loc": "src/gui.rs: draw_analyzer_panel()"
+    },
+    {
+      "area": "Oversampling Quality",
+      "issue": "Linear interpolation upsampling introduces imaging artefacts",
+      "priority": "HIGH",
+      "code_loc": "lib.rs: process() oversampling section"
+    },
+    {
+      "area": "Preset System",
+      "issue": "Presets are in-memory only \u2014 lost on plugin close",
+      "priority": "HIGH",
+      "code_loc": "lib.rs: NebulaParams, gui.rs: NebulaGui presets Vec"
+    }
+  ]
+}

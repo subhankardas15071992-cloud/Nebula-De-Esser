@@ -1,65 +1,105 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Nebula DeEsser — Windows PowerShell Build Script
-# Builds CLAP plugin optimized for ASIO / WASAPI / WaveRT
+# Nebula DeEsser v2.0.0 — Windows PowerShell Build Script
+# Builds 64-bit CLAP plugin optimized for ASIO / WASAPI / WaveRT
+# Requires: Rust stable, MSVC (Visual Studio 2022) or GNU toolchain
 # ─────────────────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
+$PluginName    = "nebula_desser"
+$PluginVersion = "2.0.0"
 
+Write-Host ""
 Write-Host "╔════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║  NEBULA DEESSER - Windows Build (PowerShell)   ║" -ForegroundColor Cyan
+Write-Host "║  NEBULA DEESSER v2.0.0 — Windows Build (PS)    ║" -ForegroundColor Cyan
 Write-Host "╚════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
-# Check for cargo
+# ── Verify 64-bit OS ────────────────────────────────────────────────────────
+if (-not [Environment]::Is64BitOperatingSystem) {
+    Write-Error "[ERROR] 64-bit Windows is required."
+    exit 1
+}
+Write-Host "[✓] 64-bit OS confirmed" -ForegroundColor Green
+
+# ── Check cargo ─────────────────────────────────────────────────────────────
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Write-Host "[ERROR] cargo not found. Install Rust from https://rustup.rs" -ForegroundColor Red
+    Write-Error "[ERROR] cargo not found. Install Rust from https://rustup.rs"
     exit 1
 }
+$rustVer = (rustc --version)
+Write-Host "[✓] Rust: $rustVer" -ForegroundColor Green
 
-# Install nih-plug bundler
-try {
-    $null = & cargo nih-plug --help 2>&1
-} catch {
-    Write-Host "[*] Installing cargo-nih-plug bundler..." -ForegroundColor Yellow
-    & cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+# ── Ensure x86_64 Windows target ────────────────────────────────────────────
+Write-Host "[*] Ensuring x86_64-pc-windows-msvc target is installed..."
+rustup target add x86_64-pc-windows-msvc 2>$null
+Write-Host "[✓] Target ready" -ForegroundColor Green
+
+# ── Install nih-plug bundler if missing ─────────────────────────────────────
+$nihPlugOk = $false
+try { cargo nih-plug --help 2>$null | Out-Null; $nihPlugOk = $true } catch {}
+if (-not $nihPlugOk) {
+    Write-Host "[*] Installing cargo-nih-plug bundler..."
+    cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+    if ($LASTEXITCODE -ne 0) { Write-Error "[ERROR] Failed to install cargo-nih-plug"; exit 1 }
 }
+Write-Host "[✓] cargo-nih-plug ready" -ForegroundColor Green
 
-Write-Host "[*] Building release binary..." -ForegroundColor Green
+# ── Build ────────────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "[*] Building release binary (64-bit, LTO, max optimisation)..."
 $env:RUSTFLAGS = "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+cargo build --release
+if ($LASTEXITCODE -ne 0) { Write-Error "[ERROR] cargo build failed"; exit 1 }
+Write-Host "[✓] Build succeeded" -ForegroundColor Green
 
-& cargo build --release
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Build failed!" -ForegroundColor Red
-    exit 1
-}
+# ── Bundle ───────────────────────────────────────────────────────────────────
+Write-Host "[*] Bundling CLAP plugin..."
+cargo nih-plug bundle $PluginName --release
+if ($LASTEXITCODE -ne 0) { Write-Error "[ERROR] nih-plug bundle failed"; exit 1 }
+Write-Host "[✓] Bundle succeeded" -ForegroundColor Green
 
-Write-Host "[*] Bundling CLAP plugin..." -ForegroundColor Green
-& cargo nih-plug bundle nebula_desser --release
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Bundle failed!" -ForegroundColor Red
-    exit 1
-}
-
+# ── Locate output ────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "[✓] Build complete!" -ForegroundColor Green
-Write-Host ""
-
-# Find and display output
-$clapFiles = Get-ChildItem -Path "target" -Filter "*.clap" -Recurse
-foreach ($clap in $clapFiles) {
-    Write-Host "[✓] CLAP: $($clap.FullName)" -ForegroundColor Cyan
-
-    # Offer to install
+$clapFile = Get-ChildItem -Path "target" -Filter "*.clap" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($clapFile) {
+    $sizeMB = [math]::Round($clapFile.Length / 1MB, 2)
+    Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+    Write-Host "║  SUCCESS — Nebula DeEsser v$PluginVersion                         ║" -ForegroundColor Green
+    Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
     Write-Host ""
-    $clapDir = "$env:COMMONPROGRAMFILES\CLAP"
-    Write-Host "Install to system CLAP folder:" -ForegroundColor Yellow
-    Write-Host "  New-Item -ItemType Directory -Force -Path '$clapDir'" -ForegroundColor Gray
-    Write-Host "  Copy-Item '$($clap.FullName)' '$clapDir\'" -ForegroundColor Gray
+    Write-Host "[✓] CLAP : $($clapFile.FullName)" -ForegroundColor Cyan
+    Write-Host "[✓] Size : ${sizeMB} MB" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Install by copying to:" -ForegroundColor Yellow
+    Write-Host "  $env:COMMONPROGRAMFILES\CLAP\" -ForegroundColor White
+    Write-Host "  — or —"
+    Write-Host "  $env:LOCALAPPDATA\Programs\Common\CLAP\" -ForegroundColor White
+    Write-Host ""
+
+    $installDest = "$env:COMMONPROGRAMFILES\CLAP"
+    $doInstall = Read-Host "Install now to $installDest ? [y/N]"
+    if ($doInstall -eq 'y' -or $doInstall -eq 'Y') {
+        if (-not (Test-Path $installDest)) { New-Item -ItemType Directory -Force -Path $installDest | Out-Null }
+        Copy-Item $clapFile.FullName -Destination $installDest -Force
+        Write-Host "[✓] Installed to $installDest" -ForegroundColor Green
+    }
+} else {
+    Write-Error "[ERROR] CLAP file not found in target\. Check build output."
+    exit 1
 }
 
 Write-Host ""
-Write-Host "ASIO optimization tips:" -ForegroundColor Yellow
-Write-Host "  - Use your audio interface's native ASIO driver for lowest latency" -ForegroundColor Gray
-Write-Host "  - Set buffer size to 64-256 samples in your DAW" -ForegroundColor Gray
-Write-Host "  - For WASAPI exclusive mode: enable in DAW audio settings" -ForegroundColor Gray
-Write-Host "  - WaveRT is used automatically by the Windows audio stack" -ForegroundColor Gray
+Write-Host "─── Audio backend tips ──────────────────────────────────────────────" -ForegroundColor DarkCyan
+Write-Host "  ASIO         : Use your interface driver or ASIO4ALL for ~1ms latency"
+Write-Host "  WASAPI Excl. : Enable Exclusive Mode in your DAW audio settings"
+Write-Host "  WaveRT       : Used automatically for low-latency kernel streaming"
+Write-Host ""
+Write-Host "─── New in v2.0.0 ───────────────────────────────────────────────────" -ForegroundColor DarkMagenta
+Write-Host "  • Presets: save/load envelope settings"
+Write-Host "  • Undo / Redo (50-step history)"
+Write-Host "  • MIDI Learn for all main parameters"
+Write-Host "  • FX Bypass (soft bypass — title bar turns red)"
+Write-Host "  • Input / Output Level + Pan knobs"
+Write-Host "  • Oversampling: Off / 2x / 4x / 6x / 8x"
+Write-Host "  • Fixed spectrum analyzer (live FFT with smoothing)"
+Write-Host ""
