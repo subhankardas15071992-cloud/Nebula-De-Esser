@@ -10,6 +10,7 @@ Written in Rust · nih-plug · egui · Alien Synthwave UI
 Nebula DeEsser is a high-performance, pure 64-bit CLAP de-esser plugin built for professionals who demand precision. Its DSP engine runs entirely in double-precision (f64), exploiting the full dynamic range of 64-bit IEEE 754 arithmetic. The GUI is styled with a deep synthwave/alien aesthetic — dark voids, neon cyan, magenta, and gold, animated scanline grids, and glowing interactive controls.
 
 Version 2.0.0 adds Presets, Undo/Redo, MIDI Learn, FX Bypass, Input/Output Level and Pan controls, Oversampling up to 8x, and a fully working live Spectrum Analyzer.
+
 <img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/209d32b5-6f0b-40d2-ac77-f35fc6dddf75" />
 ---
 
