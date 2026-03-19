@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nebula-deesser-linux-x86_64
-          path: target/bundled/*.clap
+          path: target/bundled/nebula_desser.clap
           if-no-files-found: error
 
   # ─── Windows 64-bit ───────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nebula-deesser-windows-x86_64
-          path: target/bundled/*.clap
+          path: target/bundled/nebula_desser.clap
           if-no-files-found: error
 
   # ─── macOS Universal ──────────────────────────────────────────────────────
@@ -160,9 +160,20 @@ jobs:
           </dict></plist>
           PLIST
 
+      # Use ditto to zip the bundle directory *as a whole* (preserving the
+      # .clap folder name as the top-level entry). upload-artifact then wraps
+      # this zip in an outer zip — so the user unzips once and gets the
+      # ready-to-install "Nebula DeEsser.clap" bundle directly.
+      - name: Zip macOS bundle (preserve directory structure)
+        run: |
+          cd target/bundled
+          ditto -c -k --sequesterRsrc --keepParent \
+            "Nebula DeEsser.clap" \
+            "Nebula-DeEsser-macOS-Universal.zip"
+
       - name: Upload macOS CLAP
         uses: actions/upload-artifact@v4
         with:
           name: nebula-deesser-macos-universal
-          path: "target/bundled/Nebula DeEsser.clap"
+          path: target/bundled/Nebula-DeEsser-macOS-Universal.zip
           if-no-files-found: error
