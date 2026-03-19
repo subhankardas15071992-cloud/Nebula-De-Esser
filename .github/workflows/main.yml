@@ -1,0 +1,148 @@
+name: Build Nebula DeEsser CLAP
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+jobs:
+  # ─── Linux 64-bit ────────────────────────────────────────────────────────
+  build-linux:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Install cargo-nih-plug
+        run: cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+
+      - name: Build (Linux)
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+        run: cargo nih-plug bundle nebula_desser --release
+
+      - name: Upload Linux CLAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: nebula-deesser-linux-x86_64
+          path: target/bundled/*.clap
+          if-no-files-found: error
+
+  # ─── Windows 64-bit ──────────────────────────────────────────────────────
+  build-windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      - name: Install cargo-nih-plug
+        run: cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+
+      - name: Build (Windows)
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+        run: cargo nih-plug bundle nebula_desser --release
+
+      - name: Upload Windows CLAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: nebula-deesser-windows-x86_64
+          path: target/bundled/*.clap
+          if-no-files-found: error
+
+  # ─── macOS Universal ─────────────────────────────────────────────────────
+  build-mac:
+    name: macOS Universal (arm64 + x86_64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: mac-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: mac-cargo-
+
+      - name: Install cargo-nih-plug
+        run: cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+
+      - name: Build arm64 (Apple Silicon)
+        env:
+          RUSTFLAGS: "-C target-cpu=apple-m1 -C opt-level=3 -C lto=fat -C codegen-units=1"
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64 (Intel)
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary + bundle
+        run: |
+          mkdir -p target/universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/libnebula_desser.dylib \
+            target/x86_64-apple-darwin/release/libnebula_desser.dylib \
+            -output target/universal/libnebula_desser.dylib
+
+          BUNDLE="target/bundled/Nebula DeEsser.clap"
+          mkdir -p "$BUNDLE/Contents/MacOS"
+          cp target/universal/libnebula_desser.dylib "$BUNDLE/Contents/MacOS/nebula_desser"
+          cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>nebula_desser</string>
+            <key>CFBundleIdentifier</key><string>audio.nebula.deesser</string>
+            <key>CFBundleName</key><string>Nebula DeEsser</string>
+            <key>CFBundleVersion</key><string>2.1.0</string>
+            <key>CFBundleShortVersionString</key><string>2.1.0</string>
+            <key>CFBundlePackageType</key><string>BNDL</string>
+            <key>NSPrincipalClass</key><string>NSObject</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+          </dict></plist>
+          PLIST
+
+      - name: Upload macOS CLAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: nebula-deesser-macos-universal
+          path: "target/bundled/Nebula DeEsser.clap"
+          if-no-files-found: error
