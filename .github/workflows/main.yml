@@ -161,6 +161,13 @@ jobs:
           </dict></plist>
           PLIST
 
+      # Ad-hoc code sign so Gatekeeper doesn't block the plugin.
+      # "--sign -" uses an ad-hoc identity (no Apple Developer account needed).
+      # "--deep" recurses into the bundle. "--force" overwrites any existing sig.
+      - name: Ad-hoc code sign
+        run: |
+          codesign --force --deep --sign - "target/bundled/Nebula DeEsser.clap"
+
       # Use ditto to zip the bundle directory *as a whole* (preserving the
       # .clap folder name as the top-level entry). upload-artifact then wraps
       # this zip in an outer zip — so the user unzips once and gets the
