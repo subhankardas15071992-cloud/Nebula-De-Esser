@@ -48,7 +48,7 @@ jobs:
 
       - name: Build (Linux)
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+          RUSTFLAGS: "-C target-cpu=x86-64-v2"
         run: cargo nih-plug bundle nebula_desser --release
 
       - name: Upload Linux CLAP
@@ -87,7 +87,7 @@ jobs:
 
       - name: Build (Windows)
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+          RUSTFLAGS: "-C target-cpu=x86-64-v2"
         run: cargo nih-plug bundle nebula_desser --release
 
       - name: Upload Windows CLAP
@@ -126,12 +126,12 @@ jobs:
 
       - name: Build arm64 (Apple Silicon)
         env:
-          RUSTFLAGS: "-C target-cpu=apple-m1 -C opt-level=3 -C lto=fat -C codegen-units=1"
+          RUSTFLAGS: "-C target-cpu=apple-m1"
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Build x86_64 (Intel)
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+          RUSTFLAGS: "-C target-cpu=x86-64-v2"
         run: cargo build --release --target x86_64-apple-darwin
 
       - name: Create universal binary + bundle
