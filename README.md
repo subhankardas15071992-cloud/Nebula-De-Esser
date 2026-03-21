@@ -1,7 +1,7 @@
 # NEBULA DEESSER v2.0.0
 
-**Hyper-optimized 64-bit CLAP De-esser Plugin**  
-Written in Rust · nih-plug · egui · Alien Synthwave UI
+**Highly optimized 64-bit CLAP De-esser Plugin**  
+Written in Rust · nih-plug · egui
 
 ---
 
