@@ -3,9 +3,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
     use std::f64::consts::PI;
     
     // Simple test for sine wave generation
@@ -16,7 +13,7 @@ mod tests {
         for i in 0..num_samples {
             let t = i as f64 / sample_rate;
             let value = (2.0 * PI * frequency * t).sin();
-            buffer.push(value as f32);
+            buffer.push(value);
         }
         
         buffer
@@ -60,7 +57,7 @@ mod tests {
         let base_sample_rate = 44100.0;
         
         for &os_factor in &oversampling_rates {
-            let effective_rate = base_sample_rate * (*os_factor as f64);
+            let effective_rate = base_sample_rate * (os_factor as f64);
             let nyquist = effective_rate / 2.0;
             
             // Higher oversampling should give us higher nyquist frequency
@@ -154,7 +151,7 @@ mod tests {
     #[test]
     fn test_oversampling_anti_aliasing() {
         // Test that oversampling reduces aliasing
-        let nyquist = 22050.0; // For 44.1kHz
+        let _nyquist = 22050.0; // For 44.1kHz
         let test_freq = 18000.0; // Near Nyquist
         
         // With 2x oversampling, effective nyquist becomes 44.1kHz
@@ -203,10 +200,10 @@ mod tests {
         // Test that latency is calculated correctly
         let lookahead_ms = 5.0; // 5ms lookahead
         let sample_rate = 44100.0;
-        let expected_samples = (lookahead_ms * sample_rate / 1000.0).round() as usize;
+        let expected_samples = (lookahead_ms * sample_rate / 1000.0_f64).round() as usize;
         
         // 5ms at 44.1kHz = 220.5 samples
-        let calculated = (5.0 * 44.1).round() as usize; // 220-221 samples
+        let _calculated = (5.0_f64 * 44.1_f64).round() as usize; // 220-221 samples
         
         // Allow for rounding differences
         assert!((expected_samples as f64 - 220.5).abs() < 1.0);

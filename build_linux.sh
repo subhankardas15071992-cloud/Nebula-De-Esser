@@ -48,7 +48,7 @@ fi
 
 # Build with native optimizations
 echo "[*] Building with native CPU optimizations..."
-RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort" \
+RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C codegen-units=1" \
     cargo build --release --target x86_64-unknown-linux-gnu
 
 echo "[*] Running comprehensive tests..."

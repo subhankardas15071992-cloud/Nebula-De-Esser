@@ -56,12 +56,12 @@ fi
 
 # Build for Apple Silicon (ARM64)
 echo "[*] Building for Apple Silicon (ARM64)..."
-RUSTFLAGS="-C target-cpu=apple-m1 -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort" \
+RUSTFLAGS="-C target-cpu=apple-m1 -C opt-level=3 -C codegen-units=1" \
     cargo build --release --target aarch64-apple-darwin
 
 # Build for Intel (x86_64)
 echo "[*] Building for Intel (x86_64)..."
-RUSTFLAGS="-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort" \
+RUSTFLAGS="-C target-cpu=x86-64-v2 -C opt-level=3 -C codegen-units=1" \
     cargo build --release --target x86_64-apple-darwin
 
 echo "[*] Running tests for both architectures..."

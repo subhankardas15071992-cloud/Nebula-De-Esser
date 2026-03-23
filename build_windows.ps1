@@ -46,8 +46,8 @@ Write-Host "[✓] cargo-nih-plug ready" -ForegroundColor Green
 
 # ── Build ────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "[*] Building release binary (64-bit, LTO, max optimisation)..."
-$env:RUSTFLAGS = "-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1"
+Write-Host "[*] Building release binary (64-bit, max optimisation)..."
+$env:RUSTFLAGS = "-C target-cpu=x86-64-v2 -C opt-level=3 -C codegen-units=1"
 cargo build --release
 if ($LASTEXITCODE -ne 0) { Write-Error "[ERROR] cargo build failed"; exit 1 }
 Write-Host "[✓] Build succeeded" -ForegroundColor Green

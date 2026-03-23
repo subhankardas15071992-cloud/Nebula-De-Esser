@@ -53,7 +53,7 @@ mod benchmark_tests {
         }
         
         let peak = signal.iter().map(|&x| x.abs()).fold(0.0, f32::max);
-        let rms = calculate_loudness(signal).exp10() / 20.0; // Convert back from dB
+        let rms = 10.0f32.powf(calculate_loudness(signal) / 20.0); // Convert back from dB
         
         if rms > 0.0 {
             peak / rms
@@ -209,7 +209,7 @@ mod benchmark_tests {
         // Create a signal with smooth envelope
         for i in 0..signal.len() {
             let t = i as f32 / signal.len() as f32;
-            let envelope = (t * PI).sin(); // Smooth sine envelope
+            let envelope = (t * std::f32::consts::PI).sin(); // Smooth sine envelope
             signal[i] = envelope * (2.0 * PI * 1000.0 * i as f64 / 44100.0).sin() as f32;
         }
         

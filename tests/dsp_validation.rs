@@ -136,7 +136,7 @@ mod dsp_validation {
                 "Test frequency should be below oversampled Nyquist");
         
         // Calculate expected alias frequency without oversampling
-        let alias_freq = (2.0 * nyquist_44k - test_freq).abs();
+        let alias_freq = (2.0_f64 * nyquist_44k - test_freq).abs();
         assert!(alias_freq > 0.0, "Should calculate alias frequency");
     }
     
@@ -219,7 +219,7 @@ mod dsp_validation {
         let sample_rate = 44100.0;
         
         for &lookahead_ms in &lookahead_options {
-            let latency_samples = (lookahead_ms * sample_rate / 1000.0).round() as usize;
+            let latency_samples = (lookahead_ms * sample_rate / 1000.0_f64).round() as usize;
             
             // Verify calculation
             let expected_ms = (latency_samples as f64 * 1000.0 / sample_rate).round();
@@ -284,10 +284,10 @@ mod dsp_validation {
         let rms = calculate_rms(&noise);
         
         // White noise should have RMS around sqrt(1/3) ≈ 0.577 for uniform [-1, 1]
-        let expected_rms = (1.0 / 3.0).sqrt(); // ~0.577
+        let expected_rms = (1.0_f64 / 3.0).sqrt(); // ~0.577
         let tolerance = 0.1;
         
-        assert!((rms - expected_rms).abs() < tolerance,
+        assert!((rms as f64 - expected_rms).abs() < tolerance,
                "Noise RMS should be around {}: got {}", expected_rms, rms);
     }
     
