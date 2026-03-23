@@ -15,6 +15,14 @@ Version 2.0.0 adds Presets, Undo/Redo, MIDI Learn, FX Bypass, Input/Output Level
 
 ---
 
+## What's New in v2.1.0
+
+| Feature | Description |
+|---------|-------------|
+| **Preset Manager** | Redesigned to be more intuitve |
+| **A/B State Comparison** | Instant switching between two plugin states for quick comparson and finalization|
+| **MIDI Learn** | Enhanced MIDI Learn with all new Context Menu accessible via secondary/right click|
+
 ## What's New in v2.0.0
 
 | Feature | Description |
