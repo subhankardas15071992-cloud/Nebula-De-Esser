@@ -104,15 +104,23 @@ pub struct NebulaGui {
     pub preset_save_popup:   bool,
     pub preset_dropdown_open:bool,
     pub selected_preset:     usize,
+    // A/B States
+    pub state_a:             Option<ParamSnapshot>,
+    pub state_b:             Option<ParamSnapshot>,
+    pub active_state:        char, // 'A' or 'B'
     // Undo/Redo
     pub undo_stack:     Vec<ParamSnapshot>,
     pub redo_stack:     Vec<ParamSnapshot>,
     pub drag_snap:      Option<ParamSnapshot>,
     // Popups
-    pub midi_popup:    bool,
-    pub os_dropdown:   bool,
-    pub os_anchor:     Pos2,       // top-left of OS button, for dropdown placement
-    pub preset_anchor: Pos2,       // top-left of preset button
+    pub midi_popup:         bool,
+    pub midi_context_menu:  bool,
+    pub midi_context_anchor:Pos2,
+    pub midi_cleanup_menu:  bool,
+    pub midi_cleanup_anchor:Pos2,
+    pub os_dropdown:        bool,
+    pub os_anchor:          Pos2,       // top-left of OS button, for dropdown placement
+    pub preset_anchor:      Pos2,       // top-left of preset button
 }
 impl NebulaGui {
     pub fn new(spectrum: Arc<Mutex<SpectrumData>>, midi_learn: Arc<MidiLearnShared>) -> Self {
@@ -120,9 +128,11 @@ impl NebulaGui {
                smooth_mags: vec![-120.0_f32; 1025],
                presets:Vec::new(), preset_name_buf:String::new(),
                preset_save_popup:false, preset_dropdown_open:false, selected_preset:0,
+               state_a:None, state_b:None, active_state:'A',
                undo_stack:Vec::new(), redo_stack:Vec::new(), drag_snap:None,
-               midi_popup:false, os_dropdown:false,
-               os_anchor:Pos2::ZERO, preset_anchor:Pos2::ZERO }
+               midi_popup:false, midi_context_menu:false, midi_context_anchor:Pos2::ZERO,
+               midi_cleanup_menu:false, midi_cleanup_anchor:Pos2::ZERO,
+               os_dropdown:false, os_anchor:Pos2::ZERO, preset_anchor:Pos2::ZERO }
     }
 }
 
@@ -213,6 +223,7 @@ pub fn draw(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams) -> GuiChange
     // Dropdowns rendered as floating Areas so they are never clipped by toolbar
     if gui.os_dropdown       { draw_os_dropdown(ctx, gui, params, &mut ch); }
     if gui.preset_dropdown_open { draw_preset_dropdown(ctx, gui, &mut ch); }
+    if gui.midi_context_menu { draw_midi_context_menu(ctx, gui); }
     ch
 }
 
@@ -366,11 +377,43 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
     }
     cx += 3.0;
 
+    // A/B STATE
+    let ab_label = if gui.active_state == 'A' { "A/B  A" } else { "A/B  B" };
+    let ab_active = gui.state_a.is_some() || gui.state_b.is_some();
+    let ab_resp = tbtn!(ab_label, ab_active, GREEN_NEON, 58.0);
+    if ab_resp.clicked() {
+        // Toggle between A and B
+        gui.active_state = if gui.active_state == 'A' { 'B' } else { 'A' };
+        
+        // Apply the active state if it exists
+        match (gui.active_state, &gui.state_a, &gui.state_b) {
+            ('A', Some(state_a), _) => state_a.apply_to(ch),
+            ('B', _, Some(state_b)) => state_b.apply_to(ch),
+            _ => {}
+        }
+    }
+    if ab_resp.secondary_clicked() {
+        // Right-click: store current state to active slot
+        let snap = ParamSnapshot::from_params(params);
+        match gui.active_state {
+            'A' => gui.state_a = Some(snap),
+            'B' => gui.state_b = Some(snap),
+            _ => {}
+        }
+    }
+    cx += 3.0;
+
     // MIDI LEARN
     let learning = gui.midi_learn.learning_target.load(std::sync::atomic::Ordering::Relaxed) >= 0;
-    if tbtn!(if learning {"● LEARNING"} else {"MIDI LEARN"}, learning, MAGENTA, 86.0).clicked() {
+    let midi_btn = tbtn!(if learning {"● LEARNING"} else {"MIDI LEARN"}, learning, MAGENTA, 86.0);
+    if midi_btn.clicked() {
         if learning { gui.midi_learn.learning_target.store(-1, std::sync::atomic::Ordering::Release); }
         else { gui.midi_popup = true; }
+    }
+    if midi_btn.secondary_clicked() {
+        // Right-click: show MIDI context menu
+        gui.midi_context_menu = true;
+        gui.midi_context_anchor = Pos2::new(midi_btn.rect.min.x, midi_btn.rect.max.y + 2.0);
     }
     cx += 3.0;
 
@@ -758,7 +801,7 @@ fn draw_value_field(pa: &egui::Painter, rect: Rect, text: &str, col: Color32) {
 // ─── Spectrum Analyzer ───────────────────────────────────────────────────────
 fn freq_to_x(freq: f32, w: f32) -> f32 {
     let lmin = 20.0_f32.log10(); let lmax = 22000.0_f32.log10();
-    (freq.max(20.0).min(22000.0).log10() - lmin) / (lmax - lmin) * w
+    (freq.clamp(20.0, 22000.0).log10() - lmin) / (lmax - lmin) * w
 }
 fn x_to_freq(x: f32, w: f32) -> f32 {
     let lmin = 20.0_f32.log10(); let lmax = 22000.0_f32.log10();
@@ -820,8 +863,8 @@ fn draw_spectrum(ui: &mut Ui, rect: Rect, gui: &mut NebulaGui, p: &GuiParams, ch
         // Fast attack (0.3 → 70% of new value), slow release (0.85 → 15% of new value)
         let atk = 0.30_f32;
         let rel = 0.85_f32;
-        for i in 0..nb {
-            let m = mags[i].clamp(-90.0, 0.0);
+        for (i, &mag) in mags.iter().enumerate().take(nb) {
+            let m = mag.clamp(-90.0, 0.0);
             gui.smooth_mags[i] = if m > gui.smooth_mags[i] {
                 gui.smooth_mags[i] * atk + m * (1.0 - atk)   // attack: mostly new
             } else {
@@ -1045,8 +1088,7 @@ fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui) {
         let learning = gui.midi_learn.learning_target.load(std::sync::atomic::Ordering::Relaxed);
         let mappings = gui.midi_learn.mappings.lock().clone();
 
-        for idx in 0..MIDI_PARAM_COUNT {
-            let name  = MIDI_PARAM_NAMES[idx];
+        for (idx, &name) in MIDI_PARAM_NAMES.iter().enumerate().take(MIDI_PARAM_COUNT) {
             let cc_s: String = mappings.iter()
                 .find(|(_,&v)| v==idx as u8)
                 .map(|(&cc,_)| format!("CC{}", cc))
@@ -1087,6 +1129,196 @@ fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui) {
             gui.midi_popup = false;
         }
     });
+}
+
+// ─── MIDI Context Menu (Right‑Click) ─────────────────────────────────────────
+fn draw_midi_context_menu(ctx: &Context, gui: &mut NebulaGui) {
+    let menu_w = 180.0;
+    let ih = 22.0;
+    let menu_h = 5.0 * ih + 10.0; // 5 items + padding
+    let anchor = gui.midi_context_anchor;
+    let menu_rect = Rect::from_min_size(anchor, Vec2::new(menu_w, menu_h));
+
+    // Click outside to close
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_midi_ctx_bg"))
+        .fixed_pos(Pos2::ZERO)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let full = ui.allocate_rect(screen, Sense::click());
+            if full.clicked() { gui.midi_context_menu = false; }
+        });
+
+    egui::Area::new(egui::Id::new("neb_midi_ctx"))
+        .fixed_pos(anchor)
+        .order(egui::Order::Tooltip)
+        .show(ctx, |ui| {
+            // Background panel
+            { let p = ui.painter();
+              p.rect_filled(menu_rect, 5.0, BG_PANEL);
+              p.rect_stroke(menu_rect, 5.0, Stroke::new(1.2, ga(MAGENTA, 80)), egui::StrokeKind::Outside);
+              p.rect_stroke(menu_rect, 5.0, Stroke::new(5.0, ga(MAGENTA, 18)), egui::StrokeKind::Outside); }
+
+            let items = [
+                ("MIDI On/Off", 0),
+                ("Clean Up...", 1),
+                ("Roll Back", 2),
+                ("Save", 3),
+                ("Close", 4),
+            ];
+
+            for (i, (label, idx)) in items.iter().enumerate() {
+                let item_rect = Rect::from_min_size(
+                    Pos2::new(anchor.x + 5.0, anchor.y + 5.0 + i as f32 * ih),
+                    Vec2::new(menu_w - 10.0, ih - 2.0));
+                let resp = ui.allocate_rect(item_rect, Sense::click());
+                let hov = resp.hovered();
+                
+                { let p = ui.painter();
+                  if hov { p.rect_filled(item_rect, 3.0, ga(MAGENTA, 15)); }
+                  p.text(Pos2::new(item_rect.min.x + 10.0, item_rect.center().y),
+                      egui::Align2::LEFT_CENTER, *label,
+                      FontId::new(8.0, FontFamily::Monospace),
+                      if hov { MAGENTA } else { TEXT_HI }); }
+                
+                if resp.clicked() {
+                    match idx {
+                        0 => { // MIDI On/Off
+                            let current = gui.midi_learn.midi_enabled.load(std::sync::atomic::Ordering::Relaxed);
+                            gui.midi_learn.midi_enabled.store(!current, std::sync::atomic::Ordering::Release);
+                        }
+                        1 => { // Clean Up - show submenu
+                            gui.midi_cleanup_menu = true;
+                            gui.midi_cleanup_anchor = Pos2::new(item_rect.max.x + 2.0, item_rect.min.y);
+                        }
+                        2 => { // Roll Back
+                            let saved = gui.midi_learn.saved_mappings.lock().clone();
+                            *gui.midi_learn.mappings.lock() = saved;
+                        }
+                        3 => { // Save
+                            let current = gui.midi_learn.mappings.lock().clone();
+                            *gui.midi_learn.saved_mappings.lock() = current;
+                        }
+                        4 => { // Close
+                            gui.midi_context_menu = false;
+                        }
+                        _ => {}
+                    }
+                    if *idx != 1 { // Don't close if opening submenu
+                        gui.midi_context_menu = false;
+                    }
+                }
+            }
+
+            // Close on Escape
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                gui.midi_context_menu = false;
+            }
+        });
+    
+    // Render Clean Up submenu if open
+    if gui.midi_cleanup_menu {
+        draw_midi_cleanup_menu(ctx, gui);
+    }
+}
+
+// ─── MIDI Clean Up Submenu ───────────────────────────────────────────────────
+fn draw_midi_cleanup_menu(ctx: &Context, gui: &mut NebulaGui) {
+    let mappings = gui.midi_learn.mappings.lock().clone();
+    let item_count = mappings.len() + 1; // +1 for "Clear All"
+    let sub_w = 220.0;
+    let ih = 22.0;
+    let sub_h = item_count as f32 * ih + 10.0;
+    let anchor = gui.midi_cleanup_anchor;
+    let sub_rect = Rect::from_min_size(anchor, Vec2::new(sub_w, sub_h));
+
+    // Click outside to close
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_midi_clean_bg"))
+        .fixed_pos(Pos2::ZERO)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let full = ui.allocate_rect(screen, Sense::click());
+            if full.clicked() { gui.midi_cleanup_menu = false; }
+        });
+
+    egui::Area::new(egui::Id::new("neb_midi_clean"))
+        .fixed_pos(anchor)
+        .order(egui::Order::Tooltip)
+        .show(ctx, |ui| {
+            // Background panel
+            { let p = ui.painter();
+              p.rect_filled(sub_rect, 5.0, BG_PANEL);
+              p.rect_stroke(sub_rect, 5.0, Stroke::new(1.2, ga(CYAN, 80)), egui::StrokeKind::Outside);
+              p.rect_stroke(sub_rect, 5.0, Stroke::new(5.0, ga(CYAN, 18)), egui::StrokeKind::Outside); }
+
+            // Header
+            { let p = ui.painter();
+              let header_rect = Rect::from_min_size(
+                  Pos2::new(anchor.x + 5.0, anchor.y + 5.0),
+                  Vec2::new(sub_w - 10.0, ih - 2.0));
+              p.rect_filled(header_rect, 3.0, ga(CYAN, 20));
+              p.text(Pos2::new(header_rect.center().x, header_rect.center().y),
+                  egui::Align2::CENTER_CENTER, "MIDI Associations",
+                  FontId::new(7.5, FontFamily::Monospace), CYAN); }
+
+            // List associations
+            let mut sorted_mappings: Vec<(u8, u8)> = mappings.iter().map(|(&cc, &param)| (cc, param)).collect();
+            sorted_mappings.sort_by_key(|&(cc, _)| cc);
+
+            for (i, &(cc, param_idx)) in sorted_mappings.iter().enumerate() {
+                let y_pos = anchor.y + 5.0 + (i + 1) as f32 * ih;
+                let item_rect = Rect::from_min_size(
+                    Pos2::new(anchor.x + 5.0, y_pos),
+                    Vec2::new(sub_w - 10.0, ih - 2.0));
+                let resp = ui.allocate_rect(item_rect, Sense::click());
+                let hov = resp.hovered();
+                
+                let param_name = if param_idx < MIDI_PARAM_COUNT as u8 {
+                    MIDI_PARAM_NAMES[param_idx as usize]
+                } else {
+                    "Unknown"
+                };
+                
+                { let p = ui.painter();
+                  if hov { p.rect_filled(item_rect, 3.0, ga(RED_HOT, 15)); }
+                  p.text(Pos2::new(item_rect.min.x + 10.0, item_rect.center().y),
+                      egui::Align2::LEFT_CENTER,
+                      format!("CC{} → {}", cc, param_name),
+                      FontId::new(7.5, FontFamily::Monospace),
+                      if hov { RED_HOT } else { TEXT_HI }); }
+                
+                if resp.clicked() {
+                    gui.midi_learn.mappings.lock().remove(&cc);
+                }
+            }
+
+            // Clear All button
+            let clear_y = anchor.y + 5.0 + (sorted_mappings.len() + 1) as f32 * ih;
+            let clear_rect = Rect::from_min_size(
+                Pos2::new(anchor.x + 5.0, clear_y),
+                Vec2::new(sub_w - 10.0, ih - 2.0));
+            let resp = ui.allocate_rect(clear_rect, Sense::click());
+            let hov = resp.hovered();
+            
+            { let p = ui.painter();
+              if hov { p.rect_filled(clear_rect, 3.0, ga(RED_HOT, 20)); }
+              p.text(Pos2::new(clear_rect.center().x, clear_rect.center().y),
+                  egui::Align2::CENTER_CENTER, "Clear All",
+                  FontId::new(7.5, FontFamily::Monospace),
+                  if hov { RED_HOT } else { TEXT_HI }); }
+            
+            if resp.clicked() {
+                gui.midi_learn.mappings.lock().clear();
+                gui.midi_cleanup_menu = false;
+                gui.midi_context_menu = false;
+            }
+
+            // Close on Escape
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                gui.midi_cleanup_menu = false;
+            }
+        });
 }
 
 // ─── Floating OS Dropdown ─────────────────────────────────────────────────────

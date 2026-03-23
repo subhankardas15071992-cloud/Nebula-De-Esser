@@ -1,0 +1,10 @@
+/Users/subhankardas/Downloads/De-Esser NXT/Nebula-De-Esser/target/debug/deps/copypasta-01e71e2cbf529ea8.d: /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/lib.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/common.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/osx_clipboard.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/nop_clipboard.rs
+
+/Users/subhankardas/Downloads/De-Esser NXT/Nebula-De-Esser/target/debug/deps/libcopypasta-01e71e2cbf529ea8.rlib: /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/lib.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/common.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/osx_clipboard.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/nop_clipboard.rs
+
+/Users/subhankardas/Downloads/De-Esser NXT/Nebula-De-Esser/target/debug/deps/libcopypasta-01e71e2cbf529ea8.rmeta: /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/lib.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/common.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/osx_clipboard.rs /Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/nop_clipboard.rs
+
+/Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/lib.rs:
+/Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/common.rs:
+/Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/osx_clipboard.rs:
+/Users/subhankardas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/copypasta-0.10.2/src/nop_clipboard.rs:

@@ -59,6 +59,10 @@ pub struct MidiLearnShared {
     pub learning_target: AtomicI32,
     /// CC (0-127) → param index
     pub mappings: Mutex<HashMap<u8, u8>>,
+    /// Saved mappings for rollback
+    pub saved_mappings: Mutex<HashMap<u8, u8>>,
+    /// MIDI control enabled globally
+    pub midi_enabled: AtomicBool,
     /// Latest raw CC value (0..=1 f32 bits) for each CC number
     pub cc_values: Vec<AtomicU32>,
     /// True when a CC value has changed and the GUI hasn't applied it yet
@@ -70,6 +74,8 @@ impl MidiLearnShared {
         Self {
             learning_target: AtomicI32::new(-1),
             mappings: Mutex::new(HashMap::new()),
+            saved_mappings: Mutex::new(HashMap::new()),
+            midi_enabled: AtomicBool::new(true),
             cc_values: (0..128).map(|_| AtomicU32::new(0)).collect(),
             cc_dirty: (0..128).map(|_| AtomicBool::new(false)).collect(),
         }
@@ -326,31 +332,34 @@ impl Plugin for NebulaDeEsser {
             move |ctx: &Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
                 // ── Apply MIDI-driven param changes via setter ────────────────
                 {
-                    let mappings = midi_learn.mappings.lock();
-                    for (&cc, &pidx) in mappings.iter() {
-                        if midi_learn.cc_dirty[(cc as usize).min(127)].swap(false, Ordering::AcqRel) {
-                            let v = u32_to_f32(
-                                midi_learn.cc_values[(cc as usize).min(127)].load(Ordering::Relaxed)
-                            );
-                            macro_rules! scc {
-                                ($p:expr, $val:expr) => {{
-                                    setter.begin_set_parameter(&$p);
-                                    setter.set_parameter(&$p, $val);
-                                    setter.end_set_parameter(&$p);
-                                }};
-                            }
-                            match pidx {
-                                MIDI_THRESHOLD    => scc!(params.threshold,    -60.0 + v * 60.0),
-                                MIDI_MAX_RED      => scc!(params.max_reduction, v * 40.0),
-                                MIDI_STEREO_LINK  => scc!(params.stereo_link,  v),
-                                MIDI_INPUT_LEVEL  => scc!(params.input_level,  -60.0 + v * 72.0),
-                                MIDI_INPUT_PAN    => scc!(params.input_pan,    v * 2.0 - 1.0),
-                                MIDI_OUTPUT_LEVEL => scc!(params.output_level, -60.0 + v * 72.0),
-                                MIDI_OUTPUT_PAN   => scc!(params.output_pan,   v * 2.0 - 1.0),
-                                MIDI_MIN_FREQ     => scc!(params.min_freq,     1000.0 + v * 15000.0),
-                                MIDI_MAX_FREQ     => scc!(params.max_freq,     1000.0 + v * 19000.0),
-                                MIDI_LOOKAHEAD    => scc!(params.lookahead_ms, v * 20.0),
-                                _ => {}
+                    // Check if MIDI is enabled
+                    if midi_learn.midi_enabled.load(Ordering::Relaxed) {
+                        let mappings = midi_learn.mappings.lock();
+                        for (&cc, &pidx) in mappings.iter() {
+                            if midi_learn.cc_dirty[(cc as usize).min(127)].swap(false, Ordering::AcqRel) {
+                                let v = u32_to_f32(
+                                    midi_learn.cc_values[(cc as usize).min(127)].load(Ordering::Relaxed)
+                                );
+                                macro_rules! scc {
+                                    ($p:expr, $val:expr) => {{
+                                        setter.begin_set_parameter(&$p);
+                                        setter.set_parameter(&$p, $val);
+                                        setter.end_set_parameter(&$p);
+                                    }};
+                                }
+                                match pidx {
+                                    MIDI_THRESHOLD    => scc!(params.threshold,    -60.0 + v * 60.0),
+                                    MIDI_MAX_RED      => scc!(params.max_reduction, v * 40.0),
+                                    MIDI_STEREO_LINK  => scc!(params.stereo_link,  v),
+                                    MIDI_INPUT_LEVEL  => scc!(params.input_level,  -60.0 + v * 72.0),
+                                    MIDI_INPUT_PAN    => scc!(params.input_pan,    v * 2.0 - 1.0),
+                                    MIDI_OUTPUT_LEVEL => scc!(params.output_level, -60.0 + v * 72.0),
+                                    MIDI_OUTPUT_PAN   => scc!(params.output_pan,   v * 2.0 - 1.0),
+                                    MIDI_MIN_FREQ     => scc!(params.min_freq,     1000.0 + v * 15000.0),
+                                    MIDI_MAX_FREQ     => scc!(params.max_freq,     1000.0 + v * 19000.0),
+                                    MIDI_LOOKAHEAD    => scc!(params.lookahead_ms, v * 20.0),
+                                    _ => {}
+                                }
                             }
                         }
                     }
@@ -485,24 +494,26 @@ impl Plugin for NebulaDeEsser {
     ) -> ProcessStatus {
         // ── Consume MIDI events ──────────────────────────────────────────────
         while let Some(event) = ctx.next_event() {
-            match event {
-                NoteEvent::MidiCC { cc, value, .. } => {
-                    let idx = (cc as usize).min(127);
-                    self.midi_learn.cc_values[idx]
-                        .store(f32_to_u32(value), Ordering::Relaxed);
-                    self.midi_learn.cc_dirty[idx]
-                        .store(true, Ordering::Release);
-
-                    let target = self.midi_learn.learning_target
-                        .load(Ordering::Acquire);
-                    if target >= 0 {
-                        self.midi_learn.learning_target
-                            .store(-1, Ordering::Release);
-                        let mut m = self.midi_learn.mappings.lock();
-                        m.insert(cc, target as u8);
-                    }
+            if let NoteEvent::MidiCC { cc, value, .. } = event {
+                // Check if MIDI is enabled
+                if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
+                    continue;
                 }
-                _ => {}
+                
+                let idx = (cc as usize).min(127);
+                self.midi_learn.cc_values[idx]
+                    .store(f32_to_u32(value), Ordering::Relaxed);
+                self.midi_learn.cc_dirty[idx]
+                    .store(true, Ordering::Release);
+
+                let target = self.midi_learn.learning_target
+                    .load(Ordering::Acquire);
+                if target >= 0 {
+                    self.midi_learn.learning_target
+                        .store(-1, Ordering::Release);
+                    let mut m = self.midi_learn.mappings.lock();
+                    m.insert(cc, target as u8);
+                }
             }
         }
 
@@ -620,13 +631,13 @@ impl Plugin for NebulaDeEsser {
         let mut peak_red: f32 = 0.0;
 
         for s in 0..n {
-            let raw_l = input_data.get(0).map(|c| c[s]).unwrap_or(0.0);
+            let raw_l = input_data.first().map(|c| c[s]).unwrap_or(0.0);
             let raw_r = input_data.get(1).map(|c| c[s]).unwrap_or(raw_l);
 
             let l = raw_l * in_gl;
             let r = raw_r * in_gr;
 
-            let sc_l = if have_sc { sc_data.get(0).map(|c| c[s]) } else { None };
+            let sc_l = if have_sc { sc_data.first().map(|c| c[s]) } else { None };
             let sc_r = if have_sc { sc_data.get(1).map(|c| c[s]) } else { None };
 
             let (mut ol, mut or_, det_db, red_db) = if bypass {
