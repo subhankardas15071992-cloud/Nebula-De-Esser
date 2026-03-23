@@ -382,6 +382,14 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
     let ab_active = gui.state_a.is_some() || gui.state_b.is_some();
     let ab_resp = tbtn!(ab_label, ab_active, GREEN_NEON, 58.0);
     if ab_resp.clicked() {
+        // Save current state to the slot we're leaving
+        let current_snap = ParamSnapshot::from_params(params);
+        match gui.active_state {
+            'A' => gui.state_a = Some(current_snap),
+            'B' => gui.state_b = Some(current_snap),
+            _ => {}
+        }
+        
         // Toggle between A and B
         gui.active_state = if gui.active_state == 'A' { 'B' } else { 'A' };
         
@@ -393,7 +401,7 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
         }
     }
     if ab_resp.secondary_clicked() {
-        // Right-click: store current state to active slot
+        // Right-click: store current state to active slot (overwrites existing)
         let snap = ParamSnapshot::from_params(params);
         match gui.active_state {
             'A' => gui.state_a = Some(snap),
