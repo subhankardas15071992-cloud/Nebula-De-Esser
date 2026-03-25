@@ -179,11 +179,15 @@ pub fn draw(ctx: &Context, egui_state: &EguiState, gui: &mut NebulaGui, params: 
     let mut ch = GuiChanges::default();
 
     // ── Scale all content proportionally to the current window size ───────
-    // zoom_factor uniformly scales every widget, font, and painter coordinate.
-    // This means the UI authored at BASE_W×BASE_H fills any window size cleanly.
-    let screen = ctx.screen_rect();
-    let scale = (screen.width() / BASE_W).min(screen.height() / BASE_H).max(0.25);
-    ctx.set_zoom_factor(scale);    let mut style = (*ctx.style()).clone();
+    // IMPORTANT: read from EguiState (logical host pixels), NOT ctx.screen_rect()
+    // which is already in zoomed egui points and would cause a feedback loop.
+    let (win_w, win_h) = egui_state.size();
+    let scale = (win_w as f32 / BASE_W).min(win_h as f32 / BASE_H).max(0.25);
+    // Only update when the value actually changes to avoid per-frame thrashing.
+    if (ctx.zoom_factor() - scale).abs() > 0.001 {
+        ctx.set_zoom_factor(scale);
+    }
+    let mut style = (*ctx.style()).clone();
     style.visuals.panel_fill = BG_VOID;
     style.visuals.override_text_color = Some(TEXT_HI);
     style.visuals.widgets.noninteractive.bg_fill = BG_PANEL;
