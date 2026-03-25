@@ -372,19 +372,7 @@ chmod +x build_mac.sh
 
 ## 📊 **Industry Comparison**
 
-### **Feature Parity with FabFilter Pro-DS**
-- ✅ Multiple detection modes (Relative/Absolute)
-- ✅ Frequency range selection
-- ✅ Oversampling (2x-8x)
-- ✅ Stereo linking
-- ✅ Lookahead
-- ✅ Presets
-- ✅ MIDI learn
-- ✅ Undo/redo
-
 ### **Unique Advantages Over Competitors**
-- 🆕 **A/B State Comparison** — Instant switching between settings
-- 🆕 **Enhanced MIDI Context Menu** — Advanced MIDI management
 - 🏆 **Zero Compilation Warnings** — Perfect code quality
 - 🔧 **Pure Native Builds** — No external dependencies
 - 🧪 **Comprehensive Test Suite** — Validated audio processing
