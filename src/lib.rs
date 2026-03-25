@@ -134,6 +134,14 @@ struct NebulaParams {
     pub bypass: FloatParam,
     #[id = "oversampling"]
     pub oversampling: FloatParam,
+
+    // ── v2.2 additions ──
+    #[id = "cut_width"]
+    pub cut_width: FloatParam,
+    #[id = "cut_depth"]
+    pub cut_depth: FloatParam,
+    #[id = "mix"]
+    pub mix: FloatParam,
 }
 
 impl Default for NebulaParams {
@@ -202,6 +210,16 @@ impl Default for NebulaParams {
             oversampling: FloatParam::new("Oversampling", 0.0,
                 FloatRange::Linear { min: 0.0, max: 4.0 })
                 .with_step_size(1.0),
+
+            cut_width: FloatParam::new("Cut Width", 0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
+            cut_depth: FloatParam::new("Cut Depth", 1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
+            mix: FloatParam::new("Mix", 1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
         }
     }
 }
@@ -279,7 +297,7 @@ impl Plugin for NebulaDeEsser {
     const VENDOR:  &'static str = "Nebula Audio";
     const URL:     &'static str = "https://nebula.audio";
     const EMAIL:   &'static str = "support@nebula.audio";
-    const VERSION: &'static str = "2.1.0";
+    const VERSION: &'static str = "2.2.0";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         AudioIOLayout {
@@ -396,9 +414,12 @@ impl Plugin for NebulaDeEsser {
                     output_pan:      params.output_pan.value()   as f64,
                     bypass:          params.bypass.value()       > 0.5,
                     oversampling:    params.oversampling.value() as u32,
+                    cut_width:       params.cut_width.value()    as f64,
+                    cut_depth:       params.cut_depth.value()    as f64,
+                    mix:             params.mix.value()          as f64,
                 };
 
-                let ch = draw(ctx, gui_state, &gp);
+                let ch = draw(ctx, &params.editor_state, gui_state, &gp);
 
                 macro_rules! set_f {
                     ($opt:expr, $param:expr) => {
@@ -444,6 +465,9 @@ impl Plugin for NebulaDeEsser {
                     setter.set_parameter(&params.oversampling, v as f32);
                     setter.end_set_parameter(&params.oversampling);
                 }
+                set_f!(ch.cut_width,  params.cut_width);
+                set_f!(ch.cut_depth,  params.cut_depth);
+                set_f!(ch.mix,        params.mix);
 
                 if ch.detection_max_reset {
                     meters.reset_det.store(1, Ordering::Release);
@@ -543,21 +567,27 @@ impl Plugin for NebulaDeEsser {
         let vocal_mode    = self.params.vocal_mode.value()     > 0.5;
 
         // ── Update main DSP filters ──────────────────────────────────────────
+        let cut_width = self.params.cut_width.value() as f64;
+        let cut_depth = self.params.cut_depth.value() as f64;
+        let mix       = self.params.mix.value()       as f64;
         if (min_freq - self.last_min_freq).abs() > 0.5
             || (max_freq - self.last_max_freq).abs() > 0.5
             || use_peak != self.last_use_peak
         {
-            self.dsp.update_filters(min_freq, max_freq, use_peak);
+            self.dsp.update_filters(min_freq, max_freq, use_peak, cut_width, cut_depth, max_reduction);
             self.last_min_freq = min_freq;
             self.last_max_freq = max_freq;
             self.last_use_peak = use_peak;
+        } else {
+            // Always update bell coeffs since width/depth can change independently
+            self.dsp.update_filters(min_freq, max_freq, use_peak, cut_width, cut_depth, max_reduction);
         }
 
         // ── Update oversampled DSP ───────────────────────────────────────────
         if os_factor != self.last_os_factor {
             let os_sr = self.sample_rate * os_factor as f64;
             self.os_dsp = DeEsserDsp::new(os_sr);
-            self.os_dsp.update_filters(min_freq, max_freq, use_peak);
+            self.os_dsp.update_filters(min_freq, max_freq, use_peak, cut_width, cut_depth, max_reduction);
             let eff_la = if lookahead_en { lookahead_ms } else { 0.0 };
             self.os_dsp.update_lookahead(eff_la);
             if vocal_mode {
@@ -685,6 +715,14 @@ impl Plugin for NebulaDeEsser {
             ol *= out_gl;
             or_ *= out_gr;
 
+            // Dry/wet mix — blend post-processed signal with the input-gained dry signal
+            // Both sides have already had input gain applied, so the blend is level-matched.
+            if mix < 1.0 {
+                let dry = 1.0 - mix;
+                ol = ol * mix + l * out_gl * dry;
+                or_ = or_ * mix + r * out_gr * dry;
+            }
+
             out_l[s] = ol;
             out_r[s] = or_;
 
@@ -736,7 +774,7 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
     const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Hyper-optimized 64-bit CLAP de-esser v2.1 — alien synthwave GUI");
+        Some("Hyper-optimized 64-bit CLAP de-esser v2.2 — alien synthwave GUI");
     const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio/manual");
     const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://nebula.audio/support");
     const CLAP_FEATURES: &'static [ClapFeature] = &[

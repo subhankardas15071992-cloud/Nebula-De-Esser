@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.1.0 — Beautified Alien Synthwave GUI
+// Nebula DeEsser v2.2.0 — Beautified Alien Synthwave GUI
 // Refinements applied: log-warped spectrum, glow layers, premium controls
 // ─────────────────────────────────────────────────────────────────────────────
 use std::sync::Arc;
@@ -7,6 +7,8 @@ use parking_lot::Mutex;
 use nih_plug_egui::egui::{
     self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, Ui, Context, FontFamily,
 };
+use nih_plug_egui::resizable_window::ResizableWindow;
+use nih_plug_egui::EguiState;
 use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_NAMES, MIDI_PARAM_COUNT};
 
@@ -87,6 +89,7 @@ pub enum NumTarget {
     #[default] None,
     Threshold, MaxReduction, MinFreq, MaxFreq, Lookahead, StereoLink,
     InputLevel, InputPan, OutputLevel, OutputPan,
+    CutWidth, CutDepth, Mix,
 }
 #[derive(Default, Clone)]
 pub struct NumInput { pub open:bool, pub label:String, pub value_str:String, pub target:NumTarget, pub min:f64, pub max:f64 }
@@ -98,7 +101,6 @@ pub struct NebulaGui {
     pub num_input:   NumInput,
     pub time:        f64,
     pub smooth_mags: Vec<f32>,
-    // Presets
     pub presets:             Vec<(String, ParamSnapshot)>,
     pub preset_name_buf:     String,
     pub preset_save_popup:   bool,
@@ -119,8 +121,8 @@ pub struct NebulaGui {
     pub midi_cleanup_menu:  bool,
     pub midi_cleanup_anchor:Pos2,
     pub os_dropdown:        bool,
-    pub os_anchor:          Pos2,       // top-left of OS button, for dropdown placement
-    pub preset_anchor:      Pos2,       // top-left of preset button
+    pub os_anchor:          Pos2,
+    pub preset_anchor:      Pos2,
 }
 impl NebulaGui {
     pub fn new(spectrum: Arc<Mutex<SpectrumData>>, midi_learn: Arc<MidiLearnShared>) -> Self {
@@ -146,6 +148,8 @@ pub struct GuiParams {
     pub detection_db:f32, pub detection_max_db:f32, pub reduction_db:f32, pub reduction_max_db:f32,
     pub input_level:f64, pub input_pan:f64, pub output_level:f64, pub output_pan:f64,
     pub bypass:bool, pub oversampling:u32,
+    pub cut_width:f64, pub cut_depth:f64,
+    pub mix:f64,
 }
 #[derive(Default)]
 pub struct GuiChanges {
@@ -161,14 +165,25 @@ pub struct GuiChanges {
     pub input_level:Option<f64>, pub input_pan:Option<f64>,
     pub output_level:Option<f64>, pub output_pan:Option<f64>,
     pub bypass:Option<bool>, pub oversampling:Option<u32>,
+    pub cut_width:Option<f64>, pub cut_depth:Option<f64>,
+    pub mix:Option<f64>,
 }
 
+// Base design resolution — all coordinates are authored at this size
+const BASE_W: f32 = 860.0;
+const BASE_H: f32 = 640.0;
+
 // ─── Main Draw ────────────────────────────────────────────────────────────────
-pub fn draw(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams) -> GuiChanges {
+pub fn draw(ctx: &Context, egui_state: &EguiState, gui: &mut NebulaGui, params: &GuiParams) -> GuiChanges {
     gui.time += ctx.input(|i| i.unstable_dt) as f64;
     let mut ch = GuiChanges::default();
 
-    let mut style = (*ctx.style()).clone();
+    // ── Scale all content proportionally to the current window size ───────
+    // zoom_factor uniformly scales every widget, font, and painter coordinate.
+    // This means the UI authored at BASE_W×BASE_H fills any window size cleanly.
+    let screen = ctx.screen_rect();
+    let scale = (screen.width() / BASE_W).min(screen.height() / BASE_H).max(0.25);
+    ctx.set_zoom_factor(scale);    let mut style = (*ctx.style()).clone();
     style.visuals.panel_fill = BG_VOID;
     style.visuals.override_text_color = Some(TEXT_HI);
     style.visuals.widgets.noninteractive.bg_fill = BG_PANEL;
@@ -178,9 +193,9 @@ pub fn draw(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams) -> GuiChange
     style.spacing.item_spacing = Vec2::new(4.0, 3.0);
     ctx.set_style(style);
 
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(BG_VOID))
-        .show(ctx, |ui| {
+    ResizableWindow::new("nebula_deesser_resize")
+        .min_size(Vec2::new(400.0, 300.0))
+        .show(ctx, egui_state, |ui| {
             let full = ui.max_rect();
             draw_bg(ui.painter_at(full), full, gui.time, params.bypass);
 
@@ -275,7 +290,7 @@ fn draw_title(painter: egui::Painter, rect: Rect, bypass: bool) {
     // Version badge
     let vbx = bar.max.x - 12.0; let vby = ty;
     painter.text(Pos2::new(vbx, vby), egui::Align2::RIGHT_CENTER,
-        "v2.1", FontId::new(8.5, FontFamily::Monospace), ga(PURPLE, 210));
+        "v2.2", FontId::new(8.5, FontFamily::Monospace), ga(PURPLE, 210));
 
     if bypass {
         let bx = bar.max.x - 74.0;
@@ -382,6 +397,14 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
     let ab_active = gui.state_a.is_some() || gui.state_b.is_some();
     let ab_resp = tbtn!(ab_label, ab_active, GREEN_NEON, 58.0);
     if ab_resp.clicked() {
+        // Save current state to the slot we're leaving
+        let current_snap = ParamSnapshot::from_params(params);
+        match gui.active_state {
+            'A' => gui.state_a = Some(current_snap),
+            'B' => gui.state_b = Some(current_snap),
+            _ => {}
+        }
+        
         // Toggle between A and B
         gui.active_state = if gui.active_state == 'A' { 'B' } else { 'A' };
         
@@ -393,7 +416,7 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
         }
     }
     if ab_resp.secondary_clicked() {
-        // Right-click: store current state to active slot
+        // Right-click: store current state to active slot (overwrites existing)
         let snap = ParamSnapshot::from_params(params);
         match gui.active_state {
             'A' => gui.state_a = Some(snap),
@@ -600,8 +623,23 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
     ];
     knob_row(ui, rect, inner, y2, kh, main_k, ch, gui, p, CYAN);
 
+    // ── Cut shape knob row (Width + Depth) ───────────────────────────────
+    let y2b = y2 + kh + gap;
+    { let pa = ui.painter_at(rect);
+      pa.line_segment([Pos2::new(inner.min.x+20.0, y2b-1.0), Pos2::new(inner.max.x-20.0, y2b-1.0)],
+          Stroke::new(0.5, ga(PURPLE, 35))); }
+    let cut_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
+        ("CUT WIDTH", p.cut_width, 0.0, 1.0, "%", NumTarget::CutWidth),
+        ("CUT DEPTH", p.cut_depth, 0.0, 1.0, "%", NumTarget::CutDepth),
+        ("MIX",       p.mix,       0.0, 1.0, "%", NumTarget::Mix),
+    ];
+    let cut_inner = Rect::from_min_size(
+        Pos2::new(inner.min.x + inner.width()*0.2, y2b),
+        Vec2::new(inner.width()*0.6, kh));
+    knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, PURPLE);
+
     // ── I/O knob row ──────────────────────────────────────────────────────
-    let y3 = y2 + kh + gap;
+    let y3 = y2b + kh + gap;
     { let pa = ui.painter_at(rect);
       pa.line_segment([Pos2::new(inner.min.x+20.0, y3-1.0), Pos2::new(inner.max.x-20.0, y3-1.0)],
           Stroke::new(0.5, ga(GREEN_NEON, 35))); }
@@ -746,6 +784,9 @@ fn apply_ch(t: &NumTarget, v: f64, ch: &mut GuiChanges) {
         NumTarget::InputPan     => ch.input_pan     = Some(v),
         NumTarget::OutputLevel  => ch.output_level  = Some(v),
         NumTarget::OutputPan    => ch.output_pan    = Some(v),
+        NumTarget::CutWidth     => ch.cut_width     = Some(v),
+        NumTarget::CutDepth     => ch.cut_depth     = Some(v),
+        NumTarget::Mix          => ch.mix           = Some(v),
         NumTarget::None         => {}
     }
 }

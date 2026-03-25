@@ -1,6 +1,6 @@
 [package]
 name = "nebula_desser"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 authors = ["Nebula Audio"]
 description = "Nebula DeEsser v2 - Hyper-optimized 64-bit CLAP De-esser Plugin"

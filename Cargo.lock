@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "nebula_desser"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "egui 0.29.1",
  "nih_plug",
