@@ -523,3 +523,443 @@ fn fancy_meter(pa: &egui::Painter, rect: Rect, db: f32, min_db: f32, max_db: f32
         }
     }
 }
+
+// ─── Controls Panel ──────────────────────────────────────────────────────────
+fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gui: &mut NebulaGui, s: f32) {
+    { let pa = ui.painter_at(rect);
+      pa.rect_filled(rect, 6.0*s, BG_PANEL);
+      pa.rect_stroke(rect, 6.0*s, Stroke::new(s, ga(PURPLE,45)), egui::StrokeKind::Outside); }
+
+    let inner  = rect.shrink(7.0 * s);
+    let top_h  = 62.0 * s;
+    let kh     = 74.0 * s;
+    let btn_h  = 23.0 * s;
+    let gap    = 4.0  * s;
+
+    let cw = inner.width() / 5.0;
+    let cols: Vec<Rect> = (0..5).map(|i|
+        Rect::from_min_size(Pos2::new(inner.min.x + i as f32 * cw, inner.min.y), Vec2::new(cw-4.0*s, top_h))).collect();
+    if let Some(i) = sec2(ui, cols[0], "MODE",      ["RELATIVE","ABSOLUTE"], if p.mode_relative{0}else{1}, s) { push_undo(gui,p); ch.mode_relative=Some(i==0); }
+    if let Some(i) = sec2(ui, cols[1], "RANGE",     ["SPLIT","WIDE"], if p.use_wide_range{1}else{0}, s) { push_undo(gui,p); ch.use_wide_range=Some(i==1); }
+    if let Some(i) = sec2(ui, cols[2], "FILTER",    ["LOWPASS","PEAK"], if p.use_peak_filter{1}else{0}, s) { push_undo(gui,p); ch.use_peak_filter=Some(i==1); }
+    if let Some(i) = sec2(ui, cols[3], "SIDECHAIN", ["INTERNAL","EXTERNAL"], if p.sidechain_external{1}else{0}, s) { push_undo(gui,p); ch.sidechain_external=Some(i==1); }
+    if let Some(i) = sec2(ui, cols[4], "MODE",      ["VOCAL","ALLROUND"], if p.vocal_mode{0}else{1}, s) { push_undo(gui,p); ch.vocal_mode=Some(i==0); }
+
+    let y2 = inner.min.y + top_h + gap;
+    let main_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
+        ("THRESH",   p.threshold,    -60.0,  0.0, "dB", NumTarget::Threshold),
+        ("MAX RED",  p.max_reduction,  0.0, 40.0, "dB", NumTarget::MaxReduction),
+        ("MIN FREQ", p.min_freq,    1000.0,16000.0,"Hz", NumTarget::MinFreq),
+        ("MAX FREQ", p.max_freq,    1000.0,20000.0,"Hz", NumTarget::MaxFreq),
+        ("LOOKAHD",  p.lookahead_ms,  0.0, 20.0, "ms", NumTarget::Lookahead),
+        ("ST LINK",  p.stereo_link,   0.0,  1.0, "%",  NumTarget::StereoLink),
+    ];
+    knob_row(ui, rect, inner, y2, kh, main_k, ch, gui, p, CYAN, s);
+
+    let y2b = y2 + kh + gap;
+    { let pa = ui.painter_at(rect);
+      pa.line_segment([Pos2::new(inner.min.x+20.0*s, y2b-s), Pos2::new(inner.max.x-20.0*s, y2b-s)],
+          Stroke::new(0.5*s, ga(PURPLE, 35))); }
+    let cut_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
+        ("CUT WIDTH", p.cut_width, 0.0, 1.0, "%", NumTarget::CutWidth),
+        ("CUT DEPTH", p.cut_depth, 0.0, 1.0, "%", NumTarget::CutDepth),
+        ("MIX",       p.mix,       0.0, 1.0, "%", NumTarget::Mix),
+    ];
+    let cut_inner = Rect::from_min_size(
+        Pos2::new(inner.min.x + inner.width()*0.2, y2b),
+        Vec2::new(inner.width()*0.6, kh));
+    knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, PURPLE, s);
+
+    let y3 = y2b + kh + gap;
+    { let pa = ui.painter_at(rect);
+      pa.line_segment([Pos2::new(inner.min.x+20.0*s, y3-s), Pos2::new(inner.max.x-20.0*s, y3-s)],
+          Stroke::new(0.5*s, ga(GREEN_NEON, 35))); }
+    let io_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
+        ("IN LEVEL",  p.input_level,  -60.0, 12.0, "dB",  NumTarget::InputLevel),
+        ("IN PAN",    p.input_pan,     -1.0,  1.0, "pan", NumTarget::InputPan),
+        ("OUT LEVEL", p.output_level, -60.0, 12.0, "dB",  NumTarget::OutputLevel),
+        ("OUT PAN",   p.output_pan,   -1.0,  1.0, "pan", NumTarget::OutputPan),
+    ];
+    let io_inner = Rect::from_min_size(
+        Pos2::new(inner.min.x + inner.width()*0.1, y3),
+        Vec2::new(inner.width()*0.8, kh));
+    knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, GREEN_NEON, s);
+
+    let y4 = y3 + kh + gap;
+    let btns: &[(&str, bool)] = &[
+        ("FILTER SOLO",  p.filter_solo),
+        ("TRIGGER HEAR", p.trigger_hear),
+        ("LOOKAHEAD ON", p.lookahead_enabled),
+        ("MID / SIDE",   p.stereo_mid_side),
+    ];
+    let bw = inner.width() / btns.len() as f32 - 4.0 * s;
+    for (i, (lbl, active)) in btns.iter().enumerate() {
+        let bx = inner.min.x + (bw+4.0*s) * i as f32;
+        let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(bw, btn_h));
+        let r  = ui.allocate_rect(br, Sense::click());
+        let hov = r.hovered();
+        { let pa = ui.painter_at(rect);
+          let c  = if *active {CYAN} else if hov {ga(CYAN,160)} else {TEXT_LO};
+          let bg = if *active {Color32::from_rgb(0,34,50)} else if hov {ga(CYAN,8)} else {BG_WIDGET};
+          pa.rect_filled(br, 4.0*s, bg);
+          pa.rect_stroke(br, 4.0*s, Stroke::new(if *active {1.2*s} else {0.7*s}, c), egui::StrokeKind::Outside);
+          if *active { pa.rect_stroke(br, 4.0*s, Stroke::new(5.0*s, ga(c,22)), egui::StrokeKind::Outside); }
+          pa.text(br.center(), egui::Align2::CENTER_CENTER, *lbl, FontId::new(7.0*s, FontFamily::Monospace), c); }
+        if r.clicked() {
+            push_undo(gui, p);
+            match *lbl {
+                "FILTER SOLO"  => ch.filter_solo       = Some(!active),
+                "TRIGGER HEAR" => ch.trigger_hear      = Some(!active),
+                "LOOKAHEAD ON" => ch.lookahead_enabled = Some(!active),
+                "MID / SIDE"   => ch.stereo_mid_side   = Some(!active),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn sec2(ui: &mut Ui, rect: Rect, hdr: &str, labs: [&str;2], ai: usize, s: f32) -> Option<usize> {
+    { let pa = ui.painter_at(rect);
+      pa.text(Pos2::new(rect.center().x, rect.min.y+7.0*s), egui::Align2::CENTER_CENTER,
+          hdr, FontId::new(6.5*s, FontFamily::Monospace), ga(PURPLE,210)); }
+    let bh = 15.0 * s; let mut res = None;
+    for (i, lbl) in labs.iter().enumerate() {
+        let br = Rect::from_min_size(
+            Pos2::new(rect.min.x, rect.min.y+13.0*s+i as f32*(bh+2.0*s)),
+            Vec2::new(rect.width(), bh));
+        let r  = ui.allocate_rect(br, Sense::click());
+        let ia = i == ai; let hov = r.hovered();
+        { let pa = ui.painter_at(rect);
+          let c = if ia{CYAN} else if hov{ga(CYAN,160)} else{TEXT_LO};
+          pa.rect_filled(br, 2.0*s, if ia{Color32::from_rgb(0,34,50)} else if hov{ga(CYAN,8)} else{BG_WIDGET});
+          pa.rect_stroke(br, 2.0*s, Stroke::new(if ia{s} else{0.6*s}, c), egui::StrokeKind::Outside);
+          pa.text(br.center(), egui::Align2::CENTER_CENTER, *lbl, FontId::new(6.5*s, FontFamily::Monospace), c); }
+        if r.clicked() { res = Some(i); }
+    }
+    res
+}
+
+fn knob_row(
+    ui: &mut Ui, rect: Rect, inner: Rect, y: f32, _h: f32,
+    defs: &[(&str, f64, f64, f64, &str, NumTarget)],
+    ch: &mut GuiChanges, gui: &mut NebulaGui, p: &GuiParams, col: Color32, s: f32,
+) {
+    let n = defs.len(); let kw = inner.width() / n as f32;
+    let ks = (kw * 0.66).min(36.0 * s);
+    for (i, (lbl, val, min, max, unit, tgt)) in defs.iter().enumerate() {
+        let kx  = inner.min.x + kw * i as f32 + kw * 0.5;
+        let kc  = Pos2::new(kx, y + 12.0*s + ks * 0.5);
+        let kr  = Rect::from_center_size(kc, Vec2::splat(ks));
+        let fr  = Rect::from_center_size(Pos2::new(kx, kr.max.y + 9.0*s), Vec2::new(kw-10.0*s, 13.0*s));
+        { let pa = ui.painter_at(rect);
+          pa.text(Pos2::new(kx, y+5.0*s), egui::Align2::CENTER_CENTER,
+              *lbl, FontId::new(6.5*s, FontFamily::Monospace), ga(col, 180)); }
+        let resp = ui.allocate_rect(kr, Sense::drag().union(Sense::click()));
+        if resp.drag_started() { gui.drag_snap = Some(ParamSnapshot::from_params(p)); }
+        if resp.dragged() {
+            let n = ((*val - *min) / (*max - *min)) as f32;
+            let nv = (*min + (n - resp.drag_delta().y * 0.006).clamp(0.0, 1.0) as f64 * (*max - *min)).clamp(*min, *max);
+            apply_ch(tgt, nv, ch);
+        }
+        if resp.drag_stopped() {
+            if let Some(snap) = gui.drag_snap.take() {
+                gui.undo_stack.push(snap); gui.undo_stack.truncate(50); gui.redo_stack.clear();
+            }
+        }
+        if resp.hovered() {
+            let sc = ui.input(|i| i.smooth_scroll_delta.y);
+            if sc != 0.0 {
+                let n = ((*val - *min) / (*max - *min)) as f32;
+                let nv = (*min + (n + sc*0.008).clamp(0.0,1.0) as f64 * (*max-*min)).clamp(*min,*max);
+                apply_ch(tgt, nv, ch);
+            }
+        }
+        if resp.secondary_clicked() {
+            gui.num_input = NumInput { open:true, label:lbl.to_string(),
+                value_str:format!("{:.2}",val), target:tgt.clone(), min:*min, max:*max };
+        }
+        if ui.allocate_rect(fr, Sense::click()).secondary_clicked() {
+            gui.num_input = NumInput { open:true, label:lbl.to_string(),
+                value_str:format!("{:.2}",val), target:tgt.clone(), min:*min, max:*max };
+        }
+        { let pa = ui.painter_at(rect);
+          draw_premium_knob(&pa, kc, ks*0.5, *val, *min, *max, col, s);
+          let disp = fmt_knob(*val, *unit);
+          draw_value_field(&pa, fr, &disp, col, s); }
+    }
+}
+
+fn fmt_knob(v: f64, unit: &str) -> String {
+    match unit {
+        "Hz"  => if v >= 1000.0 { format!("{:.1}k", v/1000.0) } else { format!("{:.0}", v) },
+        "%"   => format!("{:.0}%", v*100.0),
+        "pan" => if v.abs()<0.01 {"C".into()} else if v>0.0 {format!("R{:.0}",v*100.0)} else {format!("L{:.0}",-v*100.0)},
+        _     => format!("{:.1}", v),
+    }
+}
+
+fn apply_ch(t: &NumTarget, v: f64, ch: &mut GuiChanges) {
+    match t {
+        NumTarget::Threshold    => ch.threshold     = Some(v),
+        NumTarget::MaxReduction => ch.max_reduction = Some(v),
+        NumTarget::MinFreq      => ch.min_freq      = Some(v),
+        NumTarget::MaxFreq      => ch.max_freq      = Some(v),
+        NumTarget::Lookahead    => ch.lookahead_ms  = Some(v),
+        NumTarget::StereoLink   => ch.stereo_link   = Some(v),
+        NumTarget::InputLevel   => ch.input_level   = Some(v),
+        NumTarget::InputPan     => ch.input_pan     = Some(v),
+        NumTarget::OutputLevel  => ch.output_level  = Some(v),
+        NumTarget::OutputPan    => ch.output_pan    = Some(v),
+        NumTarget::CutWidth     => ch.cut_width     = Some(v),
+        NumTarget::CutDepth     => ch.cut_depth     = Some(v),
+        NumTarget::Mix          => ch.mix           = Some(v),
+        NumTarget::None         => {}
+    }
+}
+
+fn push_undo(g: &mut NebulaGui, p: &GuiParams) {
+    g.undo_stack.push(ParamSnapshot::from_params(p)); g.undo_stack.truncate(50); g.redo_stack.clear();
+}
+
+fn draw_premium_knob(pa: &egui::Painter, c: Pos2, r: f32, val: f64, min: f64, max: f64, col: Color32, s: f32) {
+    let norm  = ((val-min)/(max-min)).clamp(0.0,1.0) as f32;
+    let start = std::f32::consts::PI * 0.75;
+    let sweep = std::f32::consts::PI * 1.5;
+    let angle = start + norm * sweep;
+    pa.circle_filled(c, r+1.5*s, ga(col, 12));
+    pa.circle_filled(c, r,       BG_DEEP);
+    pa.circle_stroke(c, r,       Stroke::new(1.5*s, ga(col, 55)));
+    arc(pa, c, r*0.76, start, start+sweep, ga(col,35), 2.5*s);
+    if norm > 0.005 {
+        arc(pa, c, r*0.76, start, angle, ga(col, 55), 4.5*s);
+        arc(pa, c, r*0.76, start, angle, col,         2.0*s);
+    }
+    let ix = c.x + r*0.52 * angle.cos();
+    let iy = c.y + r*0.52 * angle.sin();
+    pa.circle_filled(Pos2::new(ix, iy), 2.5*s, col);
+    pa.circle_filled(Pos2::new(ix, iy), 1.5*s, Color32::WHITE);
+    pa.circle_filled(c, 2.0*s, ga(col, 180));
+}
+
+fn arc(pa: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, col: Color32, w: f32) {
+    let steps = 32; let span = a1 - a0;
+    let pts: Vec<Pos2> = (0..=steps).map(|i| {
+        let a = a0 + i as f32 / steps as f32 * span;
+        Pos2::new(c.x + r*a.cos(), c.y + r*a.sin())
+    }).collect();
+    for i in 0..pts.len()-1 { pa.line_segment([pts[i], pts[i+1]], Stroke::new(w, col)); }
+}
+
+fn draw_value_field(pa: &egui::Painter, rect: Rect, text: &str, col: Color32, s: f32) {
+    pa.rect_filled(rect, 3.0*s, BG_DEEP);
+    pa.rect_stroke(rect, 3.0*s, Stroke::new(0.7*s, ga(col,70)), egui::StrokeKind::Outside);
+    pa.text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::new(7.5*s, FontFamily::Monospace), ga(col,220));
+}
+
+// ─── Spectrum Analyzer ───────────────────────────────────────────────────────
+fn freq_to_x(freq: f32, w: f32) -> f32 {
+    let lmin = 20.0_f32.log10(); let lmax = 22000.0_f32.log10();
+    (freq.clamp(20.0, 22000.0).log10() - lmin) / (lmax - lmin) * w
+}
+fn x_to_freq(x: f32, w: f32) -> f32 {
+    let lmin = 20.0_f32.log10(); let lmax = 22000.0_f32.log10();
+    10.0_f32.powf(lmin + (x/w)*(lmax-lmin))
+}
+
+fn draw_spectrum(ui: &mut Ui, rect: Rect, gui: &mut NebulaGui, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
+    if rect.height() < 24.0 { return; }
+    let pa = ui.painter_at(rect);
+    pa.rect_filled(rect, 6.0*s, BG_DEEP);
+    pa.rect_stroke(rect, 6.0*s, Stroke::new(s, ga(PURPLE, 65)), egui::StrokeKind::Outside);
+    let inner = rect.shrink(5.0 * s);
+    let ph    = (inner.height() - 16.0*s).max(10.0);
+    let sr    = 44100.0_f32;
+
+    for &db in &[-80.0_f32, -60.0, -40.0, -20.0, -10.0] {
+        let ny = 1.0 - (db - (-90.0)) / 90.0;
+        let y  = inner.min.y + ny * ph;
+        pa.line_segment([Pos2::new(inner.min.x, y), Pos2::new(inner.max.x, y)], Stroke::new(0.4*s, ga(PURPLE, 28)));
+        pa.text(Pos2::new(inner.min.x + 3.0*s, y - 2.0*s), egui::Align2::LEFT_BOTTOM,
+            format!("{}", db as i32), FontId::new(5.5*s, FontFamily::Monospace), ga(TEXT_LO, 140));
+    }
+    for &freq in &[100.0_f32, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0] {
+        let x = inner.min.x + freq_to_x(freq, inner.width());
+        pa.line_segment([Pos2::new(x, inner.min.y), Pos2::new(x, inner.min.y + ph)], Stroke::new(0.4*s, ga(CYAN, 16)));
+        let lbl = if freq >= 1000.0 { format!("{}k", (freq/1000.0) as i32) } else { format!("{}", freq as i32) };
+        pa.text(Pos2::new(x, inner.max.y - 3.0*s), egui::Align2::CENTER_CENTER, lbl, FontId::new(6.0*s, FontFamily::Monospace), TEXT_LO);
+    }
+
+    {
+        let spec = gui.spectrum.lock();
+        let mags = &spec.magnitudes;
+        let nb   = mags.len();
+        if gui.smooth_mags.len() != nb { gui.smooth_mags = vec![-90.0_f32; nb]; }
+        let atk = 0.30_f32; let rel = 0.85_f32;
+        for (i, &mag) in mags.iter().enumerate().take(nb) {
+            let m = mag.clamp(-90.0, 0.0);
+            gui.smooth_mags[i] = if m > gui.smooth_mags[i] {
+                gui.smooth_mags[i] * atk + m * (1.0 - atk)
+            } else {
+                gui.smooth_mags[i] * rel + m * (1.0 - rel)
+            };
+        }
+    }
+
+    let nb = gui.smooth_mags.len();
+    let fft_size = (nb - 1) * 2;
+    let db_min = -90.0_f32; let db_max = 0.0_f32; let db_rng = db_max - db_min;
+    let cols = inner.width() as usize;
+    let mut pts: Vec<Pos2> = Vec::with_capacity(cols + 2);
+    for col in 0..=cols {
+        let freq  = x_to_freq(col as f32, inner.width());
+        let bin_f = freq * fft_size as f32 / sr;
+        let bin   = (bin_f as usize).min(nb.saturating_sub(1));
+        let db    = gui.smooth_mags[bin].clamp(db_min, db_max);
+        let ny    = 1.0 - (db - db_min) / db_rng;
+        pts.push(Pos2::new(inner.min.x + col as f32, inner.min.y + ny * ph));
+    }
+
+    if pts.len() >= 2 {
+        let bottom_y = inner.min.y + ph;
+        let fill_col = ga(CYAN, 22);
+        for i in 0..pts.len().saturating_sub(1) {
+            let tl = pts[i]; let tr = pts[i+1];
+            let bl = Pos2::new(tl.x, bottom_y); let br = Pos2::new(tr.x, bottom_y);
+            pa.add(egui::Shape::convex_polygon(vec![tl, tr, br, bl], fill_col, Stroke::NONE));
+        }
+        for i in 0..pts.len()-1 { pa.line_segment([pts[i], pts[i+1]], Stroke::new(4.0*s, ga(CYAN, 20))); }
+        for i in 0..pts.len()-1 { pa.line_segment([pts[i], pts[i+1]], Stroke::new(2.0*s, ga(CYAN, 70))); }
+        for i in 0..pts.len()-1 { pa.line_segment([pts[i], pts[i+1]], Stroke::new(1.5*s, Color32::from_rgba_premultiplied(0, 210, 240, 230))); }
+    }
+
+    let min_x = inner.min.x + freq_to_x(p.min_freq as f32, inner.width());
+    let max_x = inner.min.x + freq_to_x(p.max_freq as f32, inner.width());
+    if max_x > min_x {
+        let br = Rect::from_min_max(Pos2::new(min_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph));
+        pa.rect_filled(br, 0.0, ga(PURPLE, 22));
+        pa.line_segment([Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.min.y + ph)], Stroke::new(1.5*s, ga(MAGENTA, 200)));
+        pa.line_segment([Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.min.y + ph)], Stroke::new(5.0*s, ga(MAGENTA, 38)));
+        pa.line_segment([Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph)], Stroke::new(1.5*s, ga(GOLD, 200)));
+        pa.line_segment([Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph)], Stroke::new(5.0*s, ga(GOLD, 38)));
+    }
+
+    let node_y = inner.min.y + ph * 0.5;
+    let hit_sz = 22.0 * s;
+    let min_hit = Rect::from_center_size(Pos2::new(min_x, node_y), Vec2::splat(hit_sz));
+    let mr = ui.allocate_rect(min_hit, Sense::drag());
+    if mr.dragged() {
+        let nx = (min_x + mr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
+        ch.min_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(1000.0, p.max_freq - 100.0));
+    }
+    let max_hit = Rect::from_center_size(Pos2::new(max_x, node_y), Vec2::splat(hit_sz));
+    let xr = ui.allocate_rect(max_hit, Sense::drag());
+    if xr.dragged() {
+        let nx = (max_x + xr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
+        ch.max_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(p.min_freq + 100.0, 20000.0));
+    }
+    freq_node(&pa, Pos2::new(min_x, node_y), MAGENTA, "MIN", s);
+    freq_node(&pa, Pos2::new(max_x, node_y), GOLD,    "MAX", s);
+    pa.text(Pos2::new(inner.min.x + 6.0*s, inner.min.y + 7.0*s), egui::Align2::LEFT_CENTER,
+        "SPECTRUM ANALYZER", FontId::new(6.5*s, FontFamily::Monospace), ga(PURPLE, 170));
+    ui.ctx().request_repaint();
+}
+
+fn freq_node(pa: &egui::Painter, c: Pos2, col: Color32, lbl: &str, s: f32) {
+    pa.circle_filled(c, 9.0*s, ga(col, 22));
+    pa.circle_filled(c, 6.5*s, ga(col, 140));
+    pa.circle_stroke(c, 6.5*s, Stroke::new(1.5*s, Color32::WHITE));
+    pa.text(Pos2::new(c.x, c.y-14.0*s), egui::Align2::CENTER_CENTER, lbl, FontId::new(6.5*s, FontFamily::Monospace), col);
+}
+
+// ─── Numeric Popup ───────────────────────────────────────────────────────────
+fn draw_num_popup(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+    let sc  = ctx.screen_rect();
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(220.0*s, 110.0*s));
+    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y-4.0*s), Vec2::new(180.0*s, 23.0*s));
+    let ok  = Rect::from_center_size(Pos2::new(pop.center().x-44.0*s, pop.max.y-15.0*s), Vec2::new(68.0*s, 18.0*s));
+    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x+44.0*s, pop.max.y-15.0*s), Vec2::new(68.0*s, 18.0*s));
+    let lbl = gui.num_input.label.clone();
+    egui::Area::new(egui::Id::new("neb_num")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        { let p = ui.painter();
+          p.rect_filled(sc, 0.0, Color32::from_black_alpha(170));
+          p.rect_filled(pop, 7.0*s, BG_PANEL);
+          p.rect_stroke(pop, 7.0*s, Stroke::new(2.0*s, CYAN), egui::StrokeKind::Outside);
+          p.rect_stroke(pop, 7.0*s, Stroke::new(9.0*s, ga(CYAN,28)), egui::StrokeKind::Outside);
+          p.text(Pos2::new(pop.center().x, pop.min.y+16.0*s), egui::Align2::CENTER_CENTER,
+              format!("SET  {}", lbl), FontId::new(9.5*s, FontFamily::Monospace), CYAN);
+          p.rect_filled(fr, 3.0*s, BG_DEEP);
+          p.rect_stroke(fr, 3.0*s, Stroke::new(1.2*s, ga(PURPLE,200)), egui::StrokeKind::Outside);
+          p.rect_filled(ok, 3.0*s, Color32::from_rgb(0,50,70));
+          p.rect_stroke(ok, 3.0*s, Stroke::new(s, CYAN), egui::StrokeKind::Outside);
+          p.text(ok.center(), egui::Align2::CENTER_CENTER, "OK", FontId::new(8.5*s, FontFamily::Monospace), CYAN);
+          p.rect_filled(cx_, 3.0*s, Color32::from_rgb(55,0,0));
+          p.rect_stroke(cx_, 3.0*s, Stroke::new(s, MAGENTA), egui::StrokeKind::Outside);
+          p.text(cx_.center(), egui::Align2::CENTER_CENTER, "CANCEL", FontId::new(8.5*s, FontFamily::Monospace), MAGENTA); }
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
+            let te = egui::TextEdit::singleline(&mut gui.num_input.value_str)
+                .font(FontId::new(10.0*s, FontFamily::Monospace))
+                .text_color(CYAN).frame(false).desired_width(fr.width());
+            let r = ui.add(te); r.request_focus();
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) { apply_num(gui, ch); }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.num_input.open = false; }
+        if ui.allocate_rect(ok,  Sense::click()).clicked() { apply_num(gui, ch); }
+        if ui.allocate_rect(cx_, Sense::click()).clicked() { gui.num_input.open = false; }
+    });
+}
+
+fn apply_num(gui: &mut NebulaGui, ch: &mut GuiChanges) {
+    if let Ok(v) = gui.num_input.value_str.trim().parse::<f64>() {
+        let v = v.clamp(gui.num_input.min, gui.num_input.max);
+        apply_ch(&gui.num_input.target, v, ch);
+    }
+    gui.num_input.open = false;
+}
+
+// ─── Preset Save Popup ───────────────────────────────────────────────────────
+fn draw_preset_save(ctx: &Context, gui: &mut NebulaGui, p: &GuiParams, _ch: &mut GuiChanges, s: f32) {
+    let sc  = ctx.screen_rect();
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(250.0*s, 112.0*s));
+    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y-4.0*s), Vec2::new(210.0*s, 23.0*s));
+    let ok  = Rect::from_center_size(Pos2::new(pop.center().x-48.0*s, pop.max.y-15.0*s), Vec2::new(74.0*s, 18.0*s));
+    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x+48.0*s, pop.max.y-15.0*s), Vec2::new(74.0*s, 18.0*s));
+    egui::Area::new(egui::Id::new("neb_prsave")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        { let pa = ui.painter();
+          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(170));
+          pa.rect_filled(pop, 7.0*s, BG_PANEL);
+          pa.rect_stroke(pop, 7.0*s, Stroke::new(2.0*s, GOLD), egui::StrokeKind::Outside);
+          pa.rect_stroke(pop, 7.0*s, Stroke::new(9.0*s, ga(GOLD,25)), egui::StrokeKind::Outside);
+          pa.text(Pos2::new(pop.center().x, pop.min.y+16.0*s), egui::Align2::CENTER_CENTER,
+              "SAVE PRESET", FontId::new(9.5*s, FontFamily::Monospace), GOLD);
+          pa.rect_filled(fr, 3.0*s, BG_DEEP);
+          pa.rect_stroke(fr, 3.0*s, Stroke::new(1.2*s, ga(GOLD,180)), egui::StrokeKind::Outside);
+          pa.rect_filled(ok, 3.0*s, Color32::from_rgb(40,32,0));
+          pa.rect_stroke(ok, 3.0*s, Stroke::new(s, GOLD), egui::StrokeKind::Outside);
+          pa.text(ok.center(), egui::Align2::CENTER_CENTER, "SAVE", FontId::new(8.5*s, FontFamily::Monospace), GOLD);
+          pa.rect_filled(cx_, 3.0*s, Color32::from_rgb(55,0,0));
+          pa.rect_stroke(cx_, 3.0*s, Stroke::new(s, MAGENTA), egui::StrokeKind::Outside);
+          pa.text(cx_.center(), egui::Align2::CENTER_CENTER, "CANCEL", FontId::new(8.5*s, FontFamily::Monospace), MAGENTA); }
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
+            let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
+                .font(FontId::new(10.0*s, FontFamily::Monospace))
+                .text_color(GOLD).frame(false).desired_width(fr.width()).hint_text("Preset name…");
+            let r = ui.add(te); r.request_focus();
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) { do_save(gui, p); }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.preset_save_popup = false; }
+        if ui.allocate_rect(ok,  Sense::click()).clicked() { do_save(gui, p); }
+        if ui.allocate_rect(cx_, Sense::click()).clicked() { gui.preset_save_popup = false; }
+    });
+}
+
+fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
+    let name = gui.preset_name_buf.trim().to_string();
+    if name.is_empty() { return; }
+    let snap = ParamSnapshot::from_params(p);
+    if let Some(idx) = gui.presets.iter().position(|(n,_)| n==&name) {
+        gui.presets[idx].1 = snap; gui.selected_preset = idx;
+    } else {
+        gui.presets.push((name, snap)); gui.selected_preset = gui.presets.len()-1;
+    }
+    gui.preset_save_popup = false;
+}
