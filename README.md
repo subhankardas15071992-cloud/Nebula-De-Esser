@@ -15,6 +15,18 @@ Version 2.2.0 is a significant refinement release focused on **phase transparenc
 
 ---
 
+# 💰 Support the Project
+
+If you find this open-source software helpful and would like to support its development, you can buy this plugin on Gumroad:
+
+<p align="left">
+  <a href="https://subhankar42.gumroad.com/l/adounr">
+    <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
+  </a>
+</p>
+
+---
+
 ## ✨ **What's New in v2.2.0**
 
 ### 🔧 **Phase Transparency Fix**
