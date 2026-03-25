@@ -963,3 +963,213 @@ fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
     }
     gui.preset_save_popup = false;
 }
+
+// ─── MIDI Learn Popup ────────────────────────────────────────────────────────
+fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui, s: f32) {
+    let sc  = ctx.screen_rect();
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(280.0*s, 310.0*s));
+    egui::Area::new(egui::Id::new("neb_midi")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        { let pa = ui.painter();
+          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(170));
+          pa.rect_filled(pop, 7.0*s, BG_PANEL);
+          pa.rect_stroke(pop, 7.0*s, Stroke::new(2.0*s, MAGENTA), egui::StrokeKind::Outside);
+          pa.rect_stroke(pop, 7.0*s, Stroke::new(9.0*s, ga(MAGENTA,25)), egui::StrokeKind::Outside);
+          pa.text(Pos2::new(pop.center().x, pop.min.y+16.0*s), egui::Align2::CENTER_CENTER,
+              "MIDI LEARN", FontId::new(10.0*s, FontFamily::Monospace), MAGENTA);
+          pa.text(Pos2::new(pop.center().x, pop.min.y+32.0*s), egui::Align2::CENTER_CENTER,
+              "Click parameter → move CC knob", FontId::new(7.0*s, FontFamily::Monospace), TEXT_MID); }
+        let learning = gui.midi_learn.learning_target.load(std::sync::atomic::Ordering::Relaxed);
+        let mappings = gui.midi_learn.mappings.lock().clone();
+        for (idx, &name) in MIDI_PARAM_NAMES.iter().enumerate().take(MIDI_PARAM_COUNT) {
+            let cc_s: String = mappings.iter()
+                .find(|(_,&v)| v==idx as u8)
+                .map(|(&cc,_)| format!("CC{}", cc))
+                .unwrap_or_else(|| "─".to_string());
+            let ih = 21.0 * s;
+            let rr = Rect::from_min_size(
+                Pos2::new(pop.min.x+10.0*s, pop.min.y+46.0*s+idx as f32*ih),
+                Vec2::new(pop.width()-20.0*s, ih-2.0*s));
+            let resp = ui.allocate_rect(rr, Sense::click());
+            let isl  = learning == idx as i32; let hov = resp.hovered();
+            { let pa = ui.painter_at(Rect::EVERYTHING);
+              pa.rect_filled(rr, 3.0*s, if isl{ga(MAGENTA,38)} else if hov{ga(MAGENTA,15)} else{BG_WIDGET});
+              pa.rect_stroke(rr, 3.0*s, Stroke::new(if isl{1.2*s} else{0.6*s}, if isl{MAGENTA} else {ga(MAGENTA,50)}), egui::StrokeKind::Outside);
+              pa.text(Pos2::new(rr.min.x+8.0*s, rr.center().y), egui::Align2::LEFT_CENTER,
+                  name, FontId::new(7.5*s, FontFamily::Monospace), if isl{MAGENTA} else{TEXT_HI});
+              pa.text(Pos2::new(rr.max.x-8.0*s, rr.center().y), egui::Align2::RIGHT_CENTER,
+                  &cc_s, FontId::new(7.5*s, FontFamily::Monospace), if isl{MAGENTA} else{CYAN}); }
+            if resp.clicked() {
+                let t = if isl { -1 } else { idx as i32 };
+                gui.midi_learn.learning_target.store(t, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let clr = Rect::from_center_size(Pos2::new(pop.center().x-52.0*s, pop.max.y-16.0*s), Vec2::new(82.0*s, 20.0*s));
+        let cls = Rect::from_center_size(Pos2::new(pop.center().x+52.0*s, pop.max.y-16.0*s), Vec2::new(82.0*s, 20.0*s));
+        { let pa = ui.painter_at(Rect::EVERYTHING);
+          pa.rect_filled(clr, 4.0*s, Color32::from_rgb(55,0,0));
+          pa.rect_stroke(clr, 4.0*s, Stroke::new(s, RED_HOT), egui::StrokeKind::Outside);
+          pa.text(clr.center(), egui::Align2::CENTER_CENTER, "CLEAR ALL", FontId::new(7.5*s, FontFamily::Monospace), RED_HOT);
+          pa.rect_filled(cls, 4.0*s, Color32::from_rgb(0,34,50));
+          pa.rect_stroke(cls, 4.0*s, Stroke::new(s, CYAN), egui::StrokeKind::Outside);
+          pa.text(cls.center(), egui::Align2::CENTER_CENTER, "CLOSE", FontId::new(7.5*s, FontFamily::Monospace), CYAN); }
+        if ui.allocate_rect(clr, Sense::click()).clicked() {
+            gui.midi_learn.mappings.lock().clear();
+            gui.midi_learn.learning_target.store(-1, std::sync::atomic::Ordering::Release);
+        }
+        if ui.allocate_rect(cls, Sense::click()).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            gui.midi_learn.learning_target.store(-1, std::sync::atomic::Ordering::Release);
+            gui.midi_popup = false;
+        }
+    });
+}
+
+// ─── MIDI Context Menu ────────────────────────────────────────────────────────
+fn draw_midi_context_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
+    let menu_w = 180.0 * s; let ih = 22.0 * s;
+    let items = [("MIDI On/Off", 0usize), ("Clean Up...", 1), ("Roll Back", 2), ("Save", 3), ("Close", 4)];
+    let menu_h = items.len() as f32 * ih + 10.0 * s;
+    let anchor = gui.midi_context_anchor;
+    let menu_rect = Rect::from_min_size(anchor, Vec2::new(menu_w, menu_h));
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_midi_ctx_bg")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        if ui.allocate_rect(screen, Sense::click()).clicked() { gui.midi_context_menu = false; }
+    });
+    egui::Area::new(egui::Id::new("neb_midi_ctx")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
+        { let p = ui.painter();
+          p.rect_filled(menu_rect, 5.0*s, BG_PANEL);
+          p.rect_stroke(menu_rect, 5.0*s, Stroke::new(1.2*s, ga(MAGENTA, 80)), egui::StrokeKind::Outside); }
+        for (i, (label, idx)) in items.iter().enumerate() {
+            let item_rect = Rect::from_min_size(
+                Pos2::new(anchor.x + 5.0*s, anchor.y + 5.0*s + i as f32 * ih),
+                Vec2::new(menu_w - 10.0*s, ih - 2.0*s));
+            let resp = ui.allocate_rect(item_rect, Sense::click());
+            let hov = resp.hovered();
+            { let p = ui.painter();
+              if hov { p.rect_filled(item_rect, 3.0*s, ga(MAGENTA, 15)); }
+              p.text(Pos2::new(item_rect.min.x + 10.0*s, item_rect.center().y),
+                  egui::Align2::LEFT_CENTER, *label, FontId::new(8.0*s, FontFamily::Monospace),
+                  if hov { MAGENTA } else { TEXT_HI }); }
+            if resp.clicked() {
+                match idx {
+                    0 => { let cur = gui.midi_learn.midi_enabled.load(std::sync::atomic::Ordering::Relaxed);
+                           gui.midi_learn.midi_enabled.store(!cur, std::sync::atomic::Ordering::Release); }
+                    1 => { gui.midi_cleanup_menu = true;
+                           gui.midi_cleanup_anchor = Pos2::new(item_rect.max.x + 2.0*s, item_rect.min.y); }
+                    2 => { let saved = gui.midi_learn.saved_mappings.lock().clone();
+                           *gui.midi_learn.mappings.lock() = saved; }
+                    3 => { let cur = gui.midi_learn.mappings.lock().clone();
+                           *gui.midi_learn.saved_mappings.lock() = cur; }
+                    4 => { gui.midi_context_menu = false; }
+                    _ => {}
+                }
+                if *idx != 1 { gui.midi_context_menu = false; }
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.midi_context_menu = false; }
+    });
+    if gui.midi_cleanup_menu { draw_midi_cleanup_menu(ctx, gui, s); }
+}
+
+fn draw_midi_cleanup_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
+    let mappings = gui.midi_learn.mappings.lock().clone();
+    let sub_w = 220.0 * s; let ih = 22.0 * s;
+    let sub_h = (mappings.len() + 2) as f32 * ih + 10.0 * s;
+    let anchor = gui.midi_cleanup_anchor;
+    let sub_rect = Rect::from_min_size(anchor, Vec2::new(sub_w, sub_h));
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_midi_clean_bg")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        if ui.allocate_rect(screen, Sense::click()).clicked() { gui.midi_cleanup_menu = false; }
+    });
+    egui::Area::new(egui::Id::new("neb_midi_clean")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
+        { let p = ui.painter();
+          p.rect_filled(sub_rect, 5.0*s, BG_PANEL);
+          p.rect_stroke(sub_rect, 5.0*s, Stroke::new(1.2*s, ga(CYAN, 80)), egui::StrokeKind::Outside); }
+        { let p = ui.painter();
+          let hr = Rect::from_min_size(Pos2::new(anchor.x+5.0*s, anchor.y+5.0*s), Vec2::new(sub_w-10.0*s, ih-2.0*s));
+          p.rect_filled(hr, 3.0*s, ga(CYAN, 20));
+          p.text(hr.center(), egui::Align2::CENTER_CENTER, "MIDI Associations", FontId::new(7.5*s, FontFamily::Monospace), CYAN); }
+        let mut sorted: Vec<(u8,u8)> = mappings.iter().map(|(&cc,&p)| (cc,p)).collect();
+        sorted.sort_by_key(|&(cc,_)| cc);
+        for (i, &(cc, param_idx)) in sorted.iter().enumerate() {
+            let y_pos = anchor.y + 5.0*s + (i+1) as f32 * ih;
+            let ir = Rect::from_min_size(Pos2::new(anchor.x+5.0*s, y_pos), Vec2::new(sub_w-10.0*s, ih-2.0*s));
+            let resp = ui.allocate_rect(ir, Sense::click()); let hov = resp.hovered();
+            let pname = if param_idx < MIDI_PARAM_COUNT as u8 { MIDI_PARAM_NAMES[param_idx as usize] } else { "Unknown" };
+            { let p = ui.painter();
+              if hov { p.rect_filled(ir, 3.0*s, ga(RED_HOT, 15)); }
+              p.text(Pos2::new(ir.min.x+10.0*s, ir.center().y), egui::Align2::LEFT_CENTER,
+                  format!("CC{} → {}", cc, pname), FontId::new(7.5*s, FontFamily::Monospace),
+                  if hov { RED_HOT } else { TEXT_HI }); }
+            if resp.clicked() { gui.midi_learn.mappings.lock().remove(&cc); }
+        }
+        let clear_y = anchor.y + 5.0*s + (sorted.len()+1) as f32 * ih;
+        let cr = Rect::from_min_size(Pos2::new(anchor.x+5.0*s, clear_y), Vec2::new(sub_w-10.0*s, ih-2.0*s));
+        let resp = ui.allocate_rect(cr, Sense::click()); let hov = resp.hovered();
+        { let p = ui.painter();
+          if hov { p.rect_filled(cr, 3.0*s, ga(RED_HOT, 20)); }
+          p.text(cr.center(), egui::Align2::CENTER_CENTER, "Clear All", FontId::new(7.5*s, FontFamily::Monospace),
+              if hov { RED_HOT } else { TEXT_HI }); }
+        if resp.clicked() { gui.midi_learn.mappings.lock().clear(); gui.midi_cleanup_menu=false; gui.midi_context_menu=false; }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.midi_cleanup_menu = false; }
+    });
+}
+
+// ─── OS Dropdown ─────────────────────────────────────────────────────────────
+fn draw_os_dropdown(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams, ch: &mut GuiChanges, s: f32) {
+    let os_labels = ["OFF", "2×", "4×", "6×", "8×"];
+    let os_w = 94.0 * s; let ih = 20.0 * s;
+    let drop_h = os_labels.len() as f32 * ih + 6.0 * s;
+    let anchor = gui.os_anchor;
+    let dr = Rect::from_min_size(anchor, Vec2::new(os_w, drop_h));
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_os_bg")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        if ui.allocate_rect(screen, Sense::click()).clicked() { gui.os_dropdown = false; }
+    });
+    egui::Area::new(egui::Id::new("neb_os_drop")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
+        { let p = ui.painter();
+          p.rect_filled(dr, 5.0*s, BG_PANEL);
+          p.rect_stroke(dr, 5.0*s, Stroke::new(1.2*s, ga(GOLD, 80)), egui::StrokeKind::Outside); }
+        for (i, &lbl) in os_labels.iter().enumerate() {
+            let ir = Rect::from_min_size(Pos2::new(anchor.x+3.0*s, anchor.y+3.0*s+i as f32*ih), Vec2::new(os_w-6.0*s, ih-2.0*s));
+            let resp = ui.allocate_rect(ir, Sense::click());
+            let isel = i == params.oversampling as usize; let hov = resp.hovered();
+            let c = if isel { GOLD } else if hov { ga(GOLD, 200) } else { TEXT_MID };
+            { let p = ui.painter();
+              if isel { p.rect_filled(ir, 3.0*s, ga(GOLD, 28)); } else if hov { p.rect_filled(ir, 3.0*s, ga(GOLD, 12)); }
+              p.text(Pos2::new(ir.min.x+10.0*s, ir.center().y), egui::Align2::LEFT_CENTER, lbl, FontId::new(8.5*s, FontFamily::Monospace), c); }
+            if resp.clicked() { ch.oversampling = Some(i as u32); gui.os_dropdown = false; }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.os_dropdown = false; }
+    });
+}
+
+// ─── Preset Dropdown ─────────────────────────────────────────────────────────
+fn draw_preset_dropdown(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+    if gui.presets.is_empty() { gui.preset_dropdown_open = false; return; }
+    let pw = 148.0 * s; let ih = 20.0 * s;
+    let drop_h = gui.presets.len() as f32 * ih + 6.0 * s;
+    let anchor = gui.preset_anchor;
+    let dr = Rect::from_min_size(anchor, Vec2::new(pw, drop_h));
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("neb_pr_bg")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
+        if ui.allocate_rect(screen, Sense::click()).clicked() { gui.preset_dropdown_open = false; }
+    });
+    let presets_clone = gui.presets.clone();
+    egui::Area::new(egui::Id::new("neb_pr_drop")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
+        { let p = ui.painter();
+          p.rect_filled(dr, 5.0*s, BG_PANEL);
+          p.rect_stroke(dr, 5.0*s, Stroke::new(1.2*s, ga(CYAN, 80)), egui::StrokeKind::Outside); }
+        for (i, (name, snap)) in presets_clone.iter().enumerate() {
+            let ir = Rect::from_min_size(Pos2::new(anchor.x+3.0*s, anchor.y+3.0*s+i as f32*ih), Vec2::new(pw-6.0*s, ih-2.0*s));
+            let resp = ui.allocate_rect(ir, Sense::click());
+            let isel = i == gui.selected_preset; let hov = resp.hovered();
+            let c = if isel { CYAN } else if hov { ga(CYAN, 200) } else { TEXT_MID };
+            { let p = ui.painter();
+              if isel { p.rect_filled(ir, 3.0*s, ga(CYAN, 24)); } else if hov { p.rect_filled(ir, 3.0*s, ga(CYAN, 10)); }
+              let display = if name.len() > 20 { &name[..20] } else { name };
+              p.text(Pos2::new(ir.min.x+10.0*s, ir.center().y), egui::Align2::LEFT_CENTER, display, FontId::new(8.0*s, FontFamily::Monospace), c); }
+            if resp.clicked() { gui.selected_preset = i; gui.preset_dropdown_open = false; snap.apply_to(ch); }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.preset_dropdown_open = false; }
+    });
+}
