@@ -1,37 +1,91 @@
-name: Build Nebula De-Esser (CLAP + VST3)
+##############################################################################
+#  Nebula De-Esser — CI Build Pipeline
+#
+#  Produces CLAP + VST3 bundles for three platforms:
+#    * macOS  — Universal Binary (Apple Silicon arm64 + Intel x86_64)
+#    * Windows — 64-bit  (x86_64-pc-windows-msvc)
+#    * Linux   — 64-bit  (x86_64-unknown-linux-gnu)
+#
+#  Finished bundles are uploaded as GitHub Actions Artifacts (90-day
+#  retention). To download: Actions tab -> this run -> Artifacts section.
+#
+#  --------------------------------------------------------------------------
+#  HOW THIS WORKS
+#  --------------------------------------------------------------------------
+#
+#  cargo xtask bundle
+#  ------------------
+#  nih-plug uses the "cargo xtask" pattern: a small helper crate in xtask/
+#  that is compiled on-the-fly and then run.  Three things must be present
+#  in the repository for this to work:
+#
+#    1. xtask/Cargo.toml          (depends on nih_plug_xtask)
+#    2. xtask/src/main.rs         (one-liner: nih_plug_xtask::main())
+#    3. .cargo/config.toml        (alias: xtask = "run --package xtask --")
+#
+#  All three files are included in this PR / commit alongside this workflow.
+#
+#  Workspace membership
+#  --------------------
+#  For `cargo run --package xtask` to work, "xtask" must appear in the
+#  [workspace] members list of the root Cargo.toml.  The patch_cargo_toml.py
+#  script handles that on the fly inside the CI runner; the change only lives
+#  in the ephemeral runner environment.
+#  (To avoid the patch step permanently, add "xtask" to Cargo.toml locally
+#   and commit it.)
+#
+#  VST3 support
+#  ------------
+#  patch_vst3.py appends `impl Vst3Plugin` + `nih_export_vst3!()` to
+#  src/lib.rs before each build.  Once those macros are present, nih-plug's
+#  bundler automatically creates a .vst3 bundle alongside the .clap one.
+#  The patch is idempotent and only modifies files in the ephemeral runner.
+#
+#  LICENSE NOTE
+#  ------------
+#  NIH-plug's VST3 bindings link against the Steinberg VST3 SDK (GPLv3).
+#  The VST3 artefact carries GPLv3 obligations; the CLAP artefact does not.
+#  See https://github.com/robbert-vdh/nih-plug#licensing
+##############################################################################
 
-# Runs on every push / PR to main or master, and can be triggered manually.
+name: Build (CLAP + VST3)
+
 on:
   push:
     branches: ["main", "master"]
   pull_request:
     branches: ["main", "master"]
-  workflow_dispatch:
+  workflow_dispatch:          # allows manual runs from the Actions UI
 
 env:
   CARGO_TERM_COLOR: always
-  # Must match the [package] name in your plugin's Cargo.toml
-  PLUGIN_PACKAGE: nebula-de-esser
+  CARGO_INCREMENTAL: "0"
+
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # macOS — Universal Binary (Intel x86_64 + Apple Silicon arm64 merged via lipo)
-  # ─────────────────────────────────────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  macOS — Universal Binary (arm64 + x86_64)
+  # ════════════════════════════════════════════════════════════════════════════
   build-macos:
-    name: macOS Universal Binary
+    name: "macOS — Universal Binary"
     runs-on: macos-latest
+
     steps:
+      # ── 1. Source ──────────────────────────────────────────────────────────
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Rust stable (both macOS targets)
+      # ── 2. Rust ────────────────────────────────────────────────────────────
+      - name: Install Rust stable + both macOS targets
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: "aarch64-apple-darwin,x86_64-apple-darwin"
 
-      - name: Cache Cargo registry + git sources
+      # ── 3. Cache ───────────────────────────────────────────────────────────
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
@@ -41,35 +95,41 @@ jobs:
           key: macos-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-cargo-
 
-      # ── Source modification: add VST3 export to lib.rs ───────────────────────
-      - name: Patch src/lib.rs — add VST3 support
-        run: python3 .github/scripts/add_vst3.py
+      # ── 4. Patch Cargo.toml (add "xtask" to workspace members) ─────────────
+      - name: Patch Cargo.toml — add xtask workspace member
+        run: python3 .github/scripts/patch_cargo_toml.py
 
-      # ── Build for each slice separately ──────────────────────────────────────
-      - name: Build — x86_64-apple-darwin (Intel)
-        run: cargo xtask bundle ${{ env.PLUGIN_PACKAGE }} --release --target x86_64-apple-darwin
+      # ── 5. Patch src/lib.rs (add VST3 export) ─────────────────────────────
+      - name: Patch src/lib.rs — add VST3 export
+        run: python3 .github/scripts/patch_vst3.py
 
-      - name: Build — aarch64-apple-darwin (Apple Silicon)
-        run: cargo xtask bundle ${{ env.PLUGIN_PACKAGE }} --release --target aarch64-apple-darwin
+      # ── 6. Build ───────────────────────────────────────────────────────────
+      # `cargo xtask bundle-universal` is nih-plug's built-in command that
+      # compiles for both architectures and merges them with lipo automatically.
+      # MACOSX_DEPLOYMENT_TARGET=10.13 keeps the bundle compatible with
+      # macOS High Sierra and later (standard minimum for audio plugins).
+      - name: Build — macOS Universal (CLAP + VST3)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "10.13"
+        run: cargo xtask bundle-universal nebula-de-esser --release
 
-      # ── Merge slices into a single Universal binary with lipo ─────────────────
-      - name: Create Universal binaries (lipo)
-        run: bash .github/scripts/make_universal.sh
-
-      - name: Upload macOS Universal artifact
+      # ── 7. Upload ──────────────────────────────────────────────────────────
+      - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nebula-De-Esser-macOS-Universal
-          path: target/universal/bundled/
+          name: Nebula-De-Esser_macOS-Universal
+          path: target/bundled/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Windows — 64-bit (x86_64-pc-windows-msvc)
-  # ─────────────────────────────────────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Windows — 64-bit
+  # ════════════════════════════════════════════════════════════════════════════
   build-windows:
-    name: Windows x86_64
+    name: "Windows — 64-bit"
     runs-on: windows-latest
+
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -79,7 +139,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry + git sources
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
@@ -89,35 +149,48 @@ jobs:
           key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: windows-cargo-
 
-      - name: Patch src/lib.rs — add VST3 support
-        run: python3 .github/scripts/add_vst3.py
+      # Force Python to use UTF-8 on Windows so print() never hits cp1252.
+      # This must be set as an env var for the *runner shell*, not just for
+      # one step, so we set it globally via GITHUB_ENV.
+      - name: Force Python UTF-8 output (Windows)
+        shell: pwsh
+        run: echo "PYTHONUTF8=1" >> $env:GITHUB_ENV
 
-      - name: Build Windows plugins (CLAP + VST3)
-        run: cargo xtask bundle ${{ env.PLUGIN_PACKAGE }} --release
+      - name: Patch Cargo.toml — add xtask workspace member
+        run: python3 .github/scripts/patch_cargo_toml.py
+
+      - name: Patch src/lib.rs — add VST3 export
+        run: python3 .github/scripts/patch_vst3.py
+
+      - name: Build — Windows x86_64 (CLAP + VST3)
+        run: cargo xtask bundle nebula-de-esser --release
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nebula-De-Esser-Windows-x86_64
+          name: Nebula-De-Esser_Windows-x86_64
           path: target\bundled\
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Linux — 64-bit (x86_64-unknown-linux-gnu)
-  # ─────────────────────────────────────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Linux — 64-bit
+  # ════════════════════════════════════════════════════════════════════════════
   build-linux:
-    name: Linux x86_64
+    name: "Linux — 64-bit"
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # nih-plug GUIs (egui / vizia / iced) need X11 / XCB / fontconfig headers.
-      # Install them all up front so the build never fails mid-way.
-      - name: Install system build dependencies
+      # nih-plug GUI back-ends (egui / vizia / iced) require X11, XCB,
+      # fontconfig, and OpenGL headers.  Install the full set up-front so
+      # the build never stalls mid-compilation on a missing header.
+      - name: Install system libraries
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -127,10 +200,6 @@ jobs:
             libx11-xcb-dev \
             libxcb1-dev \
             libxcb-icccm4-dev \
-            libxcb-dri2-0-dev \
-            libxcb-dri3-dev \
-            libxcb-present-dev \
-            libxcb-sync-dev \
             libxcb-render0-dev \
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
@@ -141,12 +210,13 @@ jobs:
             libfreetype6-dev \
             libatk1.0-dev \
             libgtk-3-dev \
-            libglib2.0-dev
+            libglib2.0-dev \
+            libasound2-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry + git sources
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
@@ -156,16 +226,19 @@ jobs:
           key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: linux-cargo-
 
-      - name: Patch src/lib.rs — add VST3 support
-        run: python3 .github/scripts/add_vst3.py
+      - name: Patch Cargo.toml — add xtask workspace member
+        run: python3 .github/scripts/patch_cargo_toml.py
 
-      - name: Build Linux plugins (CLAP + VST3)
-        run: cargo xtask bundle ${{ env.PLUGIN_PACKAGE }} --release
+      - name: Patch src/lib.rs — add VST3 export
+        run: python3 .github/scripts/patch_vst3.py
+
+      - name: Build — Linux x86_64 (CLAP + VST3)
+        run: cargo xtask bundle nebula-de-esser --release
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nebula-De-Esser-Linux-x86_64
+          name: Nebula-De-Esser_Linux-x86_64
           path: target/bundled/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
