@@ -1,0 +1,9 @@
+# This alias is what makes `cargo xtask bundle` work.
+# Without it, Cargo doesn't know what `xtask` means and prints
+# "no such command: `xtask`".
+#
+# `run --package xtask --` compiles and runs the xtask/ crate in this
+# workspace, forwarding all trailing arguments to it.  The nih_plug_xtask
+# library then interprets those arguments (bundle, bundle-universal, …).
+[alias]
+xtask = "run --package xtask --"
