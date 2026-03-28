@@ -1,0 +1,13 @@
+# This file tells nih_plug_xtask the human-readable display name for the
+# plugin bundle (the .clap / .vst3 folder names on disk).
+#
+# Format:
+#   [<cargo-package-name>]   ← must match [package] name in Cargo.toml exactly
+#   name = "<Display Name>"  ← used for the bundle folder name on all platforms
+#
+# Example: if name = "Nebula De-Esser", the bundles are named:
+#   Nebula De-Esser.clap
+#   Nebula De-Esser.vst3
+
+[nebula-de-esser]
+name = "Nebula De-Esser"
