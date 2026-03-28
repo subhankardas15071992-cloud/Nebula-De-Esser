@@ -1,0 +1,18 @@
+[package]
+name    = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+# This crate is purely a build-time helper; it is never published.
+publish = false
+
+[dependencies]
+# nih_plug_xtask lives inside the nih-plug mono-repo and provides the
+# implementation of `cargo xtask bundle` and `cargo xtask bundle-universal`.
+# Pin to the same git source (and, ideally, the same rev) that the plugin
+# itself uses for nih_plug so both crates resolve to the same git checkout
+# and Cargo does not download the repository twice.
+#
+# If the plugin's Cargo.toml pins nih_plug to a specific `rev = "…"`,
+# copy that same rev here.
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git" }
