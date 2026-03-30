@@ -11,7 +11,7 @@ Nebula DeEsser is a state-of-the-art de-esser plugin that combines professional-
 
 Version 2.2.0 is a significant refinement release focused on **phase transparency**, **surgical cut control**, **parallel processing**, and **fully resizable UI** — addressing the most requested improvements from users.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/23dd2926-85ee-41bf-9215-2aea3762cf35" />
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/61ce1bf9-c021-4087-89ec-b46c1d41d01d" />
 
 ---
 
