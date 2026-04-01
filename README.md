@@ -178,6 +178,11 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 ---
 
+#### **Note for Cakewalk Sonar and NXT users**
+This plugin won't work with Cakewalk Sonar and NXT. Those DAWs use a forced JUCE VST3 wrapper that is incompatible with native VST3 implementation in nih-plug framework, and it doesn't support plugins that use lock-free architecture. Use modern DAWs like Reaper, Tracktion Waveform, Ardour, etc for best results.
+
+---
+
 ## 📦 **Project Structure**
 
 ```
