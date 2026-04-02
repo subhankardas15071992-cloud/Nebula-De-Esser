@@ -1,4 +1,4 @@
-# NEBULA DEESSER v2.2.0
+# NEBULA DEESSER v2.3.0
 
 **Professional 64-bit CLAP & VST3 De-esser Plugin**  
 Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
@@ -7,9 +7,9 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 ## 🎯 **Overview**
 
-Nebula DeEsser is a state-of-the-art de-esser plugin that combines professional-grade audio processing with a stunning synthwave/alien aesthetic. Built entirely in Rust with 64-bit double-precision processing, it delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
+Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.2.0 is a significant refinement release focused on **phase transparency**, **surgical cut control**, **parallel processing**, and **fully resizable UI** — addressing the most requested improvements from users.
+Version 2.3.0 is a focused stability and accuracy release — a complete UI redesign, critical audio thread safety fixes, and a fully corrected spectrum analyzer that now shows the post-processed signal rather than the raw input.
 
 <img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/61ce1bf9-c021-4087-89ec-b46c1d41d01d" />
 
@@ -27,79 +27,91 @@ If you find this open-source software helpful and would like to support its deve
 
 ---
 
+## ✨ **What's New in v2.3.0**
+
+### 🎨 **Complete UI Redesign — Sci-Fi Dark Theme**
+
+The entire GUI has been rebuilt from scratch with a new dark sci-fi aesthetic — deep violet-black backgrounds, neon accent colours, and a clean structured layout that keeps everything readable and professional.
+
+- **Deep black base** — near-black backgrounds with a subtle violet undertone, giving the UI depth without being flat
+- **Neon accent system** — electric cyan as the primary accent, with hot magenta for cut shape controls, electric purple for I/O controls, and neon green/teal/amber for semantic states
+- **Structured panel layout** — every section (detection, reduction, controls, spectrum) sits in its own elevated card with a neon cyan top-edge highlight and purple-tinted border
+- **NavigationView header** — app icon tile, title with subtitle typography, version badge, bypass indicator
+- **CommandBar toolbar** — flat strip with button-style controls: tinted fill at rest, neon highlight on hover, solid accent fill when active, divider separators between groups
+- **RadioButton groups** — the five mode selectors (Mode, Range, Filter, Sidechain, Vocal) use radio controls with outer ring and filled inner dot
+- **ToggleSwitches** — the four boolean toggles (Filter Solo, Trigger Hear, Lookahead, Mid/Side) use pill-track switches: fills cyan when on, thumb shifts position
+- **Knob colour identity** — main parameters in cyan, cut shape knobs in magenta, I/O knobs in purple
+- **ContentDialog popups** — scrim overlay, elevated card with rounded corners, TextBox with accent focus underline, primary/secondary button row
+- **Flyout dropdowns** — elevated card with drop shadow, accent-filled selected row
+
+### 🔧 **Audio Thread Safety Fixes**
+
+Two bugs that could cause crashes or undefined behaviour under rapid interaction, particularly in DAWs with strict real-time thread policies:
+
+- **Undo/redo stack** — replaced `pop().unwrap()` calls with `if let Some(snap) = ...pop()` guards. The previous code could panic if a rapid click sequence caused a race between the `can_undo`/`can_redo` check and the actual pop.
+- **Per-block heap allocation** — removed `Vec<Vec<f64>>` heap allocations for `input_data` and `sc_data` that were happening inside `process()` on every audio block. The f64 conversion is now deferred to the per-sample loop, eliminating two full-buffer allocations per block from the real-time thread.
+
+### 📊 **Spectrum Analyzer — Post-Effects Tap + Accuracy Fixes**
+
+The spectrum analyzer has been completely corrected. Previously it read the raw pre-input-gain signal, which was both in the wrong position and inaccurate.
+
+**Tap point moved to post-effects:**  
+The analyzer now feeds from `(out_l + out_r) * 0.5` after input gain, DSP processing, output gain, and dry/wet mix. The display now shows exactly what comes out of the plugin — threshold changes, frequency band adjustments, cut width/depth, and mix all reflect immediately in the spectrum.
+
+**Magnitude scaling corrected (+6 dB fix):**  
+The previous scale factor `2.0 / FFT_SIZE` was 6 dB too low. The correct derivation accounts for the Hann window's coherent gain of 0.5 (window sum = `FFT_SIZE/2`) and the single-sided doubling of non-DC bins, giving `4.0 / FFT_SIZE`. Readings now match a calibrated reference signal.
+
+**Ring buffer read order fixed:**  
+The previous code read from `write_pos` which points to the *next write slot* — one sample ahead of the last written sample. This caused the Hann window to be applied starting from the wrong sample, scrambling the phase relationship across every FFT frame. The write pointer is now advanced after writing, so it always points to the oldest sample, which is the correct linearisation start point.
+
+**Nyquist bin corrected:**  
+The Nyquist bin (index `FFT_SIZE/2`) was previously doubled along with all other bins. It has no mirror image in the single-sided spectrum and is now scaled correctly without doubling.
+
+---
+
 ## ✨ **What's New in v2.2.0**
 
 ### 🔧 **Phase Transparency Fix**
 
-The most impactful change in this release. The previous split-band mode used separate LP and HP biquad chains on the audio path, then subtracted to recover the mid band. Because LP and HP filters have different phase responses, `lo + hi ≠ signal` — this caused audible phase artifacts that undermined the plugin's transparency claim.
+The previous split-band mode used separate LP and HP biquad chains on the audio path, then subtracted to recover the mid band. Because LP and HP filters have different phase responses, `lo + hi ≠ signal` — this caused audible phase artifacts.
 
-**The fix:** complementary LP split. The audio path now computes `lo = LP(x)` and `hi = x − lo`. Since `lo + hi = x` exactly at every sample, recombination is mathematically perfect with zero phase error. Wide mode now uses a cascaded bell EQ applied directly to the signal — a phase-coherent gain change rather than a wideband multiply.
+**The fix:** complementary LP split. The audio path now computes `lo = LP(x)` and `hi = x − lo`. Since `lo + hi = x` exactly at every sample, recombination is mathematically perfect with zero phase error. Wide mode uses a cascaded bell EQ applied directly to the signal — a phase-coherent gain change rather than a wideband multiply.
 
 ### 🎛️ **Three New Control Knobs**
 
 | Knob | Range | What it does |
 |------|-------|--------------|
 | **Cut Width** | 0–100% | Controls the Q (bandwidth) of the de-essing notch. 0% = broadest cut, 100% = narrowest surgical notch |
-| **Cut Depth** | 0–100% | Scales how deep the cut goes relative to Max Reduction. Lets you dial in a gentler treatment without touching the threshold |
-| **Mix** | 0–100% | Dry/wet blend between the raw input and the processed signal. Parallel de-essing — bring back organic texture at a controlled amount |
-
-All three sit in a dedicated row between the main knobs and the I/O section, styled in purple to visually group them as cut-shape controls.
+| **Cut Depth** | 0–100% | Scales how deep the cut goes relative to Max Reduction |
+| **Mix** | 0–100% | Dry/wet blend — parallel de-essing |
 
 ### 📐 **Fully Resizable Window**
 
-The plugin window is now freely resizable by dragging the corner handle (bottom-right). The entire UI — knobs, meters, spectrum analyzer, text, panels — scales proportionally using egui's zoom system. The window size is persisted between sessions.
-
-- Drag the corner handle to resize
-- Minimum size: 400×300 (nothing gets unusably small)
-- Maximum size: limited only by your screen
-- Window size saved and restored with the plugin state
+The plugin window is freely resizable. The entire UI scales proportionally. Minimum size 400×300, window size persisted between sessions.
 
 ---
 
 ## ✨ **Features from v2.1.0**
 
-### 🆕 **Exclusive Features**
-
 | Feature | Description |
 |---------|-------------|
 | **A/B State Comparison** | Instant switching between two plugin states |
 | **Enhanced MIDI Learn** | Right-click context menu with Clean Up, Roll Back, Save |
+| **50-step Undo/Redo** | Full parameter history |
+| **Preset System** | Save/Load/Delete named presets |
 | **Zero Warnings Build** | Clean compilation with all Clippy warnings addressed |
-| **Pure Native Builds** | No external dependencies on any platform |
-
-### ✅ **Complete Feature Set**
-
-#### **Professional Preset System**
-- Dropdown menu for preset management
-- Save/Load/Delete presets
-- 50-step undo/redo history
-- Right-click numeric input for precise parameter editing
-
-#### **Enhanced MIDI Control**
-- MIDI On/Off global toggle
-- Clean Up submenu showing all CC associations
-- Roll Back to last saved mapping
-- Save current mapping
-
-#### **Audio Processing Suite**
-- FX Bypass with visual feedback
-- Input/Output Level (−60 to +12 dB)
-- Input/Output Pan
-- Oversampling: Off / 2× / 4× / 6× / 8×
-- Live FFT Spectrum Analyzer
 
 ---
 
 ## 🎛️ **Interface Tour**
 
-### **Toolbar**
-- **⊗ BYPASS** — Soft bypass; title bar turns red when active
+### **CommandBar**
+- **Bypass** — Soft bypass; header badge appears when active
 - **A/B** — Toggle between State A and State B
-- **PRESET** — Preset dropdown
-- **SAVE / DEL** — Preset operations
-- **◄ UNDO / REDO ►** — 50-step history
-- **MIDI LEARN** — Right-click for context menu
-- **OS** — Oversampling selector
+- **Preset / Save / Delete** — Preset management
+- **Undo / Redo** — 50-step history
+- **MIDI Learn** — Right-click for context menu
+- **OS** — Oversampling selector (Off / 2× / 4× / 6× / 8×)
 
 ### **Core Parameters**
 | Parameter | Range | Precision |
@@ -111,7 +123,7 @@ The plugin window is now freely resizable by dragging the corner handle (bottom-
 | Lookahead | 0–20 ms | 0.1 ms |
 | Stereo Link | 0–100% | 1% |
 
-### **Cut Shape Parameters (New in v2.2)**
+### **Cut Shape Parameters**
 | Parameter | Range | Description |
 |-----------|-------|-------------|
 | Cut Width | 0–100% | Notch bandwidth (Q) |
@@ -141,6 +153,13 @@ The plugin window is now freely resizable by dragging the corner handle (bottom-
 - Meter values via `AtomicU32` — zero contention
 - Spectrum analyzer uses `try_lock()` — never blocks audio thread
 - MIDI CC via `AtomicU32` + `AtomicBool` dirty flags
+
+### **Spectrum Analyzer (v2.3.0)**
+- Post-effects tap — shows the processed output signal
+- 2048-point FFT with 75% overlap (512-sample hop)
+- Hann window with correct coherent gain compensation (`4.0 / FFT_SIZE`)
+- Accurate single-sided magnitude spectrum with correct Nyquist handling
+- Attack/release smoothing for stable visual display
 
 ### **Performance**
 | Metric | Value |
@@ -200,27 +219,22 @@ All of the above support CLAP and/or VST3 natively and work perfectly with this 
 ```
 Nebula-De-Esser/
 ├── src/
-│   ├── lib.rs          # Plugin core, parameters, MIDI learn, VST3 export
+│   ├── lib.rs          # Plugin core, parameters, MIDI learn, signal chain
 │   ├── dsp.rs          # 64-bit DSP, phase-transparent split, bell EQ
-│   ├── gui.rs          # Synthwave UI, resizable window, new knobs
-│   └── analyzer.rs     # Lock-free FFT spectrum analyzer
+│   ├── gui.rs          # WinUI 3 dark theme UI, resizable window
+│   └── analyzer.rs     # Post-effects lock-free FFT spectrum analyzer
 ├── tests/
 │   ├── audio_tests.rs
 │   ├── dsp_validation.rs
 │   └── benchmark_comparison.rs
 ├── xtask/
-│   ├── Cargo.toml      # nih_plug_xtask dependency
-│   └── src/
-│       └── main.rs     # cargo xtask entry point
+│   ├── Cargo.toml
+│   └── src/main.rs
 ├── .cargo/
-│   └── config.toml     # Defines the `cargo xtask` alias
+│   └── config.toml
 ├── .github/
-│   ├── workflows/
-│   │   └── build.yml   # CI: builds CLAP + VST3 for all platforms
-│   └── scripts/
-│       ├── patch_vst3.py         # Injects VST3 export into lib.rs + Cargo.toml
-│       └── patch_cargo_toml.py   # Ensures xtask is a workspace member
-├── bundler.toml        # nih_plug_xtask bundle display name config
+│   └── workflows/build.yml
+├── bundler.toml
 ├── build_linux.sh
 ├── build_mac.sh
 ├── build_windows.ps1
@@ -237,10 +251,4 @@ The VST3 plugin format is also MIT licensed. Steinberg re-licensed the VST3 SDK 
 
 ---
 
-*"In the neon void between frequencies, where precision meets artistry, Nebula listens — and now remembers."* 🪐✨
-
----
-
 **Ready for professional use in all major DAWs supporting the CLAP and VST3 formats.**
-
-**Download includes source code with zero warnings and pure native build scripts.**
