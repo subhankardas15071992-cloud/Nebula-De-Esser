@@ -1,4 +1,4 @@
-# NEBULA DEESSER v2.3.0
+# NEBULA DE-ESSER
 
 **Professional 64-bit CLAP & VST3 De-esser Plugin**  
 Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.3.0 is a focused stability and accuracy release — a complete UI redesign, critical audio thread safety fixes, and a fully corrected spectrum analyzer that now shows the post-processed signal rather than the raw input.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/61ce1bf9-c021-4087-89ec-b46c1d41d01d" />
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/737ec891-2cd3-4f49-bfa7-ac3ce81ba4ae" />
 
 ---
 
