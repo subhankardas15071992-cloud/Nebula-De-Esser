@@ -178,8 +178,20 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 ---
 
-#### **Note for Cakewalk Sonar and NXT users**
-This plugin won't work with Cakewalk Sonar and NXT. Those DAWs use a forced JUCE VST3 wrapper that is incompatible with native VST3 implementation in nih-plug framework, and they don't support plugins that use lock-free architecture. Use modern DAWs like Bitwig Studio, UAD LUNA, Reaper, Tracktion Waveform, Ardour, etc for best results.
+## ⚠️ Cakewalk NXT / Cakewalk Sonar — Not Supported
+
+**This plugin will not work in Cakewalk NXT or Cakewalk Sonar. This is a known, confirmed incompatibility and will not be fixed.**
+
+Cakewalk is not optimized for lock-free plugins and does not properly support plugins written outside of JUCE or C++. Its VST3 host wraps plugins through a forced JUCE compatibility layer that breaks native nih-plug implementations. This is a Cakewalk problem, not a plugin problem.
+
+If you are a Cakewalk user looking for a free alternative, consider upgrading to one of these modern DAWs:
+
+- **[Tracktion Waveform Free](https://www.tracktion.com/products/waveform-free)** — fully featured, free forever
+- **[Reaper](https://www.reaper.fm/)** — 60-day free trial, very affordable license
+- **[Ardour](https://ardour.org/)** — open source, pay what you want
+- **[LMMS](https://lmms.io/)** — free and open source
+
+All of the above support CLAP and/or VST3 natively and work perfectly with this plugin.
 
 ---
 
