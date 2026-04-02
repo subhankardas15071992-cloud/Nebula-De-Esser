@@ -13,53 +13,56 @@ use nih_plug_egui::EguiState;
 use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_NAMES, MIDI_PARAM_COUNT};
 
-// ─── WinUI 3 Dark Palette ────────────────────────────────────────────────────
-// Mica material — true Win11 dark Mica: #1C1C1C base, not mid-grey
-const MICA_BASE:    Color32 = Color32::from_rgb(28,  28,  28);  // #1C1C1C — actual dark Mica base
-const MICA_TOP:     Color32 = Color32::from_rgb(34,  34,  34);  // slightly lighter at top
-const MICA_BOT:     Color32 = Color32::from_rgb(20,  20,  20);  // darker at bottom
+// ─── Nebula Sci-Fi Dark Palette — neon accents on deep black ─────────────────
+// WinUI layout structure preserved, sci-fi colour energy injected.
+// Base — deep blacks with violet undertone, not grey.
+const MICA_BASE:    Color32 = Color32::from_rgb( 4,   2,  14);   // near-black, violet tint
+const MICA_TOP:     Color32 = Color32::from_rgb( 8,   4,  22);   // slightly lighter at top
+const MICA_BOT:     Color32 = Color32::from_rgb( 2,   1,   8);   // deeper at bottom
 
-// Acrylic layers — bigger gap between each layer for real depth
-const ACRYLIC:      Color32 = Color32::from_rgb(38,  38,  38);  // #262626 — panel surface
-const ACRYLIC_CARD: Color32 = Color32::from_rgb(48,  48,  48);  // #303030 — elevated card
-const ACRYLIC_HIGH: Color32 = Color32::from_rgb(58,  58,  58);  // #3A3A3A — hover surface
+// Panel surfaces — dark with subtle violet tint
+const ACRYLIC:      Color32 = Color32::from_rgb(10,   6,  26);   // deep violet-black panel
+const ACRYLIC_CARD: Color32 = Color32::from_rgb(14,   8,  34);   // slightly raised card
+const ACRYLIC_HIGH: Color32 = Color32::from_rgb(20,  12,  46);   // hover / active surface
 
-// Control fills — deeper inset, more contrast against cards
-const CTRL_DEFAULT: Color32 = Color32::from_rgb(55,  55,  55);  // #373737 — resting control
-const CTRL_HOVER:   Color32 = Color32::from_rgb(68,  68,  68);  // #444444 — hovered control
-const CTRL_PRESSED: Color32 = Color32::from_rgb(40,  40,  40);  // #282828 — pressed
-const CTRL_DISABLED:Color32 = Color32::from_rgb(32,  32,  32);  // #202020 — disabled
+// Control fills — dark tinted, not grey
+const CTRL_DEFAULT: Color32 = Color32::from_rgb(18,  10,  38);   // resting control
+const CTRL_HOVER:   Color32 = Color32::from_rgb(26,  16,  54);   // hover lift
+const CTRL_PRESSED: Color32 = Color32::from_rgb(12,   6,  28);   // pressed sink
+const CTRL_DISABLED:Color32 = Color32::from_rgb( 8,   4,  18);
 
-// Stroke / border — more visible borders for contrast
-const STROKE_DEF:   Color32 = Color32::from_rgb(80,  80,  80);  // #505050 — default border
-const STROKE_OUT:   Color32 = Color32::from_rgb(16,  16,  16);  // outer shadow
-const DIVIDER:      Color32 = Color32::from_rgb(52,  52,  52);  // #343434 — separator
+// Borders — neon-tinted strokes
+const STROKE_DEF:   Color32 = Color32::from_rgb(50,  30,  90);   // purple-tinted border
+const STROKE_OUT:   Color32 = Color32::from_rgb( 0,   0,   0);
+const DIVIDER:      Color32 = Color32::from_rgb(30,  18,  60);   // separator
 
-// Accent — Windows 11 default blue, unchanged
-const ACCENT:       Color32 = Color32::from_rgb(  0, 120, 212);
-const ACCENT_LIGHT: Color32 = Color32::from_rgb( 96, 165, 250); // text only, never fill
-const ACCENT_DARK:  Color32 = Color32::from_rgb(  0,  90, 158);
-const ACCENT_BORDER:Color32 = Color32::from_rgb(  0,  70, 130);
+// Accent — electric cyan as primary (replaces Windows blue)
+const ACCENT:       Color32 = Color32::from_rgb( 0, 210, 255);   // electric cyan
+const ACCENT_LIGHT: Color32 = Color32::from_rgb(80, 235, 255);   // lighter cyan for lines/text
+const ACCENT_DARK:  Color32 = Color32::from_rgb( 0, 140, 180);   // darker cyan for borders
+const ACCENT_BORDER:Color32 = Color32::from_rgb( 0,  90, 130);
 
-// Semantic — slightly more saturated to pop against the darker base
-const RED:          Color32 = Color32::from_rgb(255,  85,  60);
-const ORANGE:       Color32 = Color32::from_rgb(255, 170,  20);
-const GREEN:        Color32 = Color32::from_rgb(100, 215,  85);
-const TEAL:         Color32 = Color32::from_rgb( 60, 210, 180);
+// Semantic neon colours
+const RED:          Color32 = Color32::from_rgb(255,  55,  55);   // hot red
+const ORANGE:       Color32 = Color32::from_rgb(255, 160,   0);   // neon amber
+const GREEN:        Color32 = Color32::from_rgb(  0, 220,  90);   // neon green
+const TEAL:         Color32 = Color32::from_rgb(  0, 200, 180);   // neon teal
+const MAGENTA:      Color32 = Color32::from_rgb(255,   0, 200);   // hot magenta (knob accent)
+const PURPLE:       Color32 = Color32::from_rgb(160,  40, 255);   // electric purple (I/O accent)
 
-// Meter
-const M_GREEN:      Color32 = Color32::from_rgb(100, 215,  85);
-const M_YELLOW:     Color32 = Color32::from_rgb(255, 200,  20);
-const M_RED:        Color32 = Color32::from_rgb(255,  85,  60);
+// Meter colours — neon
+const M_GREEN:      Color32 = Color32::from_rgb(  0, 220,  90);
+const M_YELLOW:     Color32 = Color32::from_rgb(255, 200,   0);
+const M_RED:        Color32 = Color32::from_rgb(255,  55,  55);
 
-// Text — brighter primaries for contrast against the darker base
-const TEXT_PRI:     Color32 = Color32::from_rgb(240, 240, 240);  // near-white primary
-const TEXT_SEC:     Color32 = Color32::from_rgb(200, 200, 200);  // visible secondary
-const TEXT_TER:     Color32 = Color32::from_rgb(140, 140, 140);  // readable tertiary
-const TEXT_DIS:     Color32 = Color32::from_rgb( 75,  75,  75);  // disabled
+// Text — bright cool-white on deep black for high contrast
+const TEXT_PRI:     Color32 = Color32::from_rgb(210, 235, 255);   // cool white — primary
+const TEXT_SEC:     Color32 = Color32::from_rgb(120, 165, 210);   // muted blue-white — secondary
+const TEXT_TER:     Color32 = Color32::from_rgb( 55,  85, 140);   // dim blue — tertiary
+const TEXT_DIS:     Color32 = Color32::from_rgb( 25,  40,  70);   // disabled
 
-// Card top-edge highlight — slightly brighter than card surface
-const CARD_TOP:     Color32 = Color32::from_rgb(75,  75,  75);
+// Card top-edge highlight — neon cyan edge
+const CARD_TOP:     Color32 = Color32::from_rgb( 0, 160, 210);
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
@@ -674,7 +677,7 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
     let cut_inner = Rect::from_min_size(
         Pos2::new(inner.min.x + inner.width() * 0.2, y2b),
         Vec2::new(inner.width() * 0.6, kh));
-    knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, TEAL, s);
+    knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, MAGENTA, s);
 
     // ── I/O knobs ─────────────────────────────────────────────────────────────
     let y3 = y2b + kh + gap;
@@ -690,7 +693,7 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
     let io_inner = Rect::from_min_size(
         Pos2::new(inner.min.x + inner.width() * 0.1, y3),
         Vec2::new(inner.width() * 0.8, kh));
-    knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, GREEN, s);
+    knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, PURPLE, s);
 
     // ── ToggleSwitches (4 boolean params) ────────────────────────────────────
     let y4 = y3 + kh + gap;
