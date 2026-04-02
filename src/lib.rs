@@ -633,20 +633,6 @@ impl Plugin for NebulaDeEsser {
         // ── Sidechain input ──────────────────────────────────────────────────
         let n = buffer.samples();
         let have_sc = sc_external && !aux.inputs.is_empty();
-        let sc_data: Vec<Vec<f64>> = if have_sc {
-            aux.inputs[0].as_slice().iter()
-                .map(|ch| ch.iter().map(|&s| s as f64).collect())
-                .collect()
-        } else {
-            vec![]
-        };
-
-        // ── Copy input ───────────────────────────────────────────────────────
-        let input_data: Vec<Vec<f64>> = {
-            buffer.as_slice().iter()
-                .map(|ch| ch.iter().map(|&s| s as f64).collect())
-                .collect()
-        };
 
         // ── I/O gain & pan coefficients ──────────────────────────────────────
         let in_gain  = dsp::db_to_lin(input_level_db);
@@ -660,15 +646,27 @@ impl Plugin for NebulaDeEsser {
         let mut peak_det: f32 = -120.0;
         let mut peak_red: f32 = 0.0;
 
+        // Snapshot input and sidechain slices before mutably borrowing buffer for output
+        let input_data: Vec<Vec<f32>> = buffer.as_slice().iter()
+            .map(|ch| ch.to_vec())
+            .collect();
+        let sc_data: Vec<Vec<f32>> = if have_sc {
+            aux.inputs[0].as_slice().iter()
+                .map(|ch| ch.to_vec())
+                .collect()
+        } else {
+            vec![]
+        };
+
         for s in 0..n {
-            let raw_l = input_data.first().map(|c| c[s]).unwrap_or(0.0);
-            let raw_r = input_data.get(1).map(|c| c[s]).unwrap_or(raw_l);
+            let raw_l = input_data.first().map(|c| c[s] as f64).unwrap_or(0.0);
+            let raw_r = input_data.get(1).map(|c| c[s] as f64).unwrap_or(raw_l);
 
             let l = raw_l * in_gl;
             let r = raw_r * in_gr;
 
-            let sc_l = if have_sc { sc_data.first().map(|c| c[s]) } else { None };
-            let sc_r = if have_sc { sc_data.get(1).map(|c| c[s]) } else { None };
+            let sc_l = if have_sc { sc_data.first().map(|c| c[s] as f64) } else { None };
+            let sc_r = if have_sc { sc_data.get(1).map(|c| c[s] as f64) } else { None };
 
             let (mut ol, mut or_, det_db, red_db) = if bypass {
                 (l, r, -120.0_f64, 0.0_f64)
