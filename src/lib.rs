@@ -724,8 +724,9 @@ impl Plugin for NebulaDeEsser {
             out_l[s] = ol;
             out_r[s] = or_;
 
-            // Feed analyzer with pre-processing input signal
-            self.analyzer.push((raw_l + raw_r) * 0.5);
+            // Feed analyzer with post-processing output signal (mono sum)
+            // This is after input gain, DSP, output gain, and mix — exactly what the user hears.
+            self.analyzer.push((ol + or_) * 0.5);
 
             let df = det_db as f32;
             let rf = red_db as f32;
