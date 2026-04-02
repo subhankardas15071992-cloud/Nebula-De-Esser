@@ -24,21 +24,22 @@ const ACRYLIC:      Color32 = Color32::from_rgb(44,  44,  44);
 const ACRYLIC_CARD: Color32 = Color32::from_rgb(50,  50,  50);  // slightly elevated card
 const ACRYLIC_HIGH: Color32 = Color32::from_rgb(58,  58,  58);  // hover / raised surface
 
-// Control fill backgrounds — WinUI ControlFillColorDefault
-const CTRL_DEFAULT: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 12); // white 4.7%
-const CTRL_HOVER:   Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 20); // white 8%
-const CTRL_PRESSED: Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  7); // white 3%
-const CTRL_DISABLED:Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  5);
+// Control fill backgrounds — solid dark fills (premultiplied white-alpha breaks on opaque Mica)
+const CTRL_DEFAULT: Color32 = Color32::from_rgb(52,  52,  52);  // slightly lighter than Acrylic
+const CTRL_HOVER:   Color32 = Color32::from_rgb(62,  62,  62);  // hover lift
+const CTRL_PRESSED: Color32 = Color32::from_rgb(42,  42,  42);  // pressed sink
+const CTRL_DISABLED:Color32 = Color32::from_rgb(36,  36,  36);
 
-// Stroke / border — WinUI ControlStrokeColorDefault
-const STROKE_DEF:   Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 18); // top highlight
-const STROKE_OUT:   Color32 = Color32::from_rgba_premultiplied(  0,   0,   0, 80); // outer shadow
-const DIVIDER:      Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 12);
+// Stroke / border — solid low-contrast borders
+const STROKE_DEF:   Color32 = Color32::from_rgb(72,  72,  72);  // default border
+const STROKE_OUT:   Color32 = Color32::from_rgb(20,  20,  20);  // outer shadow border
+const DIVIDER:      Color32 = Color32::from_rgb(58,  58,  58);  // separator line
 
 // Accent — Windows 11 default blue #0078D4, light variant for dark theme
 const ACCENT:       Color32 = Color32::from_rgb(  0, 120, 212); // AccentFillColorDefault
-const ACCENT_LIGHT: Color32 = Color32::from_rgb( 96, 165, 250); // AccentFillColorLight
-const ACCENT_DARK:  Color32 = Color32::from_rgb(  0,  90, 158); // AccentFillColorDark
+const ACCENT_LIGHT: Color32 = Color32::from_rgb( 96, 165, 250); // lighter tint (text only, never fill)
+const ACCENT_DARK:  Color32 = Color32::from_rgb(  0,  90, 158); // AccentFillColorDark (borders)
+const ACCENT_BORDER:Color32 = Color32::from_rgb(  0,  70, 130); // solid border on accent buttons
 
 // Semantic
 const RED:          Color32 = Color32::from_rgb(255,  99,  72);  // SystemFillColorCritical
@@ -51,14 +52,14 @@ const M_GREEN:      Color32 = Color32::from_rgb(108, 203,  95);
 const M_YELLOW:     Color32 = Color32::from_rgb(252, 163,  17);
 const M_RED:        Color32 = Color32::from_rgb(255,  99,  72);
 
-// Text — WinUI TextFillColor hierarchy
-const TEXT_PRI:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 228); // 89%
-const TEXT_SEC:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 158); // 62%
-const TEXT_TER:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  90); // 35%
-const TEXT_DIS:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  40); // 16%
+// Text — solid colours, not white-alpha premultiplied (avoids washout on opaque backgrounds)
+const TEXT_PRI:     Color32 = Color32::from_rgb(242, 242, 242);  // primary label
+const TEXT_SEC:     Color32 = Color32::from_rgb(160, 160, 160);  // secondary label
+const TEXT_TER:     Color32 = Color32::from_rgb( 96,  96,  96);  // tertiary / disabled
+const TEXT_DIS:     Color32 = Color32::from_rgb( 60,  60,  60);  // fully disabled
 
-// Acrylic top-edge highlight — 1px white line at top of every card
-const CARD_TOP:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 30);
+// Acrylic top-edge highlight
+const CARD_TOP:     Color32 = Color32::from_rgb(72,  72,  72);   // subtle top border highlight
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
@@ -81,9 +82,7 @@ const BASE_H: f32 = 640.0;
 // Draw Acrylic card: tinted fill + top highlight stroke + outer border
 fn acrylic_card(pa: &egui::Painter, rect: Rect, radius: f32) {
     pa.rect_filled(rect, radius, ACRYLIC);
-    // Diagonal noise simulation — two faint diagonal bands
-    pa.rect_filled(rect, radius, Color32::from_rgba_premultiplied(255, 255, 255, 3));
-    // Top highlight — 1px white line
+    // Top highlight — slightly lighter top border to simulate the Acrylic top edge
     let tl = Pos2::new(rect.min.x + radius * 0.5, rect.min.y);
     let tr = Pos2::new(rect.max.x - radius * 0.5, rect.min.y);
     pa.line_segment([tl, tr], Stroke::new(1.0, CARD_TOP));
@@ -94,13 +93,9 @@ fn acrylic_card(pa: &egui::Painter, rect: Rect, radius: f32) {
 // Draw Mica background with top-to-bottom luminosity gradient
 fn mica_bg(pa: &egui::Painter, rect: Rect) {
     pa.rect_filled(rect, 0.0, MICA_BASE);
-    // Simulate gradient: lighter strip at top, darker at bottom
-    let top_strip = Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() * 0.35));
-    let bot_strip = Rect::from_min_size(
-        Pos2::new(rect.min.x, rect.max.y - rect.height() * 0.25),
-        Vec2::new(rect.width(), rect.height() * 0.25));
-    pa.rect_filled(top_strip, 0.0, Color32::from_rgba_premultiplied(255, 255, 255, 8));
-    pa.rect_filled(bot_strip, 0.0, Color32::from_rgba_premultiplied(0, 0, 0, 18));
+    // Subtle top lift — slightly lighter strip
+    let top_strip = Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() * 0.3));
+    pa.rect_filled(top_strip, 0.0, Color32::from_rgb(36, 36, 36));
 }
 
 // ─── Param Snapshot ───────────────────────────────────────────────────────────
@@ -292,7 +287,6 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     let bar = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 52.0 * s));
     // Acrylic header background
     painter.rect_filled(bar, 0.0, ACRYLIC);
-    painter.rect_filled(bar, 0.0, Color32::from_rgba_premultiplied(255, 255, 255, 4));
     // Bottom divider — WinUI NavigationView divider
     painter.line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, DIVIDER));
 
@@ -350,11 +344,11 @@ fn draw_command_bar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut Nebul
             let resp = ui.allocate_rect(r, Sense::click());
             let hov  = resp.hovered();
             let (bg, fg, border) = if $active && $danger {
-                (ga(RED, 200), Color32::WHITE, ga(RED, 80))
+                (Color32::from_rgb(160, 40, 30), Color32::from_rgb(242,242,242), Color32::from_rgb(180,60,50))
             } else if $active {
-                (ACCENT, Color32::WHITE, ga(ACCENT, 80))
+                (ACCENT, Color32::from_rgb(242,242,242), ACCENT_DARK)
             } else if hov && $danger {
-                (ga(RED, 30), RED, ga(RED, 60))
+                (Color32::from_rgb(80, 30, 28), RED, Color32::from_rgb(100,40,38))
             } else if hov {
                 (CTRL_HOVER, TEXT_PRI, STROKE_DEF)
             } else {
@@ -491,7 +485,7 @@ fn draw_command_bar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut Nebul
       gui.os_anchor = Pos2::new(or_.min.x, or_.max.y + 2.0 * s);
       let resp = ui.allocate_rect(or_, Sense::click());
       let active = params.oversampling > 0; let hov = resp.hovered();
-      let (bg, fg) = if active { (ACCENT, Color32::WHITE) }
+      let (bg, fg) = if active { (ACCENT, Color32::from_rgb(242,242,242)) }
           else if hov { (CTRL_HOVER, TEXT_PRI) } else { (CTRL_DEFAULT, TEXT_SEC) };
       { let p = ui.painter_at(rect);
         p.rect_filled(or_, 4.0 * s, bg);
@@ -549,7 +543,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
       // Thumb — WinUI Slider thumb: white circle
       pa.rect_filled(Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)), 4.0 * s, ACCENT);
       pa.rect_stroke(Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)), 4.0 * s,
-          Stroke::new(1.0, ga(ACCENT_LIGHT, 120)), egui::StrokeKind::Outside);
+          Stroke::new(1.0, ACCENT_DARK), egui::StrokeKind::Outside);
 
       pa.text(Pos2::new(cx, mt + mh + 12.0 * s), egui::Align2::CENTER_CENTER,
           format!("{:.1} dB", p.threshold), FontId::new(7.0 * s, FontFamily::Proportional), TEXT_SEC);
@@ -715,10 +709,10 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
           let track = Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
           let track_col = if *active { ACCENT } else if hov { CTRL_HOVER } else { CTRL_DEFAULT };
           pa.rect_filled(track, track_h * 0.5, track_col);
-          pa.rect_stroke(track, track_h * 0.5, Stroke::new(1.0, if *active { ga(ACCENT_LIGHT, 80) } else { STROKE_DEF }), egui::StrokeKind::Outside);
+          pa.rect_stroke(track, track_h * 0.5, Stroke::new(1.0, if *active { ACCENT_DARK } else { STROKE_DEF }), egui::StrokeKind::Outside);
           // Thumb — white circle, shifts right when on
           let thumb_x = if *active { track.max.x - track_h * 0.5 } else { track.min.x + track_h * 0.5 };
-          pa.circle_filled(Pos2::new(thumb_x, track.center().y), track_h * 0.35, Color32::WHITE);
+          pa.circle_filled(Pos2::new(thumb_x, track.center().y), track_h * 0.35, Color32::from_rgb(230,230,230));
           // Label
           pa.text(Pos2::new(track.max.x + 6.0 * s, br.center().y), egui::Align2::LEFT_CENTER,
               *lbl, FontId::new(7.5 * s, FontFamily::Proportional),
@@ -758,9 +752,9 @@ fn radio_group(ui: &mut Ui, rect: Rect, hdr: &str, labs: &[&str], ai: usize, s: 
           let radio_c = Pos2::new(item_r.min.x + 7.0 * s, item_r.center().y);
           let radio_r = 5.0 * s;
           pa.circle_filled(radio_c, radio_r, if ia { ACCENT } else if hov { CTRL_HOVER } else { CTRL_DEFAULT });
-          pa.circle_stroke(radio_c, radio_r, Stroke::new(1.0, if ia { ga(ACCENT_LIGHT, 120) } else { STROKE_DEF }));
+          pa.circle_stroke(radio_c, radio_r, Stroke::new(1.0, if ia { ACCENT_DARK } else { STROKE_DEF }));
           // Inner dot when selected
-          if ia { pa.circle_filled(radio_c, 2.5 * s, Color32::WHITE); }
+          if ia { pa.circle_filled(radio_c, 2.5 * s, Color32::from_rgb(230,230,230)); }
           // Label
           pa.text(Pos2::new(radio_c.x + radio_r + 5.0 * s, item_r.center().y), egui::Align2::LEFT_CENTER,
               *lbl, FontId::new(7.0 * s, FontFamily::Proportional),
@@ -867,7 +861,7 @@ fn draw_knob(pa: &egui::Painter, c: Pos2, r: f32, val: f64, min: f64, max: f64, 
     // Top highlight arc
     let hl_start = std::f32::consts::PI * 1.1;
     let hl_end   = std::f32::consts::PI * 1.9;
-    arc(pa, c, r - 1.0 * s, hl_start, hl_end, ga(Color32::WHITE, 18), 1.5 * s);
+    arc(pa, c, r - 1.0 * s, hl_start, hl_end, Color32::from_rgb(68, 68, 68), 1.5 * s);
     // Track groove
     arc(pa, c, r * 0.74, start, start + sweep, ga(col, 20), 3.5 * s);
     // Filled arc
@@ -879,7 +873,7 @@ fn draw_knob(pa: &egui::Painter, c: Pos2, r: f32, val: f64, min: f64, max: f64, 
     let ix = c.x + r * 0.50 * angle.cos();
     let iy = c.y + r * 0.50 * angle.sin();
     pa.circle_filled(Pos2::new(ix, iy), 2.5 * s, col);
-    pa.circle_filled(Pos2::new(ix, iy), 1.3 * s, Color32::WHITE);
+    pa.circle_filled(Pos2::new(ix, iy), 1.3 * s, Color32::from_rgb(220,220,220));
     pa.circle_filled(c, 1.8 * s, ga(col, 100));
 }
 
@@ -1050,7 +1044,7 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
               Stroke::new(2.0, ACCENT));
           // Primary button — accent fill
           p.rect_filled(ok, 4.0 * s, ACCENT);
-          p.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
+          p.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
           p.text(ok.center(), egui::Align2::CENTER_CENTER, "OK",
               FontId::new(8.5 * s, FontFamily::Proportional), Color32::WHITE);
           // Secondary button — control fill
@@ -1099,7 +1093,7 @@ fn draw_content_dialog_preset(ctx: &Context, gui: &mut NebulaGui, p: &GuiParams,
           pa.line_segment([Pos2::new(fr.min.x + 4.0 * s, fr.max.y), Pos2::new(fr.max.x - 4.0 * s, fr.max.y)],
               Stroke::new(2.0, ACCENT));
           pa.rect_filled(ok, 4.0 * s, ACCENT);
-          pa.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
+          pa.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
           pa.text(ok.center(), egui::Align2::CENTER_CENTER, "Save",
               FontId::new(8.5 * s, FontFamily::Proportional), Color32::WHITE);
           pa.rect_filled(cx_, 4.0 * s, CTRL_DEFAULT);
@@ -1161,7 +1155,7 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
             let resp = ui.allocate_rect(rr, Sense::click());
             let isl  = learning == idx as i32; let hov = resp.hovered();
             { let pa = ui.painter_at(Rect::EVERYTHING);
-              let (bg, border) = if isl { (ACCENT, ga(ACCENT_LIGHT, 80)) }
+              let (bg, border) = if isl { (ACCENT, ACCENT_BORDER) }
                   else if hov { (CTRL_HOVER, STROKE_DEF) }
                   else { (CTRL_DEFAULT, STROKE_DEF) };
               pa.rect_filled(rr, 4.0 * s, bg);
@@ -1186,7 +1180,7 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
           pa.text(clr.center(), egui::Align2::CENTER_CENTER, "Clear All",
               FontId::new(7.5 * s, FontFamily::Proportional), RED);
           pa.rect_filled(cls, 4.0 * s, ACCENT);
-          pa.rect_stroke(cls, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
+          pa.rect_stroke(cls, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
           pa.text(cls.center(), egui::Align2::CENTER_CENTER, "Close",
               FontId::new(7.5 * s, FontFamily::Proportional), Color32::WHITE); }
         if ui.allocate_rect(clr, Sense::click()).clicked() {
