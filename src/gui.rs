@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.3.0 — Dark iOS/macOS-inspired GUI
+// Nebula DeEsser v2.3.0 — Windows 11 WinUI 3 Dark Design Language
+// Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
-// Scale = min(win_w/BASE_W, win_h/BASE_H), read from EguiState — no zoom_factor.
 // ─────────────────────────────────────────────────────────────────────────────
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -13,35 +13,52 @@ use nih_plug_egui::EguiState;
 use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_NAMES, MIDI_PARAM_COUNT};
 
-// ─── Palette — dark macOS / iOS inspired ─────────────────────────────────────
-// Backgrounds: deep charcoal layering, no pure black
-const BG_BASE:    Color32 = Color32::from_rgb(14,  14,  16);   // window fill
-const BG_PANEL:   Color32 = Color32::from_rgb(22,  22,  26);   // card surface
-const BG_RAISED:  Color32 = Color32::from_rgb(30,  30,  36);   // raised element
-const BG_WIDGET:  Color32 = Color32::from_rgb(38,  38,  46);   // input / field bg
-const BG_INSET:   Color32 = Color32::from_rgb(10,  10,  12);   // inset / well
+// ─── WinUI 3 Dark Palette ────────────────────────────────────────────────────
+// Mica material — #202020 base, subtle luminosity gradient top→bottom
+const MICA_BASE:    Color32 = Color32::from_rgb(32,  32,  32);
+const MICA_TOP:     Color32 = Color32::from_rgb(38,  38,  38);  // lighter at top
+const MICA_BOT:     Color32 = Color32::from_rgb(28,  28,  28);  // darker at bottom
 
-// Accent — single blue accent like macOS system blue, plus semantic colours
-const ACCENT:     Color32 = Color32::from_rgb( 10, 132, 255);  // macOS blue
-const ACCENT_DIM: Color32 = Color32::from_rgb(  8,  90, 180);
-const RED:        Color32 = Color32::from_rgb(255,  69,  58);  // macOS red
-const ORANGE:     Color32 = Color32::from_rgb(255, 159,  10);  // macOS orange
-const GREEN:      Color32 = Color32::from_rgb( 48, 209,  88);  // macOS green
-const TEAL:       Color32 = Color32::from_rgb( 90, 200, 250);  // iOS teal / info
+// Acrylic tint — #2C2C2C at 96% opacity, WinUI AcrylicBrush dark recipe
+const ACRYLIC:      Color32 = Color32::from_rgb(44,  44,  44);
+const ACRYLIC_CARD: Color32 = Color32::from_rgb(50,  50,  50);  // slightly elevated card
+const ACRYLIC_HIGH: Color32 = Color32::from_rgb(58,  58,  58);  // hover / raised surface
 
-// Meter colours
-const M_GREEN:    Color32 = Color32::from_rgb( 48, 209,  88);
-const M_YELLOW:   Color32 = Color32::from_rgb(255, 214,  10);
-const M_RED:      Color32 = Color32::from_rgb(255,  69,  58);
+// Control fill backgrounds — WinUI ControlFillColorDefault
+const CTRL_DEFAULT: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 12); // white 4.7%
+const CTRL_HOVER:   Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 20); // white 8%
+const CTRL_PRESSED: Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  7); // white 3%
+const CTRL_DISABLED:Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  5);
 
-// Text hierarchy
-const TEXT_PRI:   Color32 = Color32::from_rgb(242, 242, 247);  // primary label
-const TEXT_SEC:   Color32 = Color32::from_rgb(152, 152, 160);  // secondary label
-const TEXT_TER:   Color32 = Color32::from_rgb( 72,  72,  80);  // tertiary / disabled
+// Stroke / border — WinUI ControlStrokeColorDefault
+const STROKE_DEF:   Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 18); // top highlight
+const STROKE_OUT:   Color32 = Color32::from_rgba_premultiplied(  0,   0,   0, 80); // outer shadow
+const DIVIDER:      Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 12);
 
-// Separator / border
-const SEP:        Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 14);
-const BORDER:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 22);
+// Accent — Windows 11 default blue #0078D4, light variant for dark theme
+const ACCENT:       Color32 = Color32::from_rgb(  0, 120, 212); // AccentFillColorDefault
+const ACCENT_LIGHT: Color32 = Color32::from_rgb( 96, 165, 250); // AccentFillColorLight
+const ACCENT_DARK:  Color32 = Color32::from_rgb(  0,  90, 158); // AccentFillColorDark
+
+// Semantic
+const RED:          Color32 = Color32::from_rgb(255,  99,  72);  // SystemFillColorCritical
+const ORANGE:       Color32 = Color32::from_rgb(252, 163,  17);  // SystemFillColorCaution
+const GREEN:        Color32 = Color32::from_rgb( 108, 203, 95);  // SystemFillColorSuccess
+const TEAL:         Color32 = Color32::from_rgb( 77, 201, 176);  // custom teal
+
+// Meter
+const M_GREEN:      Color32 = Color32::from_rgb(108, 203,  95);
+const M_YELLOW:     Color32 = Color32::from_rgb(252, 163,  17);
+const M_RED:        Color32 = Color32::from_rgb(255,  99,  72);
+
+// Text — WinUI TextFillColor hierarchy
+const TEXT_PRI:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 228); // 89%
+const TEXT_SEC:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 158); // 62%
+const TEXT_TER:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  90); // 35%
+const TEXT_DIS:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255,  40); // 16%
+
+// Acrylic top-edge highlight — 1px white line at top of every card
+const CARD_TOP:     Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 30);
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
@@ -59,6 +76,31 @@ const BASE_H: f32 = 640.0;
         (a.g() as f32 * u + b.g() as f32 * t) as u8,
         (a.b() as f32 * u + b.b() as f32 * t) as u8,
     )
+}
+
+// Draw Acrylic card: tinted fill + top highlight stroke + outer border
+fn acrylic_card(pa: &egui::Painter, rect: Rect, radius: f32) {
+    pa.rect_filled(rect, radius, ACRYLIC);
+    // Diagonal noise simulation — two faint diagonal bands
+    pa.rect_filled(rect, radius, Color32::from_rgba_premultiplied(255, 255, 255, 3));
+    // Top highlight — 1px white line
+    let tl = Pos2::new(rect.min.x + radius * 0.5, rect.min.y);
+    let tr = Pos2::new(rect.max.x - radius * 0.5, rect.min.y);
+    pa.line_segment([tl, tr], Stroke::new(1.0, CARD_TOP));
+    // Outer card border
+    pa.rect_stroke(rect, radius, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+}
+
+// Draw Mica background with top-to-bottom luminosity gradient
+fn mica_bg(pa: &egui::Painter, rect: Rect) {
+    pa.rect_filled(rect, 0.0, MICA_BASE);
+    // Simulate gradient: lighter strip at top, darker at bottom
+    let top_strip = Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() * 0.35));
+    let bot_strip = Rect::from_min_size(
+        Pos2::new(rect.min.x, rect.max.y - rect.height() * 0.25),
+        Vec2::new(rect.width(), rect.height() * 0.25));
+    pa.rect_filled(top_strip, 0.0, Color32::from_rgba_premultiplied(255, 255, 255, 8));
+    pa.rect_filled(bot_strip, 0.0, Color32::from_rgba_premultiplied(0, 0, 0, 18));
 }
 
 // ─── Param Snapshot ───────────────────────────────────────────────────────────
@@ -186,12 +228,12 @@ pub fn draw(ctx: &Context, egui_state: &EguiState, gui: &mut NebulaGui, params: 
     let s = (win_w as f32 / BASE_W).min(win_h as f32 / BASE_H).max(0.25);
 
     let mut style = (*ctx.style()).clone();
-    style.visuals.panel_fill = BG_BASE;
+    style.visuals.panel_fill = MICA_BASE;
     style.visuals.override_text_color = Some(TEXT_PRI);
-    style.visuals.widgets.noninteractive.bg_fill = BG_PANEL;
-    style.visuals.widgets.inactive.bg_fill = BG_RAISED;
-    style.visuals.widgets.hovered.bg_fill = BG_WIDGET;
-    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0 * s, ACCENT);
+    style.visuals.widgets.noninteractive.bg_fill = ACRYLIC;
+    style.visuals.widgets.inactive.bg_fill = ACRYLIC_CARD;
+    style.visuals.widgets.hovered.bg_fill = ACRYLIC_HIGH;
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0 * s, ACCENT_LIGHT);
     style.spacing.item_spacing = Vec2::new(4.0 * s, 3.0 * s);
     ctx.set_style(style);
 
@@ -199,22 +241,24 @@ pub fn draw(ctx: &Context, egui_state: &EguiState, gui: &mut NebulaGui, params: 
         .min_size(Vec2::new(400.0, 300.0))
         .show(ctx, egui_state, |ui| {
             let full = ui.max_rect();
-            draw_bg(ui.painter_at(full), full, params.bypass);
+            // Mica background
+            mica_bg(&ui.painter_at(full), full);
 
-            let title_h   = 48.0 * s;
-            let toolbar_h = 32.0 * s;
-            let margin    = 10.0 * s;
+            let title_h   = 52.0 * s;
+            let toolbar_h = 36.0 * s;
+            let margin    = 8.0  * s;
 
-            draw_title(ui.painter_at(full), full, params.bypass, s);
-            draw_toolbar(ui, Rect::from_min_size(
+            draw_nav_header(ui.painter_at(full), full, params.bypass, s);
+            draw_command_bar(ui, Rect::from_min_size(
                 Pos2::new(full.min.x, full.min.y + title_h),
                 Vec2::new(full.width(), toolbar_h)), params, gui, &mut ch, s);
 
             let content = Rect::from_min_size(
                 Pos2::new(full.min.x + margin, full.min.y + title_h + toolbar_h + margin),
-                Vec2::new(full.width() - margin*2.0, full.height() - title_h - toolbar_h - margin*2.0));
+                Vec2::new(full.width() - margin * 2.0,
+                          full.height() - title_h - toolbar_h - margin * 2.0));
 
-            let mw = 90.0 * s; let gap = 8.0 * s;
+            let mw = 92.0 * s; let gap = 8.0 * s;
             let cw = content.width() - mw * 2.0 - gap * 2.0;
 
             let left_r  = Rect::from_min_size(content.min, Vec2::new(mw, content.height()));
@@ -234,137 +278,150 @@ pub fn draw(ctx: &Context, egui_state: &EguiState, gui: &mut NebulaGui, params: 
             draw_spectrum(ui, spec_r, gui, params, &mut ch, s);
         });
 
-    if gui.num_input.open        { draw_num_popup(ctx, gui, &mut ch, s); }
-    if gui.preset_save_popup     { draw_preset_save(ctx, gui, params, &mut ch, s); }
-    if gui.midi_popup            { draw_midi_popup(ctx, gui, s); }
-    if gui.os_dropdown           { draw_os_dropdown(ctx, gui, params, &mut ch, s); }
-    if gui.preset_dropdown_open  { draw_preset_dropdown(ctx, gui, &mut ch, s); }
-    if gui.midi_context_menu     { draw_midi_context_menu(ctx, gui, s); }
+    if gui.num_input.open        { draw_content_dialog_num(ctx, gui, &mut ch, s); }
+    if gui.preset_save_popup     { draw_content_dialog_preset(ctx, gui, params, &mut ch, s); }
+    if gui.midi_popup            { draw_content_dialog_midi(ctx, gui, s); }
+    if gui.os_dropdown           { draw_flyout_os(ctx, gui, params, &mut ch, s); }
+    if gui.preset_dropdown_open  { draw_flyout_preset(ctx, gui, &mut ch, s); }
+    if gui.midi_context_menu     { draw_context_menu_midi(ctx, gui, s); }
     ch
 }
 
-// ─── Background ──────────────────────────────────────────────────────────────
-fn draw_bg(painter: egui::Painter, rect: Rect, bypass: bool) {
-    painter.rect_filled(rect, 0.0, BG_BASE);
-    // Subtle bypass tint — no animated grid, clean and still
-    if bypass {
-        painter.rect_filled(rect, 0.0, Color32::from_rgba_premultiplied(80, 0, 0, 18));
-    }
-}
-
-// ─── Title Bar ───────────────────────────────────────────────────────────────
-fn draw_title(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
-    let bar = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 48.0 * s));
-    painter.rect_filled(bar, 0.0, BG_PANEL);
-    // Single hairline separator at bottom
-    painter.line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(0.5 * s, SEP));
+// ─── NavigationView Header (replaces title bar) ───────────────────────────────
+fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
+    let bar = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 52.0 * s));
+    // Acrylic header background
+    painter.rect_filled(bar, 0.0, ACRYLIC);
+    painter.rect_filled(bar, 0.0, Color32::from_rgba_premultiplied(255, 255, 255, 4));
+    // Bottom divider — WinUI NavigationView divider
+    painter.line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, DIVIDER));
 
     let ty = bar.center().y;
-    let tx = bar.min.x + 18.0 * s;
+    let tx = bar.min.x + 16.0 * s;
 
-    // Plugin name — SF-style weight contrast: name bold, subtitle light
-    painter.text(Pos2::new(tx, ty - 5.0 * s), egui::Align2::LEFT_CENTER,
-        "Nebula De-Esser", FontId::new(15.0 * s, FontFamily::Proportional), TEXT_PRI);
-    painter.text(Pos2::new(tx, ty + 8.0 * s), egui::Align2::LEFT_CENTER,
+    // Segoe UI Variable Display — simulated with Proportional
+    // App icon placeholder — small accent square
+    let icon_r = Rect::from_center_size(Pos2::new(tx + 8.0 * s, ty), Vec2::splat(18.0 * s));
+    painter.rect_filled(icon_r, 4.0 * s, ACCENT);
+    painter.text(icon_r.center(), egui::Align2::CENTER_CENTER,
+        "N", FontId::new(10.0 * s, FontFamily::Proportional), Color32::WHITE);
+
+    // Title — Segoe UI Variable Subtitle weight
+    painter.text(Pos2::new(tx + 24.0 * s, ty - 5.0 * s), egui::Align2::LEFT_CENTER,
+        "Nebula De-Esser", FontId::new(14.0 * s, FontFamily::Proportional), TEXT_PRI);
+    painter.text(Pos2::new(tx + 24.0 * s, ty + 8.0 * s), egui::Align2::LEFT_CENTER,
         "Spectrum Processor  ·  64-bit  ·  CLAP",
-        FontId::new(7.5 * s, FontFamily::Proportional), TEXT_TER);
+        FontId::new(7.0 * s, FontFamily::Proportional), TEXT_TER);
 
-    // Version pill — subtle, right-aligned
-    let ver_x = bar.max.x - 14.0 * s;
-    painter.text(Pos2::new(ver_x, ty), egui::Align2::RIGHT_CENTER,
-        "v2.3", FontId::new(8.0 * s, FontFamily::Proportional), TEXT_SEC);
+    // Version — right-aligned, tertiary text
+    painter.text(Pos2::new(bar.max.x - 12.0 * s, ty), egui::Align2::RIGHT_CENTER,
+        "v2.3", FontId::new(8.0 * s, FontFamily::Proportional), TEXT_TER);
 
-    // Bypass badge — only visible when active
+    // Bypass badge — WinUI InfoBadge style
     if bypass {
-        let bx = bar.max.x - 90.0 * s;
-        let br = Rect::from_center_size(Pos2::new(bx, ty), Vec2::new(60.0 * s, 18.0 * s));
-        painter.rect_filled(br, 9.0 * s, ga(RED, 28));
-        painter.rect_stroke(br, 9.0 * s, Stroke::new(0.8 * s, ga(RED, 160)), egui::StrokeKind::Outside);
+        let bx = bar.max.x - 100.0 * s;
+        let br = Rect::from_center_size(Pos2::new(bx, ty), Vec2::new(68.0 * s, 22.0 * s));
+        painter.rect_filled(br, 4.0 * s, ga(RED, 40));
+        painter.rect_stroke(br, 4.0 * s, Stroke::new(1.0, ga(RED, 180)), egui::StrokeKind::Outside);
         painter.text(br.center(), egui::Align2::CENTER_CENTER,
-            "Bypassed", FontId::new(7.5 * s, FontFamily::Proportional), RED);
+            "Bypassed", FontId::new(8.0 * s, FontFamily::Proportional), RED);
     }
 }
 
-// ─── Toolbar ─────────────────────────────────────────────────────────────────
-fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+// ─── CommandBar (replaces toolbar) ───────────────────────────────────────────
+fn draw_command_bar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
     { let p = ui.painter_at(rect);
-      p.rect_filled(rect, 0.0, BG_PANEL);
-      p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(0.5 * s, SEP)); }
+      p.rect_filled(rect, 0.0, ACRYLIC);
+      p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, DIVIDER)); }
 
     let cy = rect.center().y;
-    let bh = 20.0 * s;
-    let mut cx = rect.min.x + 10.0 * s;
+    let bh = 24.0 * s;
+    let mut cx = rect.min.x + 8.0 * s;
 
-    // Pill-style toolbar button — macOS-inspired filled pill when active
-    macro_rules! tbtn {
-        ($label:expr, $active:expr, $accent:expr, $w:expr) => {{
+    // AppBarButton — WinUI CommandBar button style
+    // Active: AccentFillColorDefault fill, white text
+    // Hover:  ControlFillColorSecondary, primary text
+    // Rest:   ControlFillColorDefault, secondary text
+    macro_rules! appbar_btn {
+        ($label:expr, $active:expr, $danger:expr, $w:expr) => {{
             let w = $w * s;
             let r = Rect::from_min_max(Pos2::new(cx, cy - bh * 0.5), Pos2::new(cx + w, cy + bh * 0.5));
-            cx += w + 5.0 * s;
+            cx += w + 4.0 * s;
             let resp = ui.allocate_rect(r, Sense::click());
             let hov  = resp.hovered();
-            let (bg, fg) = if $active {
-                (ga($accent, 220), BG_BASE)
+            let (bg, fg, border) = if $active && $danger {
+                (ga(RED, 200), Color32::WHITE, ga(RED, 80))
+            } else if $active {
+                (ACCENT, Color32::WHITE, ga(ACCENT, 80))
+            } else if hov && $danger {
+                (ga(RED, 30), RED, ga(RED, 60))
             } else if hov {
-                (ga($accent, 30), $accent)
+                (CTRL_HOVER, TEXT_PRI, STROKE_DEF)
             } else {
-                (BG_RAISED, TEXT_SEC)
+                (CTRL_DEFAULT, TEXT_SEC, STROKE_DEF)
             };
             { let p = ui.painter_at(rect);
-              p.rect_filled(r, bh * 0.5, bg);
-              if !$active && !hov {
-                  p.rect_stroke(r, bh * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-              }
+              p.rect_filled(r, 4.0 * s, bg);
+              p.rect_stroke(r, 4.0 * s, Stroke::new(1.0, border), egui::StrokeKind::Outside);
               p.text(r.center(), egui::Align2::CENTER_CENTER, $label,
-                  FontId::new(7.5 * s, FontFamily::Proportional), fg); }
+                  FontId::new(8.0 * s, FontFamily::Proportional), fg); }
             resp
         }};
     }
 
-    if tbtn!(if params.bypass { "Bypassed" } else { "Bypass" }, params.bypass, RED, 62.0).clicked() {
+    if appbar_btn!(if params.bypass { "⏸ Bypassed" } else { "⏸ Bypass" }, params.bypass, true, 70.0).clicked() {
         ch.bypass = Some(!params.bypass);
     }
-    cx += 4.0 * s;
+    // Separator
+    { let p = ui.painter_at(rect);
+      p.line_segment([Pos2::new(cx + 2.0 * s, cy - bh * 0.4), Pos2::new(cx + 2.0 * s, cy + bh * 0.4)],
+          Stroke::new(1.0, DIVIDER)); }
+    cx += 8.0 * s;
 
-    // Preset selector — rounded rect, chevron
-    let pw = 140.0 * s;
+    // Preset selector
+    let pw = 144.0 * s;
     { let pr = Rect::from_min_max(Pos2::new(cx, cy - bh * 0.5), Pos2::new(cx + pw, cy + bh * 0.5));
-      cx += pw + 5.0 * s;
+      cx += pw + 4.0 * s;
       let resp = ui.allocate_rect(pr, Sense::click());
       let hov  = resp.hovered();
-      let lbl  = if gui.presets.is_empty() { "Preset".to_string() }
+      let lbl  = if gui.presets.is_empty() { "Preset  ⌄".to_string() }
           else { let n = &gui.presets[gui.selected_preset.min(gui.presets.len()-1)].0;
                  format!("{}  ⌄", if n.len() > 16 { &n[..16] } else { n }) };
       { let p = ui.painter_at(rect);
-        p.rect_filled(pr, bh * 0.5, if hov { ga(ACCENT, 20) } else { BG_RAISED });
-        p.rect_stroke(pr, bh * 0.5, Stroke::new(0.5 * s, if hov { ga(ACCENT, 120) } else { BORDER }), egui::StrokeKind::Outside);
+        p.rect_filled(pr, 4.0 * s, if hov { CTRL_HOVER } else { CTRL_DEFAULT });
+        p.rect_stroke(pr, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
         p.text(pr.center(), egui::Align2::CENTER_CENTER, &lbl,
-            FontId::new(7.5 * s, FontFamily::Proportional), if hov { ACCENT } else { TEXT_SEC }); }
-      gui.preset_anchor = Pos2::new(pr.min.x, pr.max.y + 3.0 * s);
+            FontId::new(8.0 * s, FontFamily::Proportional),
+            if hov { TEXT_PRI } else { TEXT_SEC }); }
+      gui.preset_anchor = Pos2::new(pr.min.x, pr.max.y + 2.0 * s);
       if resp.clicked() { gui.preset_dropdown_open = !gui.preset_dropdown_open; }
     }
-
-    if tbtn!("Save", false, ACCENT, 38.0).clicked() {
+    if appbar_btn!("Save", false, false, 40.0).clicked() {
         gui.preset_name_buf.clear(); gui.preset_save_popup = true; gui.preset_dropdown_open = false;
     }
-    if tbtn!("Delete", false, RED, 44.0).clicked() && !gui.presets.is_empty() {
+    if appbar_btn!("Delete", false, true, 46.0).clicked() && !gui.presets.is_empty() {
         gui.presets.remove(gui.selected_preset.min(gui.presets.len()-1));
         if gui.selected_preset > 0 { gui.selected_preset -= 1; }
     }
-    cx += 4.0 * s;
+    { let p = ui.painter_at(rect);
+      p.line_segment([Pos2::new(cx + 2.0 * s, cy - bh * 0.4), Pos2::new(cx + 2.0 * s, cy + bh * 0.4)],
+          Stroke::new(1.0, DIVIDER)); }
+    cx += 8.0 * s;
 
     let can_undo = !gui.undo_stack.is_empty();
     let can_redo = !gui.redo_stack.is_empty();
-    { let w = 44.0 * s;
+    { let w = 48.0 * s;
       let r = Rect::from_min_max(Pos2::new(cx, cy - bh * 0.5), Pos2::new(cx + w, cy + bh * 0.5));
-      cx += w + 5.0 * s;
+      cx += w + 4.0 * s;
       let resp = ui.allocate_rect(r, Sense::click());
-      let c = if can_undo { if resp.hovered() { ACCENT } else { TEXT_SEC } } else { TEXT_TER };
+      let hov = resp.hovered();
+      let (bg, fg) = if !can_undo { (CTRL_DEFAULT, TEXT_DIS) }
+          else if hov { (CTRL_HOVER, TEXT_PRI) } else { (CTRL_DEFAULT, TEXT_SEC) };
       { let p = ui.painter_at(rect);
-        p.rect_filled(r, bh * 0.5, BG_RAISED);
-        p.rect_stroke(r, bh * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+        p.rect_filled(r, 4.0 * s, bg);
+        p.rect_stroke(r, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
         p.text(r.center(), egui::Align2::CENTER_CENTER, "↩ Undo",
-            FontId::new(7.5 * s, FontFamily::Proportional), c); }
+            FontId::new(8.0 * s, FontFamily::Proportional), fg); }
       if resp.clicked() && can_undo {
           if let Some(snap) = gui.undo_stack.pop() {
               gui.redo_stack.push(ParamSnapshot::from_params(params));
@@ -373,16 +430,18 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
           }
       }
     }
-    { let w = 44.0 * s;
+    { let w = 48.0 * s;
       let r = Rect::from_min_max(Pos2::new(cx, cy - bh * 0.5), Pos2::new(cx + w, cy + bh * 0.5));
-      cx += w + 5.0 * s;
+      cx += w + 4.0 * s;
       let resp = ui.allocate_rect(r, Sense::click());
-      let c = if can_redo { if resp.hovered() { ACCENT } else { TEXT_SEC } } else { TEXT_TER };
+      let hov = resp.hovered();
+      let (bg, fg) = if !can_redo { (CTRL_DEFAULT, TEXT_DIS) }
+          else if hov { (CTRL_HOVER, TEXT_PRI) } else { (CTRL_DEFAULT, TEXT_SEC) };
       { let p = ui.painter_at(rect);
-        p.rect_filled(r, bh * 0.5, BG_RAISED);
-        p.rect_stroke(r, bh * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+        p.rect_filled(r, 4.0 * s, bg);
+        p.rect_stroke(r, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
         p.text(r.center(), egui::Align2::CENTER_CENTER, "Redo ↪",
-            FontId::new(7.5 * s, FontFamily::Proportional), c); }
+            FontId::new(8.0 * s, FontFamily::Proportional), fg); }
       if resp.clicked() && can_redo {
           if let Some(snap) = gui.redo_stack.pop() {
               gui.undo_stack.push(ParamSnapshot::from_params(params));
@@ -391,11 +450,14 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
           }
       }
     }
-    cx += 4.0 * s;
+    { let p = ui.painter_at(rect);
+      p.line_segment([Pos2::new(cx + 2.0 * s, cy - bh * 0.4), Pos2::new(cx + 2.0 * s, cy + bh * 0.4)],
+          Stroke::new(1.0, DIVIDER)); }
+    cx += 8.0 * s;
 
-    let ab_label = if gui.active_state == 'A' { "A/B  A" } else { "A/B  B" };
+    let ab_label = if gui.active_state == 'A' { "A/B  [A]" } else { "A/B  [B]" };
     let ab_active = gui.state_a.is_some() || gui.state_b.is_some();
-    let ab_resp = tbtn!(ab_label, ab_active, GREEN, 56.0);
+    let ab_resp = appbar_btn!(ab_label, ab_active, false, 64.0);
     if ab_resp.clicked() {
         let snap = ParamSnapshot::from_params(params);
         match gui.active_state { 'A' => gui.state_a = Some(snap), 'B' => gui.state_b = Some(snap), _ => {} }
@@ -410,34 +472,32 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
         let snap = ParamSnapshot::from_params(params);
         match gui.active_state { 'A' => gui.state_a = Some(snap), 'B' => gui.state_b = Some(snap), _ => {} }
     }
-    cx += 4.0 * s;
 
     let learning = gui.midi_learn.learning_target.load(std::sync::atomic::Ordering::Relaxed) >= 0;
-    let midi_btn = tbtn!(if learning { "● Learning" } else { "MIDI Learn" }, learning, ORANGE, 82.0);
+    let midi_btn = appbar_btn!(if learning { "● Learning" } else { "MIDI Learn" }, learning, false, 84.0);
     if midi_btn.clicked() {
         if learning { gui.midi_learn.learning_target.store(-1, std::sync::atomic::Ordering::Release); }
         else { gui.midi_popup = true; }
     }
     if midi_btn.secondary_clicked() {
         gui.midi_context_menu = true;
-        gui.midi_context_anchor = Pos2::new(midi_btn.rect.min.x, midi_btn.rect.max.y + 3.0 * s);
+        gui.midi_context_anchor = Pos2::new(midi_btn.rect.min.x, midi_btn.rect.max.y + 2.0 * s);
     }
-    cx += 4.0 * s;
 
     let os_labels = ["Off", "2×", "4×", "6×", "8×"];
     let cur = os_labels.get(params.oversampling as usize).copied().unwrap_or("Off");
-    let os_w = 88.0 * s;
+    let os_w = 90.0 * s;
     { let or_ = Rect::from_min_max(Pos2::new(cx, cy - bh * 0.5), Pos2::new(cx + os_w, cy + bh * 0.5));
-      gui.os_anchor = Pos2::new(or_.min.x, or_.max.y + 3.0 * s);
+      gui.os_anchor = Pos2::new(or_.min.x, or_.max.y + 2.0 * s);
       let resp = ui.allocate_rect(or_, Sense::click());
-      let active = params.oversampling > 0;
-      let hov = resp.hovered();
-      let (bg, fg) = if active { (ga(TEAL, 28), TEAL) } else if hov { (ga(TEAL, 14), TEAL) } else { (BG_RAISED, TEXT_SEC) };
+      let active = params.oversampling > 0; let hov = resp.hovered();
+      let (bg, fg) = if active { (ACCENT, Color32::WHITE) }
+          else if hov { (CTRL_HOVER, TEXT_PRI) } else { (CTRL_DEFAULT, TEXT_SEC) };
       { let p = ui.painter_at(rect);
-        p.rect_filled(or_, bh * 0.5, bg);
-        p.rect_stroke(or_, bh * 0.5, Stroke::new(0.5 * s, if active { ga(TEAL, 80) } else { BORDER }), egui::StrokeKind::Outside);
+        p.rect_filled(or_, 4.0 * s, bg);
+        p.rect_stroke(or_, 4.0 * s, Stroke::new(1.0, if active { ga(ACCENT, 80) } else { STROKE_DEF }), egui::StrokeKind::Outside);
         p.text(or_.center(), egui::Align2::CENTER_CENTER,
-            format!("OS  {}  ⌄", cur), FontId::new(7.5 * s, FontFamily::Proportional), fg); }
+            format!("OS  {}  ⌄", cur), FontId::new(8.0 * s, FontFamily::Proportional), fg); }
       if resp.clicked() { gui.os_dropdown = !gui.os_dropdown; }
     }
 }
@@ -445,18 +505,17 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
 // ─── Detection Meter Panel ────────────────────────────────────────────────────
 fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
     { let pa = ui.painter_at(rect);
-      pa.rect_filled(rect, 8.0 * s, BG_PANEL);
-      pa.rect_stroke(rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-      pa.text(Pos2::new(rect.center().x, rect.min.y + 11.0 * s), egui::Align2::CENTER_CENTER,
-          "Detect", FontId::new(8.0 * s, FontFamily::Proportional), TEXT_SEC); }
+      acrylic_card(&pa, rect, 8.0 * s);
+      pa.text(Pos2::new(rect.center().x, rect.min.y + 12.0 * s), egui::Align2::CENTER_CENTER,
+          "Detect", FontId::new(8.5 * s, FontFamily::Proportional), TEXT_SEC); }
 
     let cx = rect.center().x;
-    let mt = rect.min.y + 44.0 * s;
-    let mh = rect.height() - 82.0 * s;
+    let mt = rect.min.y + 46.0 * s;
+    let mh = rect.height() - 86.0 * s;
     let mw = 12.0 * s; let sw = 12.0 * s;
     let sx = cx - (mw + sw + 4.0 * s) * 0.5;
 
-    let max_r = Rect::from_center_size(Pos2::new(cx, rect.min.y + 28.0 * s), Vec2::new(rect.width() - 14.0 * s, 13.0 * s));
+    let max_r = Rect::from_center_size(Pos2::new(cx, rect.min.y + 30.0 * s), Vec2::new(rect.width() - 14.0 * s, 14.0 * s));
     if ui.allocate_rect(max_r, Sense::click()).clicked() { ch.detection_max_reset = true; }
 
     let sl_r = Rect::from_min_size(Pos2::new(sx + mw + 4.0 * s, mt), Vec2::new(sw, mh));
@@ -467,48 +526,49 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
     }
 
     { let pa = ui.painter_at(rect);
-      // Peak hold pill
-      pa.rect_filled(max_r, 4.0 * s, BG_INSET);
-      pa.rect_stroke(max_r, 4.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+      // Peak hold — WinUI TextBox style inset
+      pa.rect_filled(max_r, 4.0 * s, CTRL_DEFAULT);
+      pa.rect_stroke(max_r, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
       pa.text(max_r.center(), egui::Align2::CENTER_CENTER, format!("{:.1}", p.detection_max_db),
           FontId::new(7.5 * s, FontFamily::Proportional), TEXT_SEC);
 
       let mr = Rect::from_min_size(Pos2::new(sx, mt), Vec2::new(mw, mh));
-      clean_meter(&pa, mr, p.detection_db, -60.0, 0.0, s);
+      winui_meter(&pa, mr, p.detection_db, -60.0, 0.0, s);
 
       for db in [-60_i32, -48, -36, -24, -12, 0] {
           let y = mt + mh * (1.0 - ((db as f32 + 60.0) / 60.0));
           pa.line_segment([Pos2::new(mr.min.x - 3.0 * s, y), Pos2::new(mr.min.x, y)],
-              Stroke::new(0.5 * s, TEXT_TER));
+              Stroke::new(0.5, TEXT_TER));
       }
 
-      // Threshold slider track
-      pa.rect_filled(sl_r, 3.0 * s, BG_INSET);
-      pa.rect_stroke(sl_r, 3.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+      // Slider track
+      pa.rect_filled(sl_r, 3.0 * s, CTRL_DEFAULT);
+      pa.rect_stroke(sl_r, 3.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
       let tn = ((p.threshold + 60.0) / 60.0).clamp(0.0, 1.0) as f32;
       let ty = mt + mh * (1.0 - tn);
-      // Thumb — clean rounded pill
-      pa.rect_filled(Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw - 2.0 * s, 8.0 * s)), 3.0 * s, ACCENT);
+      // Thumb — WinUI Slider thumb: white circle
+      pa.rect_filled(Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)), 4.0 * s, ACCENT);
+      pa.rect_stroke(Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)), 4.0 * s,
+          Stroke::new(1.0, ga(ACCENT_LIGHT, 120)), egui::StrokeKind::Outside);
 
-      pa.text(Pos2::new(cx, mt + mh + 11.0 * s), egui::Align2::CENTER_CENTER,
+      pa.text(Pos2::new(cx, mt + mh + 12.0 * s), egui::Align2::CENTER_CENTER,
           format!("{:.1} dB", p.threshold), FontId::new(7.0 * s, FontFamily::Proportional), TEXT_SEC);
     }
 }
 
 fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
     { let pa = ui.painter_at(rect);
-      pa.rect_filled(rect, 8.0 * s, BG_PANEL);
-      pa.rect_stroke(rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-      pa.text(Pos2::new(rect.center().x, rect.min.y + 11.0 * s), egui::Align2::CENTER_CENTER,
-          "Reduce", FontId::new(8.0 * s, FontFamily::Proportional), TEXT_SEC); }
+      acrylic_card(&pa, rect, 8.0 * s);
+      pa.text(Pos2::new(rect.center().x, rect.min.y + 12.0 * s), egui::Align2::CENTER_CENTER,
+          "Reduce", FontId::new(8.5 * s, FontFamily::Proportional), TEXT_SEC); }
 
     let cx = rect.center().x;
-    let mt = rect.min.y + 44.0 * s;
-    let mh = rect.height() - 82.0 * s;
+    let mt = rect.min.y + 46.0 * s;
+    let mh = rect.height() - 86.0 * s;
     let mw = 12.0 * s; let sw = 12.0 * s;
     let sx = cx - (mw + sw + 4.0 * s) * 0.5;
 
-    let max_r = Rect::from_center_size(Pos2::new(cx, rect.min.y + 28.0 * s), Vec2::new(rect.width() - 14.0 * s, 13.0 * s));
+    let max_r = Rect::from_center_size(Pos2::new(cx, rect.min.y + 30.0 * s), Vec2::new(rect.width() - 14.0 * s, 14.0 * s));
     if ui.allocate_rect(max_r, Sense::click()).clicked() { ch.reduction_max_reset = true; }
 
     let sl_r = Rect::from_min_size(Pos2::new(sx, mt), Vec2::new(sw, mh));
@@ -519,47 +579,48 @@ fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
     }
 
     { let pa = ui.painter_at(rect);
-      pa.rect_filled(max_r, 4.0 * s, BG_INSET);
-      pa.rect_stroke(max_r, 4.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+      pa.rect_filled(max_r, 4.0 * s, CTRL_DEFAULT);
+      pa.rect_stroke(max_r, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
       pa.text(max_r.center(), egui::Align2::CENTER_CENTER, format!("{:.1}", p.reduction_max_db),
           FontId::new(7.5 * s, FontFamily::Proportional), TEXT_SEC);
 
-      pa.rect_filled(sl_r, 3.0 * s, BG_INSET);
-      pa.rect_stroke(sl_r, 3.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+      pa.rect_filled(sl_r, 3.0 * s, CTRL_DEFAULT);
+      pa.rect_stroke(sl_r, 3.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
       let mrn = (p.max_reduction / 40.0).clamp(0.0, 1.0) as f32;
       let mry = mt + mh * (1.0 - mrn);
-      pa.rect_filled(Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw - 2.0 * s, 8.0 * s)), 3.0 * s, ORANGE);
+      pa.rect_filled(Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw, 8.0 * s)), 4.0 * s, ORANGE);
+      pa.rect_stroke(Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw, 8.0 * s)), 4.0 * s,
+          Stroke::new(1.0, ga(ORANGE, 120)), egui::StrokeKind::Outside);
 
       let mr2 = Rect::from_min_size(Pos2::new(sx + sw + 4.0 * s, mt), Vec2::new(mw, mh));
-      pa.rect_filled(mr2, 3.0 * s, BG_INSET);
-      pa.rect_stroke(mr2, 3.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+      pa.rect_filled(mr2, 3.0 * s, CTRL_DEFAULT);
+      pa.rect_stroke(mr2, 3.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
       let rn = (-p.reduction_db / 40.0).clamp(0.0, 1.0);
       let fh = mr2.height() * rn;
       if fh > 0.5 {
           let fr = Rect::from_min_size(mr2.min, Vec2::new(mr2.width(), fh));
           let col = lerp_c(ORANGE, RED, rn);
-          pa.rect_filled(fr, 2.0 * s, ga(col, 200));
+          pa.rect_filled(fr, 2.0 * s, ga(col, 210));
       }
       for db in [0_i32, -10, -20, -30, -40] {
           let y = mt + mh * (-db as f32 / 40.0);
           pa.text(Pos2::new(mr2.max.x + 4.0 * s, y), egui::Align2::LEFT_CENTER,
               format!("{db}"), FontId::new(6.0 * s, FontFamily::Proportional), TEXT_TER);
       }
-      pa.text(Pos2::new(cx, mt + mh + 11.0 * s), egui::Align2::CENTER_CENTER,
+      pa.text(Pos2::new(cx, mt + mh + 12.0 * s), egui::Align2::CENTER_CENTER,
           format!("{:.1} dB", p.max_reduction), FontId::new(7.0 * s, FontFamily::Proportional), TEXT_SEC);
     }
 }
 
-fn clean_meter(pa: &egui::Painter, rect: Rect, db: f32, min_db: f32, max_db: f32, s: f32) {
-    pa.rect_filled(rect, 3.0 * s, BG_INSET);
-    pa.rect_stroke(rect, 3.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+fn winui_meter(pa: &egui::Painter, rect: Rect, db: f32, min_db: f32, max_db: f32, s: f32) {
+    pa.rect_filled(rect, 3.0 * s, CTRL_DEFAULT);
+    pa.rect_stroke(rect, 3.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
     let n = ((db - min_db) / (max_db - min_db)).clamp(0.0, 1.0);
     let fh = rect.height() * n;
     if fh > 0.5 {
         let fr = Rect::from_min_size(Pos2::new(rect.min.x, rect.max.y - fh), Vec2::new(rect.width(), fh));
         let col = if db > -12.0 { M_RED } else if db > -24.0 { M_YELLOW } else { M_GREEN };
-        pa.rect_filled(fr, 2.0 * s, ga(col, 210));
-        // Peak line
+        pa.rect_filled(fr, 2.0 * s, ga(col, 220));
         if fh > 3.0 {
             let pk = Rect::from_min_size(Pos2::new(rect.min.x, rect.max.y - fh), Vec2::new(rect.width(), 1.5 * s));
             pa.rect_filled(pk, 0.0, col);
@@ -570,25 +631,26 @@ fn clean_meter(pa: &egui::Painter, rect: Rect, db: f32, min_db: f32, max_db: f32
 // ─── Controls Panel ──────────────────────────────────────────────────────────
 fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gui: &mut NebulaGui, s: f32) {
     { let pa = ui.painter_at(rect);
-      pa.rect_filled(rect, 8.0 * s, BG_PANEL);
-      pa.rect_stroke(rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
+      acrylic_card(&pa, rect, 8.0 * s); }
 
     let inner = rect.shrink(8.0 * s);
-    let top_h = 60.0 * s;
+    let top_h = 64.0 * s;
     let kh    = 74.0 * s;
-    let btn_h = 22.0 * s;
+    let btn_h = 24.0 * s;
     let gap   = 6.0  * s;
 
+    // ── RadioButton groups (5 mode selectors) ────────────────────────────────
     let cw = inner.width() / 5.0;
     let cols: Vec<Rect> = (0..5).map(|i|
         Rect::from_min_size(Pos2::new(inner.min.x + i as f32 * cw, inner.min.y), Vec2::new(cw - 4.0 * s, top_h))).collect();
 
-    if let Some(i) = seg2(ui, cols[0], "Mode",      ["Relative", "Absolute"], if p.mode_relative{0}else{1}, s) { push_undo(gui,p); ch.mode_relative=Some(i==0); }
-    if let Some(i) = seg2(ui, cols[1], "Range",     ["Split", "Wide"],        if p.use_wide_range{1}else{0}, s) { push_undo(gui,p); ch.use_wide_range=Some(i==1); }
-    if let Some(i) = seg2(ui, cols[2], "Filter",    ["Lowpass", "Peak"],      if p.use_peak_filter{1}else{0}, s) { push_undo(gui,p); ch.use_peak_filter=Some(i==1); }
-    if let Some(i) = seg2(ui, cols[3], "Sidechain", ["Internal", "External"], if p.sidechain_external{1}else{0}, s) { push_undo(gui,p); ch.sidechain_external=Some(i==1); }
-    if let Some(i) = seg2(ui, cols[4], "Vocal",     ["Off", "On"],            if p.vocal_mode{1}else{0}, s) { push_undo(gui,p); ch.vocal_mode=Some(i==1); }
+    if let Some(i) = radio_group(ui, cols[0], "Mode",      &["Relative", "Absolute"], if p.mode_relative{0}else{1}, s) { push_undo(gui,p); ch.mode_relative=Some(i==0); }
+    if let Some(i) = radio_group(ui, cols[1], "Range",     &["Split", "Wide"],        if p.use_wide_range{1}else{0}, s) { push_undo(gui,p); ch.use_wide_range=Some(i==1); }
+    if let Some(i) = radio_group(ui, cols[2], "Filter",    &["Lowpass", "Peak"],      if p.use_peak_filter{1}else{0}, s) { push_undo(gui,p); ch.use_peak_filter=Some(i==1); }
+    if let Some(i) = radio_group(ui, cols[3], "Sidechain", &["Internal", "External"], if p.sidechain_external{1}else{0}, s) { push_undo(gui,p); ch.sidechain_external=Some(i==1); }
+    if let Some(i) = radio_group(ui, cols[4], "Vocal",     &["Off", "On"],            if p.vocal_mode{1}else{0}, s) { push_undo(gui,p); ch.vocal_mode=Some(i==1); }
 
+    // ── Main knob row ─────────────────────────────────────────────────────────
     let y2 = inner.min.y + top_h + gap;
     let main_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
         ("Threshold",  p.threshold,    -60.0,  0.0,   "dB", NumTarget::Threshold),
@@ -598,13 +660,13 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
         ("Lookahead",  p.lookahead_ms,  0.0, 20.0,   "ms", NumTarget::Lookahead),
         ("Stereo Lnk", p.stereo_link,   0.0,  1.0,   "%",  NumTarget::StereoLink),
     ];
-    knob_row(ui, rect, inner, y2, kh, main_k, ch, gui, p, ACCENT, s);
+    knob_row(ui, rect, inner, y2, kh, main_k, ch, gui, p, ACCENT_LIGHT, s);
 
+    // ── Cut shape knobs ───────────────────────────────────────────────────────
     let y2b = y2 + kh + gap;
     { let pa = ui.painter_at(rect);
-      pa.line_segment([Pos2::new(inner.min.x + 16.0 * s, y2b - s), Pos2::new(inner.max.x - 16.0 * s, y2b - s)],
-          Stroke::new(0.5 * s, SEP)); }
-
+      pa.line_segment([Pos2::new(inner.min.x + 12.0 * s, y2b - s), Pos2::new(inner.max.x - 12.0 * s, y2b - s)],
+          Stroke::new(1.0, DIVIDER)); }
     let cut_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
         ("Cut Width", p.cut_width, 0.0, 1.0, "%", NumTarget::CutWidth),
         ("Cut Depth", p.cut_depth, 0.0, 1.0, "%", NumTarget::CutDepth),
@@ -615,11 +677,11 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
         Vec2::new(inner.width() * 0.6, kh));
     knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, TEAL, s);
 
+    // ── I/O knobs ─────────────────────────────────────────────────────────────
     let y3 = y2b + kh + gap;
     { let pa = ui.painter_at(rect);
-      pa.line_segment([Pos2::new(inner.min.x + 16.0 * s, y3 - s), Pos2::new(inner.max.x - 16.0 * s, y3 - s)],
-          Stroke::new(0.5 * s, SEP)); }
-
+      pa.line_segment([Pos2::new(inner.min.x + 12.0 * s, y3 - s), Pos2::new(inner.max.x - 12.0 * s, y3 - s)],
+          Stroke::new(1.0, DIVIDER)); }
     let io_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
         ("In Level",  p.input_level,  -60.0, 12.0, "dB",  NumTarget::InputLevel),
         ("In Pan",    p.input_pan,     -1.0,  1.0, "pan", NumTarget::InputPan),
@@ -631,6 +693,7 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
         Vec2::new(inner.width() * 0.8, kh));
     knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, GREEN, s);
 
+    // ── ToggleSwitches (4 boolean params) ────────────────────────────────────
     let y4 = y3 + kh + gap;
     let btns: &[(&str, bool)] = &[
         ("Filter Solo",  p.filter_solo),
@@ -645,19 +708,21 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
         let r  = ui.allocate_rect(br, Sense::click());
         let hov = r.hovered();
         { let pa = ui.painter_at(rect);
-          let (bg, fg) = if *active {
-              (ga(ACCENT, 220), BG_BASE)
-          } else if hov {
-              (ga(ACCENT, 22), ACCENT)
-          } else {
-              (BG_RAISED, TEXT_SEC)
-          };
-          pa.rect_filled(br, btn_h * 0.5, bg);
-          if !*active && !hov {
-              pa.rect_stroke(br, btn_h * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-          }
-          pa.text(br.center(), egui::Align2::CENTER_CENTER, *lbl,
-              FontId::new(7.0 * s, FontFamily::Proportional), fg); }
+          // WinUI ToggleSwitch — pill track + sliding thumb
+          let track_w = 36.0 * s; let track_h = 18.0 * s;
+          let track_x = br.min.x + 4.0 * s;
+          let track_y = br.center().y - track_h * 0.5;
+          let track = Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
+          let track_col = if *active { ACCENT } else if hov { CTRL_HOVER } else { CTRL_DEFAULT };
+          pa.rect_filled(track, track_h * 0.5, track_col);
+          pa.rect_stroke(track, track_h * 0.5, Stroke::new(1.0, if *active { ga(ACCENT_LIGHT, 80) } else { STROKE_DEF }), egui::StrokeKind::Outside);
+          // Thumb — white circle, shifts right when on
+          let thumb_x = if *active { track.max.x - track_h * 0.5 } else { track.min.x + track_h * 0.5 };
+          pa.circle_filled(Pos2::new(thumb_x, track.center().y), track_h * 0.35, Color32::WHITE);
+          // Label
+          pa.text(Pos2::new(track.max.x + 6.0 * s, br.center().y), egui::Align2::LEFT_CENTER,
+              *lbl, FontId::new(7.5 * s, FontFamily::Proportional),
+              if *active { TEXT_PRI } else { TEXT_SEC }); }
         if r.clicked() {
             push_undo(gui, p);
             match *lbl {
@@ -671,39 +736,35 @@ fn draw_controls(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, gu
     }
 }
 
-// ─── Segmented Control (replaces sec2) ───────────────────────────────────────
-fn seg2(ui: &mut Ui, rect: Rect, hdr: &str, labs: [&str; 2], ai: usize, s: f32) -> Option<usize> {
+// ─── WinUI RadioButton group ──────────────────────────────────────────────────
+fn radio_group(ui: &mut Ui, rect: Rect, hdr: &str, labs: &[&str], ai: usize, s: f32) -> Option<usize> {
+    // Elevated card background for each group
     { let pa = ui.painter_at(rect);
-      pa.text(Pos2::new(rect.center().x, rect.min.y + 7.0 * s), egui::Align2::CENTER_CENTER,
+      pa.rect_filled(rect, 6.0 * s, ACRYLIC_CARD);
+      pa.rect_stroke(rect, 6.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+      // Group label — tertiary text, top
+      pa.text(Pos2::new(rect.center().x, rect.min.y + 8.0 * s), egui::Align2::CENTER_CENTER,
           hdr, FontId::new(6.5 * s, FontFamily::Proportional), TEXT_TER); }
 
-    // Draw the segmented track background
-    let track_h = 15.0 * s;
-    let track = Rect::from_min_size(
-        Pos2::new(rect.min.x, rect.min.y + 14.0 * s),
-        Vec2::new(rect.width(), track_h * 2.0 + 2.0 * s));
-    { let pa = ui.painter_at(rect);
-      pa.rect_filled(track, 4.0 * s, BG_INSET);
-      pa.rect_stroke(track, 4.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
-
+    let item_h = 16.0 * s;
     let mut res = None;
     for (i, lbl) in labs.iter().enumerate() {
-        let br = Rect::from_min_size(
-            Pos2::new(rect.min.x, rect.min.y + 14.0 * s + i as f32 * (track_h + 1.0 * s)),
-            Vec2::new(rect.width(), track_h));
-        let r  = ui.allocate_rect(br, Sense::click());
+        let iy = rect.min.y + 18.0 * s + i as f32 * (item_h + 2.0 * s);
+        let item_r = Rect::from_min_size(Pos2::new(rect.min.x + 4.0 * s, iy), Vec2::new(rect.width() - 8.0 * s, item_h));
+        let r = ui.allocate_rect(item_r, Sense::click());
         let ia = i == ai; let hov = r.hovered();
         { let pa = ui.painter_at(rect);
-          if ia {
-              pa.rect_filled(br, 3.0 * s, ga(ACCENT, 220));
-              pa.text(br.center(), egui::Align2::CENTER_CENTER, *lbl,
-                  FontId::new(6.5 * s, FontFamily::Proportional), BG_BASE);
-          } else {
-              if hov { pa.rect_filled(br, 3.0 * s, ga(ACCENT, 14)); }
-              pa.text(br.center(), egui::Align2::CENTER_CENTER, *lbl,
-                  FontId::new(6.5 * s, FontFamily::Proportional), if hov { ACCENT } else { TEXT_SEC });
-          }
-        }
+          // Radio outer ring
+          let radio_c = Pos2::new(item_r.min.x + 7.0 * s, item_r.center().y);
+          let radio_r = 5.0 * s;
+          pa.circle_filled(radio_c, radio_r, if ia { ACCENT } else if hov { CTRL_HOVER } else { CTRL_DEFAULT });
+          pa.circle_stroke(radio_c, radio_r, Stroke::new(1.0, if ia { ga(ACCENT_LIGHT, 120) } else { STROKE_DEF }));
+          // Inner dot when selected
+          if ia { pa.circle_filled(radio_c, 2.5 * s, Color32::WHITE); }
+          // Label
+          pa.text(Pos2::new(radio_c.x + radio_r + 5.0 * s, item_r.center().y), egui::Align2::LEFT_CENTER,
+              *lbl, FontId::new(7.0 * s, FontFamily::Proportional),
+              if ia { TEXT_PRI } else if hov { TEXT_SEC } else { TEXT_TER }); }
         if r.clicked() { res = Some(i); }
     }
     res
@@ -791,33 +852,35 @@ fn push_undo(g: &mut NebulaGui, p: &GuiParams) {
     g.undo_stack.push(ParamSnapshot::from_params(p)); g.undo_stack.truncate(50); g.redo_stack.clear();
 }
 
-// ─── Knob — clean macOS-style ─────────────────────────────────────────────────
+// ─── WinUI Knob ───────────────────────────────────────────────────────────────
 fn draw_knob(pa: &egui::Painter, c: Pos2, r: f32, val: f64, min: f64, max: f64, col: Color32, s: f32) {
     let norm  = ((val - min) / (max - min)).clamp(0.0, 1.0) as f32;
     let start = std::f32::consts::PI * 0.75;
     let sweep = std::f32::consts::PI * 1.5;
     let angle = start + norm * sweep;
 
-    // Outer subtle shadow ring
-    pa.circle_filled(c, r + 1.5 * s, ga(Color32::BLACK, 60));
-    // Body — dark raised surface
-    pa.circle_filled(c, r, BG_RAISED);
-    // Thin border
-    pa.circle_stroke(c, r, Stroke::new(0.8 * s, BORDER));
+    // Shadow ring
+    pa.circle_filled(c, r + 1.5 * s, ga(Color32::BLACK, 80));
+    // Body — Acrylic card surface
+    pa.circle_filled(c, r, ACRYLIC_CARD);
+    pa.circle_stroke(c, r, Stroke::new(1.0, STROKE_DEF));
+    // Top highlight arc
+    let hl_start = std::f32::consts::PI * 1.1;
+    let hl_end   = std::f32::consts::PI * 1.9;
+    arc(pa, c, r - 1.0 * s, hl_start, hl_end, ga(Color32::WHITE, 18), 1.5 * s);
     // Track groove
-    arc(pa, c, r * 0.74, start, start + sweep, ga(col, 22), 3.0 * s);
-    // Filled arc — accent colour
+    arc(pa, c, r * 0.74, start, start + sweep, ga(col, 20), 3.5 * s);
+    // Filled arc
     if norm > 0.005 {
-        arc(pa, c, r * 0.74, start, angle, ga(col, 60), 4.0 * s);
+        arc(pa, c, r * 0.74, start, angle, ga(col, 55), 4.5 * s);
         arc(pa, c, r * 0.74, start, angle, col,         1.8 * s);
     }
-    // Indicator dot — clean white dot on accent
+    // Indicator dot
     let ix = c.x + r * 0.50 * angle.cos();
     let iy = c.y + r * 0.50 * angle.sin();
-    pa.circle_filled(Pos2::new(ix, iy), 2.2 * s, col);
-    pa.circle_filled(Pos2::new(ix, iy), 1.2 * s, Color32::WHITE);
-    // Centre pip
-    pa.circle_filled(c, 1.8 * s, ga(col, 120));
+    pa.circle_filled(Pos2::new(ix, iy), 2.5 * s, col);
+    pa.circle_filled(Pos2::new(ix, iy), 1.3 * s, Color32::WHITE);
+    pa.circle_filled(c, 1.8 * s, ga(col, 100));
 }
 
 fn arc(pa: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, col: Color32, w: f32) {
@@ -830,10 +893,10 @@ fn arc(pa: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, col: Color32, w: f
 }
 
 fn draw_value_field(pa: &egui::Painter, rect: Rect, text: &str, col: Color32, s: f32) {
-    pa.rect_filled(rect, 3.0 * s, BG_INSET);
-    pa.rect_stroke(rect, 3.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+    pa.rect_filled(rect, 3.0 * s, CTRL_DEFAULT);
+    pa.rect_stroke(rect, 3.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
     pa.text(rect.center(), egui::Align2::CENTER_CENTER, text,
-        FontId::new(7.0 * s, FontFamily::Proportional), ga(col, 200));
+        FontId::new(7.0 * s, FontFamily::Proportional), ga(col, 210));
 }
 
 // ─── Spectrum Analyzer ───────────────────────────────────────────────────────
@@ -849,31 +912,30 @@ fn x_to_freq(x: f32, w: f32) -> f32 {
 fn draw_spectrum(ui: &mut Ui, rect: Rect, gui: &mut NebulaGui, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
     if rect.height() < 24.0 { return; }
     let pa = ui.painter_at(rect);
-    pa.rect_filled(rect, 8.0 * s, BG_INSET);
-    pa.rect_stroke(rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+    acrylic_card(&pa, rect, 8.0 * s);
     let inner = rect.shrink(5.0 * s);
     let ph    = (inner.height() - 16.0 * s).max(10.0);
     let sr    = 44100.0_f32;
 
-    // Grid lines — very subtle
+    // Grid
     for &db in &[-80.0_f32, -60.0, -40.0, -20.0, -10.0] {
         let ny = 1.0 - (db - (-90.0)) / 90.0;
         let y  = inner.min.y + ny * ph;
         pa.line_segment([Pos2::new(inner.min.x, y), Pos2::new(inner.max.x, y)],
-            Stroke::new(0.4 * s, ga(TEXT_TER, 60)));
+            Stroke::new(0.5, DIVIDER));
         pa.text(Pos2::new(inner.min.x + 3.0 * s, y - 2.0 * s), egui::Align2::LEFT_BOTTOM,
-            format!("{}", db as i32), FontId::new(5.5 * s, FontFamily::Proportional), ga(TEXT_TER, 120));
+            format!("{}", db as i32), FontId::new(5.5 * s, FontFamily::Proportional), TEXT_TER);
     }
     for &freq in &[100.0_f32, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0] {
         let x = inner.min.x + freq_to_x(freq, inner.width());
         pa.line_segment([Pos2::new(x, inner.min.y), Pos2::new(x, inner.min.y + ph)],
-            Stroke::new(0.4 * s, ga(TEXT_TER, 40)));
+            Stroke::new(0.5, DIVIDER));
         let lbl = if freq >= 1000.0 { format!("{}k", (freq / 1000.0) as i32) } else { format!("{}", freq as i32) };
         pa.text(Pos2::new(x, inner.max.y - 3.0 * s), egui::Align2::CENTER_CENTER,
             lbl, FontId::new(5.5 * s, FontFamily::Proportional), TEXT_TER);
     }
 
-    // Smooth spectrum magnitudes
+    // Smooth magnitudes
     {
         let spec = gui.spectrum.lock();
         let mags = &spec.magnitudes;
@@ -906,35 +968,32 @@ fn draw_spectrum(ui: &mut Ui, rect: Rect, gui: &mut NebulaGui, p: &GuiParams, ch
 
     if pts.len() >= 2 {
         let bottom_y = inner.min.y + ph;
-        // Fill — very subtle, single colour
-        let fill_col = ga(ACCENT, 18);
+        let fill_col = ga(ACCENT, 20);
         for i in 0..pts.len().saturating_sub(1) {
             let tl = pts[i]; let tr = pts[i + 1];
             let bl = Pos2::new(tl.x, bottom_y); let br2 = Pos2::new(tr.x, bottom_y);
             pa.add(egui::Shape::convex_polygon(vec![tl, tr, br2, bl], fill_col, Stroke::NONE));
         }
-        // Line — two passes: glow then crisp
-        for i in 0..pts.len() - 1 { pa.line_segment([pts[i], pts[i + 1]], Stroke::new(3.0 * s, ga(ACCENT, 18))); }
-        for i in 0..pts.len() - 1 { pa.line_segment([pts[i], pts[i + 1]], Stroke::new(1.2 * s, ga(ACCENT, 200))); }
+        for i in 0..pts.len() - 1 { pa.line_segment([pts[i], pts[i + 1]], Stroke::new(3.0 * s, ga(ACCENT, 16))); }
+        for i in 0..pts.len() - 1 { pa.line_segment([pts[i], pts[i + 1]], Stroke::new(1.2 * s, ga(ACCENT_LIGHT, 200))); }
     }
 
-    // Frequency band overlay
+    // Band overlay
     let min_x = inner.min.x + freq_to_x(p.min_freq as f32, inner.width());
     let max_x = inner.min.x + freq_to_x(p.max_freq as f32, inner.width());
     if max_x > min_x {
         let br = Rect::from_min_max(Pos2::new(min_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph));
-        pa.rect_filled(br, 0.0, ga(ORANGE, 14));
+        pa.rect_filled(br, 0.0, ga(ORANGE, 12));
         pa.line_segment([Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.min.y + ph)],
             Stroke::new(1.2 * s, ga(TEAL, 200)));
         pa.line_segment([Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.min.y + ph)],
-            Stroke::new(4.0 * s, ga(TEAL, 30)));
+            Stroke::new(4.0 * s, ga(TEAL, 28)));
         pa.line_segment([Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph)],
             Stroke::new(1.2 * s, ga(ORANGE, 200)));
         pa.line_segment([Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.min.y + ph)],
-            Stroke::new(4.0 * s, ga(ORANGE, 30)));
+            Stroke::new(4.0 * s, ga(ORANGE, 28)));
     }
 
-    // Draggable frequency nodes
     let node_y = inner.min.y + ph * 0.5;
     let hit_sz = 22.0 * s;
     let min_hit = Rect::from_center_size(Pos2::new(min_x, node_y), Vec2::splat(hit_sz));
@@ -953,42 +1012,50 @@ fn draw_spectrum(ui: &mut Ui, rect: Rect, gui: &mut NebulaGui, p: &GuiParams, ch
     freq_node(&pa, Pos2::new(max_x, node_y), ORANGE, "Max", s);
 
     pa.text(Pos2::new(inner.min.x + 6.0 * s, inner.min.y + 7.0 * s), egui::Align2::LEFT_CENTER,
-        "Spectrum", FontId::new(6.5 * s, FontFamily::Proportional), TEXT_TER);
+        "Spectrum Analyzer", FontId::new(6.5 * s, FontFamily::Proportional), TEXT_TER);
     ui.ctx().request_repaint();
 }
 
 fn freq_node(pa: &egui::Painter, c: Pos2, col: Color32, lbl: &str, s: f32) {
-    pa.circle_filled(c, 8.0 * s, ga(col, 18));
-    pa.circle_filled(c, 5.5 * s, BG_RAISED);
+    pa.circle_filled(c, 8.0 * s, ga(col, 20));
+    pa.circle_filled(c, 5.5 * s, ACRYLIC_CARD);
     pa.circle_stroke(c, 5.5 * s, Stroke::new(1.2 * s, col));
     pa.text(Pos2::new(c.x, c.y - 13.0 * s), egui::Align2::CENTER_CENTER,
         lbl, FontId::new(6.0 * s, FontFamily::Proportional), col);
 }
 
-// ─── Numeric Popup ───────────────────────────────────────────────────────────
-fn draw_num_popup(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+// ─── ContentDialog — Numeric Input ───────────────────────────────────────────
+fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
     let sc  = ctx.screen_rect();
-    let pop = Rect::from_center_size(sc.center(), Vec2::new(220.0 * s, 108.0 * s));
-    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y - 4.0 * s), Vec2::new(180.0 * s, 24.0 * s));
-    let ok  = Rect::from_center_size(Pos2::new(pop.center().x - 44.0 * s, pop.max.y - 15.0 * s), Vec2::new(68.0 * s, 20.0 * s));
-    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x + 44.0 * s, pop.max.y - 15.0 * s), Vec2::new(68.0 * s, 20.0 * s));
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(240.0 * s, 120.0 * s));
+    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y - 6.0 * s), Vec2::new(200.0 * s, 26.0 * s));
+    let ok  = Rect::from_center_size(Pos2::new(pop.center().x - 50.0 * s, pop.max.y - 16.0 * s), Vec2::new(80.0 * s, 22.0 * s));
+    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x + 50.0 * s, pop.max.y - 16.0 * s), Vec2::new(80.0 * s, 22.0 * s));
     let lbl = gui.num_input.label.clone();
     egui::Area::new(egui::Id::new("neb_num")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
         { let p = ui.painter();
-          p.rect_filled(sc, 0.0, Color32::from_black_alpha(160));
-          p.rect_filled(pop, 10.0 * s, BG_PANEL);
-          p.rect_stroke(pop, 10.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-          p.text(Pos2::new(pop.center().x, pop.min.y + 16.0 * s), egui::Align2::CENTER_CENTER,
-              format!("Set  {}", lbl), FontId::new(9.5 * s, FontFamily::Proportional), TEXT_PRI);
-          p.rect_filled(fr, 5.0 * s, BG_INSET);
-          p.rect_stroke(fr, 5.0 * s, Stroke::new(0.8 * s, ga(ACCENT, 160)), egui::StrokeKind::Outside);
-          // OK button — filled accent
-          p.rect_filled(ok, ok.height() * 0.5, ga(ACCENT, 220));
+          // Scrim
+          p.rect_filled(sc, 0.0, Color32::from_black_alpha(140));
+          // ContentDialog card — kRadiusOverlay = 12px, shadow
+          p.rect_filled(Rect::from_center_size(pop.center() + Vec2::new(0.0, 3.0 * s), pop.size()), 12.0 * s,
+              Color32::from_black_alpha(60));
+          acrylic_card(p, pop, 12.0 * s);
+          p.text(Pos2::new(pop.center().x, pop.min.y + 18.0 * s), egui::Align2::CENTER_CENTER,
+              format!("Set  {}", lbl), FontId::new(10.0 * s, FontFamily::Proportional), TEXT_PRI);
+          // TextBox with focus underline
+          p.rect_filled(fr, 4.0 * s, CTRL_DEFAULT);
+          p.rect_stroke(fr, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+          // Focus underline — accent colour bottom line
+          p.line_segment([Pos2::new(fr.min.x + 4.0 * s, fr.max.y), Pos2::new(fr.max.x - 4.0 * s, fr.max.y)],
+              Stroke::new(2.0, ACCENT));
+          // Primary button — accent fill
+          p.rect_filled(ok, 4.0 * s, ACCENT);
+          p.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
           p.text(ok.center(), egui::Align2::CENTER_CENTER, "OK",
-              FontId::new(8.5 * s, FontFamily::Proportional), BG_BASE);
-          // Cancel — ghost
-          p.rect_filled(cx_, cx_.height() * 0.5, BG_RAISED);
-          p.rect_stroke(cx_, cx_.height() * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+              FontId::new(8.5 * s, FontFamily::Proportional), Color32::WHITE);
+          // Secondary button — control fill
+          p.rect_filled(cx_, 4.0 * s, CTRL_DEFAULT);
+          p.rect_stroke(cx_, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
           p.text(cx_.center(), egui::Align2::CENTER_CENTER, "Cancel",
               FontId::new(8.5 * s, FontFamily::Proportional), TEXT_SEC); }
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
@@ -1012,27 +1079,31 @@ fn apply_num(gui: &mut NebulaGui, ch: &mut GuiChanges) {
     gui.num_input.open = false;
 }
 
-// ─── Preset Save Popup ───────────────────────────────────────────────────────
-fn draw_preset_save(ctx: &Context, gui: &mut NebulaGui, p: &GuiParams, _ch: &mut GuiChanges, s: f32) {
+// ─── ContentDialog — Preset Save ─────────────────────────────────────────────
+fn draw_content_dialog_preset(ctx: &Context, gui: &mut NebulaGui, p: &GuiParams, _ch: &mut GuiChanges, s: f32) {
     let sc  = ctx.screen_rect();
-    let pop = Rect::from_center_size(sc.center(), Vec2::new(250.0 * s, 112.0 * s));
-    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y - 4.0 * s), Vec2::new(210.0 * s, 24.0 * s));
-    let ok  = Rect::from_center_size(Pos2::new(pop.center().x - 48.0 * s, pop.max.y - 15.0 * s), Vec2::new(74.0 * s, 20.0 * s));
-    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x + 48.0 * s, pop.max.y - 15.0 * s), Vec2::new(74.0 * s, 20.0 * s));
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(260.0 * s, 120.0 * s));
+    let fr  = Rect::from_center_size(Pos2::new(pop.center().x, pop.center().y - 6.0 * s), Vec2::new(220.0 * s, 26.0 * s));
+    let ok  = Rect::from_center_size(Pos2::new(pop.center().x - 54.0 * s, pop.max.y - 16.0 * s), Vec2::new(84.0 * s, 22.0 * s));
+    let cx_ = Rect::from_center_size(Pos2::new(pop.center().x + 54.0 * s, pop.max.y - 16.0 * s), Vec2::new(84.0 * s, 22.0 * s));
     egui::Area::new(egui::Id::new("neb_prsave")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
         { let pa = ui.painter();
-          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(160));
-          pa.rect_filled(pop, 10.0 * s, BG_PANEL);
-          pa.rect_stroke(pop, 10.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-          pa.text(Pos2::new(pop.center().x, pop.min.y + 16.0 * s), egui::Align2::CENTER_CENTER,
-              "Save Preset", FontId::new(9.5 * s, FontFamily::Proportional), TEXT_PRI);
-          pa.rect_filled(fr, 5.0 * s, BG_INSET);
-          pa.rect_stroke(fr, 5.0 * s, Stroke::new(0.8 * s, ga(ACCENT, 160)), egui::StrokeKind::Outside);
-          pa.rect_filled(ok, ok.height() * 0.5, ga(ACCENT, 220));
+          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(140));
+          pa.rect_filled(Rect::from_center_size(pop.center() + Vec2::new(0.0, 3.0 * s), pop.size()), 12.0 * s,
+              Color32::from_black_alpha(60));
+          acrylic_card(pa, pop, 12.0 * s);
+          pa.text(Pos2::new(pop.center().x, pop.min.y + 18.0 * s), egui::Align2::CENTER_CENTER,
+              "Save Preset", FontId::new(10.0 * s, FontFamily::Proportional), TEXT_PRI);
+          pa.rect_filled(fr, 4.0 * s, CTRL_DEFAULT);
+          pa.rect_stroke(fr, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+          pa.line_segment([Pos2::new(fr.min.x + 4.0 * s, fr.max.y), Pos2::new(fr.max.x - 4.0 * s, fr.max.y)],
+              Stroke::new(2.0, ACCENT));
+          pa.rect_filled(ok, 4.0 * s, ACCENT);
+          pa.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
           pa.text(ok.center(), egui::Align2::CENTER_CENTER, "Save",
-              FontId::new(8.5 * s, FontFamily::Proportional), BG_BASE);
-          pa.rect_filled(cx_, cx_.height() * 0.5, BG_RAISED);
-          pa.rect_stroke(cx_, cx_.height() * 0.5, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
+              FontId::new(8.5 * s, FontFamily::Proportional), Color32::WHITE);
+          pa.rect_filled(cx_, 4.0 * s, CTRL_DEFAULT);
+          pa.rect_stroke(cx_, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
           pa.text(cx_.center(), egui::Align2::CENTER_CENTER, "Cancel",
               FontId::new(8.5 * s, FontFamily::Proportional), TEXT_SEC); }
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
@@ -1060,18 +1131,19 @@ fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
     gui.preset_save_popup = false;
 }
 
-// ─── MIDI Learn Popup ────────────────────────────────────────────────────────
-fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui, s: f32) {
+// ─── ContentDialog — MIDI Learn ──────────────────────────────────────────────
+fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     let sc  = ctx.screen_rect();
-    let pop = Rect::from_center_size(sc.center(), Vec2::new(280.0 * s, 310.0 * s));
+    let pop = Rect::from_center_size(sc.center(), Vec2::new(290.0 * s, 320.0 * s));
     egui::Area::new(egui::Id::new("neb_midi")).fixed_pos(Pos2::ZERO).order(egui::Order::Foreground).show(ctx, |ui| {
         { let pa = ui.painter();
-          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(160));
-          pa.rect_filled(pop, 12.0 * s, BG_PANEL);
-          pa.rect_stroke(pop, 12.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-          pa.text(Pos2::new(pop.center().x, pop.min.y + 16.0 * s), egui::Align2::CENTER_CENTER,
+          pa.rect_filled(sc, 0.0, Color32::from_black_alpha(140));
+          pa.rect_filled(Rect::from_center_size(pop.center() + Vec2::new(0.0, 4.0 * s), pop.size()), 12.0 * s,
+              Color32::from_black_alpha(60));
+          acrylic_card(pa, pop, 12.0 * s);
+          pa.text(Pos2::new(pop.center().x, pop.min.y + 18.0 * s), egui::Align2::CENTER_CENTER,
               "MIDI Learn", FontId::new(11.0 * s, FontFamily::Proportional), TEXT_PRI);
-          pa.text(Pos2::new(pop.center().x, pop.min.y + 30.0 * s), egui::Align2::CENTER_CENTER,
+          pa.text(Pos2::new(pop.center().x, pop.min.y + 32.0 * s), egui::Align2::CENTER_CENTER,
               "Select a parameter, then move a CC knob",
               FontId::new(7.0 * s, FontFamily::Proportional), TEXT_SEC); }
 
@@ -1089,34 +1161,34 @@ fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui, s: f32) {
             let resp = ui.allocate_rect(rr, Sense::click());
             let isl  = learning == idx as i32; let hov = resp.hovered();
             { let pa = ui.painter_at(Rect::EVERYTHING);
-              let (bg, fg) = if isl { (ga(ACCENT, 220), BG_BASE) }
-                  else if hov { (ga(ACCENT, 18), ACCENT) }
-                  else { (BG_RAISED, TEXT_PRI) };
+              let (bg, border) = if isl { (ACCENT, ga(ACCENT_LIGHT, 80)) }
+                  else if hov { (CTRL_HOVER, STROKE_DEF) }
+                  else { (CTRL_DEFAULT, STROKE_DEF) };
               pa.rect_filled(rr, 4.0 * s, bg);
-              if !isl && !hov {
-                  pa.rect_stroke(rr, 4.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside);
-              }
+              pa.rect_stroke(rr, 4.0 * s, Stroke::new(1.0, border), egui::StrokeKind::Outside);
               pa.text(Pos2::new(rr.min.x + 8.0 * s, rr.center().y), egui::Align2::LEFT_CENTER,
-                  name, FontId::new(7.5 * s, FontFamily::Proportional), fg);
+                  name, FontId::new(7.5 * s, FontFamily::Proportional),
+                  if isl { Color32::WHITE } else { TEXT_PRI });
               pa.text(Pos2::new(rr.max.x - 8.0 * s, rr.center().y), egui::Align2::RIGHT_CENTER,
                   &cc_s, FontId::new(7.5 * s, FontFamily::Proportional),
-                  if isl { BG_BASE } else { TEXT_SEC }); }
+                  if isl { Color32::WHITE } else { TEXT_TER }); }
             if resp.clicked() {
                 let t = if isl { -1 } else { idx as i32 };
                 gui.midi_learn.learning_target.store(t, std::sync::atomic::Ordering::Release);
             }
         }
 
-        let clr = Rect::from_center_size(Pos2::new(pop.center().x - 52.0 * s, pop.max.y - 16.0 * s), Vec2::new(82.0 * s, 22.0 * s));
-        let cls = Rect::from_center_size(Pos2::new(pop.center().x + 52.0 * s, pop.max.y - 16.0 * s), Vec2::new(82.0 * s, 22.0 * s));
+        let clr = Rect::from_center_size(Pos2::new(pop.center().x - 56.0 * s, pop.max.y - 16.0 * s), Vec2::new(88.0 * s, 22.0 * s));
+        let cls = Rect::from_center_size(Pos2::new(pop.center().x + 56.0 * s, pop.max.y - 16.0 * s), Vec2::new(88.0 * s, 22.0 * s));
         { let pa = ui.painter_at(Rect::EVERYTHING);
-          pa.rect_filled(clr, clr.height() * 0.5, ga(RED, 28));
-          pa.rect_stroke(clr, clr.height() * 0.5, Stroke::new(0.5 * s, ga(RED, 120)), egui::StrokeKind::Outside);
+          pa.rect_filled(clr, 4.0 * s, ga(RED, 30));
+          pa.rect_stroke(clr, 4.0 * s, Stroke::new(1.0, ga(RED, 100)), egui::StrokeKind::Outside);
           pa.text(clr.center(), egui::Align2::CENTER_CENTER, "Clear All",
               FontId::new(7.5 * s, FontFamily::Proportional), RED);
-          pa.rect_filled(cls, cls.height() * 0.5, ga(ACCENT, 220));
+          pa.rect_filled(cls, 4.0 * s, ACCENT);
+          pa.rect_stroke(cls, 4.0 * s, Stroke::new(1.0, ga(ACCENT_LIGHT, 80)), egui::StrokeKind::Outside);
           pa.text(cls.center(), egui::Align2::CENTER_CENTER, "Close",
-              FontId::new(7.5 * s, FontFamily::Proportional), BG_BASE); }
+              FontId::new(7.5 * s, FontFamily::Proportional), Color32::WHITE); }
         if ui.allocate_rect(clr, Sense::click()).clicked() {
             gui.midi_learn.mappings.lock().clear();
             gui.midi_learn.learning_target.store(-1, std::sync::atomic::Ordering::Release);
@@ -1128,11 +1200,11 @@ fn draw_midi_popup(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     });
 }
 
-// ─── MIDI Context Menu ────────────────────────────────────────────────────────
-fn draw_midi_context_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
-    let menu_w = 170.0 * s; let ih = 22.0 * s;
+// ─── Context Menu — MIDI ──────────────────────────────────────────────────────
+fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
+    let menu_w = 172.0 * s; let ih = 24.0 * s;
     let items = [("MIDI On/Off", 0usize), ("Clean Up...", 1), ("Roll Back", 2), ("Save", 3), ("Close", 4)];
-    let menu_h = items.len() as f32 * ih + 10.0 * s;
+    let menu_h = items.len() as f32 * ih + 8.0 * s;
     let anchor = gui.midi_context_anchor;
     let menu_rect = Rect::from_min_size(anchor, Vec2::new(menu_w, menu_h));
     let screen = ctx.screen_rect();
@@ -1141,20 +1213,22 @@ fn draw_midi_context_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     });
     egui::Area::new(egui::Id::new("neb_midi_ctx")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
         { let p = ui.painter();
-          p.rect_filled(menu_rect, 8.0 * s, BG_PANEL);
-          p.rect_stroke(menu_rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
+          // Flyout shadow
+          p.rect_filled(Rect::from_min_size(anchor + Vec2::new(2.0, 3.0), Vec2::new(menu_w, menu_h)), 8.0 * s,
+              Color32::from_black_alpha(80));
+          acrylic_card(p, menu_rect, 8.0 * s); }
         for (i, (label, idx)) in items.iter().enumerate() {
             let item_rect = Rect::from_min_size(
-                Pos2::new(anchor.x + 5.0 * s, anchor.y + 5.0 * s + i as f32 * ih),
-                Vec2::new(menu_w - 10.0 * s, ih - 2.0 * s));
+                Pos2::new(anchor.x + 4.0 * s, anchor.y + 4.0 * s + i as f32 * ih),
+                Vec2::new(menu_w - 8.0 * s, ih - 2.0 * s));
             let resp = ui.allocate_rect(item_rect, Sense::click());
             let hov = resp.hovered();
             { let p = ui.painter();
-              if hov { p.rect_filled(item_rect, 4.0 * s, ga(ACCENT, 18)); }
-              p.text(Pos2::new(item_rect.min.x + 10.0 * s, item_rect.center().y),
+              if hov { p.rect_filled(item_rect, 4.0 * s, CTRL_HOVER); }
+              p.text(Pos2::new(item_rect.min.x + 12.0 * s, item_rect.center().y),
                   egui::Align2::LEFT_CENTER, *label,
-                  FontId::new(8.0 * s, FontFamily::Proportional),
-                  if hov { ACCENT } else { TEXT_PRI }); }
+                  FontId::new(8.5 * s, FontFamily::Proportional),
+                  if hov { TEXT_PRI } else { TEXT_SEC }); }
             if resp.clicked() {
                 match idx {
                     0 => { let cur = gui.midi_learn.midi_enabled.load(std::sync::atomic::Ordering::Relaxed);
@@ -1180,51 +1254,52 @@ fn draw_midi_cleanup_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     let mappings = gui.midi_learn.mappings.lock().clone();
     let mut sorted: Vec<(u8, u8)> = mappings.iter().map(|(&cc, &p)| (cc, p)).collect();
     sorted.sort_by_key(|&(cc, _)| cc);
-    let sub_w = 200.0 * s; let ih = 22.0 * s;
-    let sub_h = (sorted.len() + 2) as f32 * ih + 10.0 * s;
+    let sub_w = 210.0 * s; let ih = 24.0 * s;
+    let sub_h = (sorted.len() + 2) as f32 * ih + 8.0 * s;
     let anchor = gui.midi_cleanup_anchor;
     let sub_rect = Rect::from_min_size(anchor, Vec2::new(sub_w, sub_h));
     egui::Area::new(egui::Id::new("neb_midi_cleanup")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
         { let p = ui.painter();
-          p.rect_filled(sub_rect, 8.0 * s, BG_PANEL);
-          p.rect_stroke(sub_rect, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
+          p.rect_filled(Rect::from_min_size(anchor + Vec2::new(2.0, 3.0), Vec2::new(sub_w, sub_h)), 8.0 * s,
+              Color32::from_black_alpha(80));
+          acrylic_card(p, sub_rect, 8.0 * s); }
         if sorted.is_empty() {
-            let er = Rect::from_min_size(Pos2::new(anchor.x + 5.0 * s, anchor.y + 5.0 * s), Vec2::new(sub_w - 10.0 * s, ih));
+            let er = Rect::from_min_size(Pos2::new(anchor.x + 4.0 * s, anchor.y + 4.0 * s), Vec2::new(sub_w - 8.0 * s, ih));
             ui.painter().text(er.center(), egui::Align2::CENTER_CENTER, "No mappings",
-                FontId::new(7.5 * s, FontFamily::Proportional), TEXT_SEC);
+                FontId::new(8.0 * s, FontFamily::Proportional), TEXT_SEC);
         }
         for (i, (cc, pidx)) in sorted.iter().enumerate() {
             let pname = MIDI_PARAM_NAMES.get(*pidx as usize).copied().unwrap_or("?");
             let ir = Rect::from_min_size(
-                Pos2::new(anchor.x + 5.0 * s, anchor.y + 5.0 * s + i as f32 * ih),
-                Vec2::new(sub_w - 10.0 * s, ih - 2.0 * s));
+                Pos2::new(anchor.x + 4.0 * s, anchor.y + 4.0 * s + i as f32 * ih),
+                Vec2::new(sub_w - 8.0 * s, ih - 2.0 * s));
             let resp = ui.allocate_rect(ir, Sense::click()); let hov = resp.hovered();
             { let p = ui.painter();
-              if hov { p.rect_filled(ir, 3.0 * s, ga(RED, 14)); }
-              p.text(Pos2::new(ir.min.x + 10.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
+              if hov { p.rect_filled(ir, 4.0 * s, ga(RED, 18)); }
+              p.text(Pos2::new(ir.min.x + 12.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
                   format!("CC{}  →  {}", cc, pname),
-                  FontId::new(7.5 * s, FontFamily::Proportional),
-                  if hov { RED } else { TEXT_PRI }); }
+                  FontId::new(8.0 * s, FontFamily::Proportional),
+                  if hov { RED } else { TEXT_SEC }); }
             if resp.clicked() { gui.midi_learn.mappings.lock().remove(cc); }
         }
-        let clear_y = anchor.y + 5.0 * s + (sorted.len() + 1) as f32 * ih;
-        let cr = Rect::from_min_size(Pos2::new(anchor.x + 5.0 * s, clear_y), Vec2::new(sub_w - 10.0 * s, ih - 2.0 * s));
+        let clear_y = anchor.y + 4.0 * s + (sorted.len() + 1) as f32 * ih;
+        let cr = Rect::from_min_size(Pos2::new(anchor.x + 4.0 * s, clear_y), Vec2::new(sub_w - 8.0 * s, ih - 2.0 * s));
         let resp = ui.allocate_rect(cr, Sense::click()); let hov = resp.hovered();
         { let p = ui.painter();
-          if hov { p.rect_filled(cr, 3.0 * s, ga(RED, 20)); }
+          if hov { p.rect_filled(cr, 4.0 * s, ga(RED, 22)); }
           p.text(cr.center(), egui::Align2::CENTER_CENTER, "Clear All",
-              FontId::new(7.5 * s, FontFamily::Proportional),
+              FontId::new(8.0 * s, FontFamily::Proportional),
               if hov { RED } else { TEXT_SEC }); }
         if resp.clicked() { gui.midi_learn.mappings.lock().clear(); gui.midi_cleanup_menu = false; gui.midi_context_menu = false; }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.midi_cleanup_menu = false; }
     });
 }
 
-// ─── OS Dropdown ─────────────────────────────────────────────────────────────
-fn draw_os_dropdown(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams, ch: &mut GuiChanges, s: f32) {
+// ─── Flyout — OS Dropdown ─────────────────────────────────────────────────────
+fn draw_flyout_os(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams, ch: &mut GuiChanges, s: f32) {
     let os_labels = ["Off", "2×", "4×", "6×", "8×"];
-    let os_w = 88.0 * s; let ih = 22.0 * s;
-    let drop_h = os_labels.len() as f32 * ih + 6.0 * s;
+    let os_w = 90.0 * s; let ih = 24.0 * s;
+    let drop_h = os_labels.len() as f32 * ih + 8.0 * s;
     let anchor = gui.os_anchor;
     let dr = Rect::from_min_size(anchor, Vec2::new(os_w, drop_h));
     let screen = ctx.screen_rect();
@@ -1233,29 +1308,30 @@ fn draw_os_dropdown(ctx: &Context, gui: &mut NebulaGui, params: &GuiParams, ch: 
     });
     egui::Area::new(egui::Id::new("neb_os_drop")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
         { let p = ui.painter();
-          p.rect_filled(dr, 8.0 * s, BG_PANEL);
-          p.rect_stroke(dr, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
+          p.rect_filled(Rect::from_min_size(anchor + Vec2::new(2.0, 3.0), Vec2::new(os_w, drop_h)), 8.0 * s,
+              Color32::from_black_alpha(80));
+          acrylic_card(p, dr, 8.0 * s); }
         for (i, &lbl) in os_labels.iter().enumerate() {
-            let ir = Rect::from_min_size(Pos2::new(anchor.x + 3.0 * s, anchor.y + 3.0 * s + i as f32 * ih), Vec2::new(os_w - 6.0 * s, ih - 2.0 * s));
+            let ir = Rect::from_min_size(Pos2::new(anchor.x + 4.0 * s, anchor.y + 4.0 * s + i as f32 * ih), Vec2::new(os_w - 8.0 * s, ih - 2.0 * s));
             let resp = ui.allocate_rect(ir, Sense::click());
             let isel = i == params.oversampling as usize; let hov = resp.hovered();
             { let p = ui.painter();
-              if isel { p.rect_filled(ir, 4.0 * s, ga(ACCENT, 220)); }
-              else if hov { p.rect_filled(ir, 4.0 * s, ga(ACCENT, 14)); }
-              p.text(Pos2::new(ir.min.x + 10.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
+              if isel { p.rect_filled(ir, 4.0 * s, ACCENT); }
+              else if hov { p.rect_filled(ir, 4.0 * s, CTRL_HOVER); }
+              p.text(Pos2::new(ir.min.x + 12.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
                   lbl, FontId::new(8.5 * s, FontFamily::Proportional),
-                  if isel { BG_BASE } else if hov { ACCENT } else { TEXT_PRI }); }
+                  if isel { Color32::WHITE } else if hov { TEXT_PRI } else { TEXT_SEC }); }
             if resp.clicked() { ch.oversampling = Some(i as u32); gui.os_dropdown = false; }
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.os_dropdown = false; }
     });
 }
 
-// ─── Preset Dropdown ─────────────────────────────────────────────────────────
-fn draw_preset_dropdown(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+// ─── Flyout — Preset Dropdown ─────────────────────────────────────────────────
+fn draw_flyout_preset(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
     if gui.presets.is_empty() { gui.preset_dropdown_open = false; return; }
-    let pw = 148.0 * s; let ih = 22.0 * s;
-    let drop_h = gui.presets.len() as f32 * ih + 6.0 * s;
+    let pw = 152.0 * s; let ih = 24.0 * s;
+    let drop_h = gui.presets.len() as f32 * ih + 8.0 * s;
     let anchor = gui.preset_anchor;
     let dr = Rect::from_min_size(anchor, Vec2::new(pw, drop_h));
     let screen = ctx.screen_rect();
@@ -1265,19 +1341,20 @@ fn draw_preset_dropdown(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges,
     let presets_clone = gui.presets.clone();
     egui::Area::new(egui::Id::new("neb_pr_drop")).fixed_pos(anchor).order(egui::Order::Tooltip).show(ctx, |ui| {
         { let p = ui.painter();
-          p.rect_filled(dr, 8.0 * s, BG_PANEL);
-          p.rect_stroke(dr, 8.0 * s, Stroke::new(0.5 * s, BORDER), egui::StrokeKind::Outside); }
+          p.rect_filled(Rect::from_min_size(anchor + Vec2::new(2.0, 3.0), Vec2::new(pw, drop_h)), 8.0 * s,
+              Color32::from_black_alpha(80));
+          acrylic_card(p, dr, 8.0 * s); }
         for (i, (name, snap)) in presets_clone.iter().enumerate() {
-            let ir = Rect::from_min_size(Pos2::new(anchor.x + 3.0 * s, anchor.y + 3.0 * s + i as f32 * ih), Vec2::new(pw - 6.0 * s, ih - 2.0 * s));
+            let ir = Rect::from_min_size(Pos2::new(anchor.x + 4.0 * s, anchor.y + 4.0 * s + i as f32 * ih), Vec2::new(pw - 8.0 * s, ih - 2.0 * s));
             let resp = ui.allocate_rect(ir, Sense::click());
             let isel = i == gui.selected_preset; let hov = resp.hovered();
             { let p = ui.painter();
-              if isel { p.rect_filled(ir, 4.0 * s, ga(ACCENT, 220)); }
-              else if hov { p.rect_filled(ir, 4.0 * s, ga(ACCENT, 14)); }
+              if isel { p.rect_filled(ir, 4.0 * s, ACCENT); }
+              else if hov { p.rect_filled(ir, 4.0 * s, CTRL_HOVER); }
               let display = if name.len() > 20 { &name[..20] } else { name };
-              p.text(Pos2::new(ir.min.x + 10.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
-                  display, FontId::new(8.0 * s, FontFamily::Proportional),
-                  if isel { BG_BASE } else if hov { ACCENT } else { TEXT_PRI }); }
+              p.text(Pos2::new(ir.min.x + 12.0 * s, ir.center().y), egui::Align2::LEFT_CENTER,
+                  display, FontId::new(8.5 * s, FontFamily::Proportional),
+                  if isel { Color32::WHITE } else if hov { TEXT_PRI } else { TEXT_SEC }); }
             if resp.clicked() { gui.selected_preset = i; gui.preset_dropdown_open = false; snap.apply_to(ch); }
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) { gui.preset_dropdown_open = false; }
