@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.2.0 — Alien Synthwave GUI
+// Nebula DeEsser v2.3.0 — Alien Synthwave GUI
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // Scale = min(win_w/BASE_W, win_h/BASE_H), read from EguiState — no zoom_factor.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,7 +267,7 @@ fn draw_title(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
         "ALIEN SPECTRUM PROCESSOR  //  64-BIT  CLAP",
         FontId::new(8.0 * s, FontFamily::Monospace), TEXT_LO);
     painter.text(Pos2::new(bar.max.x - 12.0 * s, ty), egui::Align2::RIGHT_CENTER,
-        "v2.2", FontId::new(8.5 * s, FontFamily::Monospace), ga(PURPLE, 210));
+        "v2.3", FontId::new(8.5 * s, FontFamily::Monospace), ga(PURPLE, 210));
     if bypass {
         let bx = bar.max.x - 74.0 * s;
         let br = Rect::from_center_size(Pos2::new(bx, ty), Vec2::new(56.0 * s, 16.0 * s));
@@ -346,9 +346,10 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
         p.rect_stroke(r, 4.0*s, Stroke::new(0.8*s, ga(c,120)), egui::StrokeKind::Outside);
         p.text(r.center(), egui::Align2::CENTER_CENTER, "◄ UNDO", FontId::new(7.5*s, FontFamily::Monospace), c); }
       if resp.clicked() && can_undo {
-          let snap = gui.undo_stack.pop().unwrap();
-          gui.redo_stack.push(ParamSnapshot::from_params(params)); gui.redo_stack.truncate(50);
-          snap.apply_to(ch);
+          if let Some(snap) = gui.undo_stack.pop() {
+              gui.redo_stack.push(ParamSnapshot::from_params(params)); gui.redo_stack.truncate(50);
+              snap.apply_to(ch);
+          }
       }
     }
     { let w = 46.0 * s;
@@ -360,9 +361,10 @@ fn draw_toolbar(ui: &mut Ui, rect: Rect, params: &GuiParams, gui: &mut NebulaGui
         p.rect_stroke(r, 4.0*s, Stroke::new(0.8*s, ga(c,120)), egui::StrokeKind::Outside);
         p.text(r.center(), egui::Align2::CENTER_CENTER, "REDO ►", FontId::new(7.5*s, FontFamily::Monospace), c); }
       if resp.clicked() && can_redo {
-          let snap = gui.redo_stack.pop().unwrap();
-          gui.undo_stack.push(ParamSnapshot::from_params(params)); gui.undo_stack.truncate(50);
-          snap.apply_to(ch);
+          if let Some(snap) = gui.redo_stack.pop() {
+              gui.undo_stack.push(ParamSnapshot::from_params(params)); gui.undo_stack.truncate(50);
+              snap.apply_to(ch);
+          }
       }
     }
     cx += 3.0 * s;
