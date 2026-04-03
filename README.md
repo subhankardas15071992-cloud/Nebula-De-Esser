@@ -201,7 +201,7 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 **This plugin will not work in Cakewalk NXT or Cakewalk Sonar. This is a known, confirmed incompatibility and will not be fixed.**
 
-Cakewalk is not optimized for lock-free plugins and does not properly support plugins written outside of JUCE or C++. Its VST3 host wraps plugins through a forced JUCE compatibility layer that breaks native nih-plug implementations. This is a Cakewalk problem, not a plugin problem.
+Cakewalk is not optimized for lock-free plugins, it's still stuck in dated block based processing, and it does not properly support plugins written outside of JUCE or C++. Its VST3 host wraps plugins through a forced JUCE compatibility layer that breaks native nih-plug implementations. This is a Cakewalk problem, not a plugin problem.
 
 If you are a Cakewalk user looking for a free alternative, consider upgrading to one of these modern DAWs:
 
