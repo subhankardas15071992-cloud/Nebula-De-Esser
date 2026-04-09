@@ -30,3 +30,6 @@ debug-assertions = false
 [profile.release.build-override]
 opt-level = 3
 codegen-units = 1
+
+[dependencies]
+ringbuf = "0.4.4"
