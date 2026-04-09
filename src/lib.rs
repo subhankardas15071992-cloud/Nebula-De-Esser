@@ -785,3 +785,27 @@ impl ClapPlugin for NebulaDeEsser {
 }
 
 nih_export_clap!(NebulaDeEsser);
+
+// In src/lib.rs
+mod stable_adapter;
+use stable_adapter::StableBlockAdapter;
+
+// ... inside NebulaDeEsser struct
+adapter: Option<StableBlockAdapter>,
+
+// ... inside initialize()
+// 512 is a safe "pseudo-block" that most DAWs handle well
+self.adapter = Some(StableBlockAdapter::new(512, 2));
+// Report latency so the DAW can align audio
+context.set_latency_samples(512);
+
+// ... inside process()
+fn process(&mut self, buffer: &mut Buffer, ...) -> ProcessStatus {
+    if let Some(adapter) = &mut self.adapter {
+        adapter.process_shielded(buffer, |stable_block| {
+            // stable_block is ALWAYS exactly 1024 floats (512 * 2 channels)
+            self.engine.process_64bit(stable_block, &self.params);
+        });
+    }
+    ProcessStatus::Normal
+}
