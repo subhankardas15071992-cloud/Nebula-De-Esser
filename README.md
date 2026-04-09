@@ -197,13 +197,15 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 ---
 
-## ⚠️ Cakewalk NXT / Cakewalk Sonar — Not Supported
+## ⚠️ Cakewalk NXT / Cakewalk Sonar / N-Track Studio — Not Supported
 
-**This plugin will not work in Cakewalk NXT or Cakewalk Sonar. This is a known, confirmed incompatibility and will not be fixed.**
+**This plugin will not work in Cakewalk NXT or Cakewalk Sonar and N-Track Studio. This is a known, confirmed incompatibility and will not be fixed.**
 
-Cakewalk is not optimized for lock-free plugins, it's still stuck in dated block based processing, and it does not properly support plugins written outside of JUCE or C++. Its VST3 host wraps plugins through a forced JUCE compatibility layer that breaks native nih-plug implementations. This is a Cakewalk problem, not a plugin problem.
+Cakewalk and N-Track are not optimized for lock-free plugins, they are still stuck in dated variable block based processing, this plugin requires either lock free or at least constant block size, power-of-two buffers to operate. 
 
-If you are a Cakewalk user looking for a free alternative, consider upgrading to one of these modern DAWs:
+This is a Cakewalk and N-Track problem, not a plugin problem.
+
+If you are a Cakewalk or N-Track user looking for a free alternative, consider upgrading to one of these modern DAWs:
 
 - **[Tracktion Waveform Free](https://www.tracktion.com/products/waveform-free)** — fully featured, free forever
 - **[Reaper](https://www.reaper.fm/)** — 60-day free trial, very affordable license
