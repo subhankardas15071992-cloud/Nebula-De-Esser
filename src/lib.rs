@@ -1,9 +1,7 @@
 #![allow(unused_mut, unused_variables, dead_code)]
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.0.0
+// Nebula DeEsser v2.0.0 (FIXED for Cakewalk/N-Track)
 // 64-bit CLAP de-esser — Rust + nih-plug + egui
-// New in v2: Presets, Undo/Redo, MIDI Learn, FX Bypass,
-//            Input/Output Level+Pan, Oversampling, fixed Spectrum Analyzer
 // ─────────────────────────────────────────────────────────────────────────────
 
 #![allow(
@@ -267,6 +265,9 @@ struct NebulaDeEsser {
     last_os_factor:  u32,
     prev_in_l:       f64,
     prev_in_r:       f64,
+    // FIX: Pre-allocated buffers for real-time safety
+    out_l_buffer:    Vec<f64>,
+    out_r_buffer:    Vec<f64>,
 }
 
 impl Default for NebulaDeEsser {
@@ -288,6 +289,8 @@ impl Default for NebulaDeEsser {
             last_os_factor: 1,
             prev_in_l:      0.0,
             prev_in_r:      0.0,
+            out_l_buffer:   Vec::new(),
+            out_r_buffer:   Vec::new(),
         }
     }
 }
@@ -337,7 +340,7 @@ impl Plugin for NebulaDeEsser {
 
     fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option<Box<dyn Editor>> {
         let params     = self.params.clone();
         let meters     = self.meters.clone();
         let spectrum   = self.analyzer.get_shared();
@@ -350,7 +353,6 @@ impl Plugin for NebulaDeEsser {
             move |ctx: &Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
                 // ── Apply MIDI-driven param changes via setter ────────────────
                 {
-                    // Check if MIDI is enabled
                     if midi_learn.midi_enabled.load(Ordering::Relaxed) {
                         let mappings = midi_learn.mappings.lock();
                         for (&cc, &pidx) in mappings.iter() {
@@ -483,16 +485,19 @@ impl Plugin for NebulaDeEsser {
         &mut self,
         _layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _ctx: &mut impl InitContext<Self>,
+        _ctx: &mut impl InitContext,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp     = DeEsserDsp::new(self.sample_rate);
         self.os_dsp  = DeEsserDsp::new(self.sample_rate);
-        // Reset only — do NOT replace with SpectrumAnalyzer::new().
-        // editor() gave the GUI an Arc clone of self.analyzer.shared.
-        // Creating a new analyzer here produces a new Arc, permanently
-        // disconnecting the GUI (which holds the old Arc) from the audio thread.
         self.analyzer.reset();
+        
+        // FIX: Pre-allocate buffers once during initialization.
+        // This prevents allocation during the process cycle.
+        let max_block = buffer_config.max_buffer_size as usize;
+        self.out_l_buffer.resize(max_block, 0.0);
+        self.out_r_buffer.resize(max_block, 0.0);
+        
         self.last_min_freq  = -1.0;
         self.last_max_freq  = -1.0;
         self.last_lookahead_ms = -1.0;
@@ -514,12 +519,11 @@ impl Plugin for NebulaDeEsser {
         &mut self,
         buffer: &mut Buffer,
         aux: &mut AuxiliaryBuffers,
-        ctx: &mut impl ProcessContext<Self>,
+        ctx: &mut impl ProcessContext,
     ) -> ProcessStatus {
         // ── Consume MIDI events ──────────────────────────────────────────────
         while let Some(event) = ctx.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
-                // Check if MIDI is enabled
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
                     continue;
                 }
@@ -533,10 +537,13 @@ impl Plugin for NebulaDeEsser {
                 let target = self.midi_learn.learning_target
                     .load(Ordering::Acquire);
                 if target >= 0 {
+                    // FIX: Use try_lock to prevent priority inversion.
+                    // If the GUI is holding the lock, we skip the update rather than crashing the DAW.
+                    if let Some(mut m) = self.midi_learn.mappings.try_lock() {
+                        m.insert(cc, target as u8);
+                    }
                     self.midi_learn.learning_target
                         .store(-1, Ordering::Release);
-                    let mut m = self.midi_learn.mappings.lock();
-                    m.insert(cc, target as u8);
                 }
             }
         }
@@ -570,6 +577,7 @@ impl Plugin for NebulaDeEsser {
         let cut_width = self.params.cut_width.value() as f64;
         let cut_depth = self.params.cut_depth.value() as f64;
         let mix       = self.params.mix.value()       as f64;
+        
         if (min_freq - self.last_min_freq).abs() > 0.5
             || (max_freq - self.last_max_freq).abs() > 0.5
             || use_peak != self.last_use_peak
@@ -579,7 +587,6 @@ impl Plugin for NebulaDeEsser {
             self.last_max_freq = max_freq;
             self.last_use_peak = use_peak;
         } else {
-            // Always update bell coeffs since width/depth can change independently
             self.dsp.update_filters(min_freq, max_freq, use_peak, cut_width, cut_depth, max_reduction);
         }
 
@@ -641,37 +648,38 @@ impl Plugin for NebulaDeEsser {
         let (out_gl, out_gr) = pan_gains(output_pan, out_gain);
 
         // ── Sample processing ─────────────────────────────────────────────────
-        let mut out_l   = vec![0.0_f64; n];
-        let mut out_r   = vec![0.0_f64; n];
+        
+        // FIX: Use pre-allocated buffers instead of 'vec!'
+        // We assume n <= max_buffer_size (guaranteed by host)
+        let out_l_slice = &mut self.out_l_buffer[..n];
+        let out_r_slice = &mut self.out_r_buffer[..n];
+        
         let mut peak_det: f32 = -120.0;
         let mut peak_red: f32 = 0.0;
 
-        // Snapshot input and sidechain slices before mutably borrowing buffer for output
-        let input_data: Vec<Vec<f32>> = buffer.as_slice().iter()
-            .map(|ch| ch.to_vec())
-            .collect();
-        let sc_data: Vec<Vec<f32>> = if have_sc {
-            aux.inputs[0].as_slice().iter()
-                .map(|ch| ch.to_vec())
-                .collect()
-        } else {
-            vec![]
-        };
+        // FIX: Read directly from buffer slices, do NOT copy to Vec
+        let channels = buffer.as_slice();
+        let in_l = channels.get(0).map(|s| s.as_slice()).unwrap_or(&[]);
+        let in_r = channels.get(1).map(|s| s.as_slice()).unwrap_or(in_l);
+        
+        let sc_channels = if have_sc { aux.inputs[0].as_slice() } else { &[] };
+        let sc_l = sc_channels.get(0).map(|s| s.as_slice()).unwrap_or(&[]);
+        let sc_r = sc_channels.get(1).map(|s| s.as_slice()).unwrap_or(sc_l);
 
         for s in 0..n {
-            let raw_l = input_data.first().map(|c| c[s] as f64).unwrap_or(0.0);
-            let raw_r = input_data.get(1).map(|c| c[s] as f64).unwrap_or(raw_l);
+            // FIX: Directly access slices
+            let raw_l = in_l.get(s).copied().unwrap_or(0.0) as f64;
+            let raw_r = in_r.get(s).copied().unwrap_or(0.0) as f64;
 
             let l = raw_l * in_gl;
             let r = raw_r * in_gr;
 
-            let sc_l = if have_sc { sc_data.first().map(|c| c[s] as f64) } else { None };
-            let sc_r = if have_sc { sc_data.get(1).map(|c| c[s] as f64) } else { None };
+            let sc_l_val = sc_l.get(s).copied().map(|v| v as f64);
+            let sc_r_val = sc_r.get(s).copied().map(|v| v as f64);
 
             let (mut ol, mut or_, det_db, red_db) = if bypass {
                 (l, r, -120.0_f64, 0.0_f64)
             } else if os_factor > 1 {
-                // Linear interpolation upsampling → process → average
                 let mut acc_l = 0.0;
                 let mut acc_r = 0.0;
                 let mut last_d = -120.0_f64;
@@ -681,7 +689,7 @@ impl Plugin for NebulaDeEsser {
                     let ul = self.prev_in_l + t * (l - self.prev_in_l);
                     let ur = self.prev_in_r + t * (r - self.prev_in_r);
                     let (o_l, o_r, d, rd) = self.os_dsp.process_sample(
-                        ul, ur, sc_l, sc_r,
+                        ul, ur, sc_l_val, sc_r_val,
                         threshold, max_reduction,
                         mode_relative, use_peak, use_wide,
                         stereo_link, stereo_ms,
@@ -697,7 +705,7 @@ impl Plugin for NebulaDeEsser {
                 (acc_l * inv, acc_r * inv, last_d, last_r_db)
             } else {
                 self.dsp.process_sample(
-                    l, r, sc_l, sc_r,
+                    l, r, sc_l_val, sc_r_val,
                     threshold, max_reduction,
                     mode_relative, use_peak, use_wide,
                     stereo_link, stereo_ms,
@@ -713,19 +721,17 @@ impl Plugin for NebulaDeEsser {
             ol *= out_gl;
             or_ *= out_gr;
 
-            // Dry/wet mix — blend post-processed signal with the input-gained dry signal
-            // Both sides have already had input gain applied, so the blend is level-matched.
+            // Dry/wet mix
             if mix < 1.0 {
                 let dry = 1.0 - mix;
-                ol = ol * mix + l * out_gl * dry;
-                or_ = or_ * mix + r * out_gr * dry;
+                ol = ol * mix + l * dry;
+                or_ = or_ * mix + r * dry;
             }
 
-            out_l[s] = ol;
-            out_r[s] = or_;
+            out_l_slice[s] = ol;
+            out_r_slice[s] = or_;
 
-            // Feed analyzer with post-processing output signal (mono sum)
-            // This is after input gain, DSP, output gain, and mix — exactly what the user hears.
+            // Feed analyzer
             self.analyzer.push((ol + or_) * 0.5);
 
             let df = det_db as f32;
@@ -737,10 +743,14 @@ impl Plugin for NebulaDeEsser {
         // ── Write output ──────────────────────────────────────────────────────
         {
             let out_slice = buffer.as_slice();
-            for (ch_idx, channel) in out_slice.iter_mut().enumerate() {
-                let src = if ch_idx == 0 { &out_l } else { &out_r };
-                for (s, smp) in channel.iter_mut().enumerate() {
-                    *smp = src[s] as f32;
+            if let Some(ch) = out_slice.get_mut(0) {
+                for (s, smp) in ch.iter_mut().enumerate() {
+                    *smp = out_l_slice[s] as f32;
+                }
+            }
+            if let Some(ch) = out_slice.get_mut(1) {
+                for (s, smp) in ch.iter_mut().enumerate() {
+                    *smp = out_r_slice[s] as f32;
                 }
             }
         }
@@ -772,16 +782,9 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Hyper-optimized 64-bit CLAP de-esser v2.2 — alien synthwave GUI");
-    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio/manual");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("https://nebula.audio/manual");
     const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://nebula.audio/support");
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::AudioEffect,
-        ClapFeature::Stereo,
-        ClapFeature::Mono,
-        ClapFeature::Utility,
-    ];
+    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio/manual");
 }
 
 nih_export_clap!(NebulaDeEsser);
