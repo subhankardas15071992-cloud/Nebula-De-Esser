@@ -536,8 +536,16 @@ impl Plugin for NebulaDeEsser {
         let in_r_slice: &[f32] = if num_channels > 1 { &channels[1] } else { in_l_slice };
 
         // Correctly access sidechain channels using as_slice()
-        let sc_channels = if have_sc { aux.inputs[0].as_slice() } else { &[] };
-        let sc_l_slice: &[f32] = if sc_channels.len() > 0 { sc_channels[0] } else { &[] };
+        // Declare a local empty slice to provide a mutable reference in the else branch
+        let mut empty_channels: [&mut [f32]; 0] = [];
+        
+        // Match the return type of as_slice() which is &mut [&mut [f32]]
+        let sc_channels = if have_sc { aux.inputs[0].as_slice() } else { &mut empty_channels };
+
+        // Access the channel data. sc_channels[0] is &mut &mut [f32], which coerces to &[f32].
+        let sc_l_slice: &[f32] = if sc_channels.len() > 0 { &sc_channels[0] } else { &[] };
+        let sc_r_slice: &[f32] = if sc_channels.len() > 1 { &sc_channels[1] } else { sc_l_slice };
+
         let sc_r_slice: &[f32] = if sc_channels.len() > 1 { sc_channels[1] } else { sc_l_slice };
 
 
