@@ -1,9 +1,9 @@
 [package]
 name = "nebula_desser"
-version = "2.3.0"
+version = "2.4.0" # Increment version for the fixed release
 edition = "2021"
-authors = ["Nebula Audio"]
-description = "Nebula DeEsser v2 - Hyper-optimized 64-bit CLAP De-esser Plugin"
+authors = ["Nebula Audio", "Your Name/Organization (for the fixes)"]
+description = "Nebula DeEsser v2 - Hyper-optimized 64-bit CLAP De-esser Plugin (Robust Industry Standard Fork)"
 
 [lib]
 crate-type = ["cdylib"]
@@ -15,6 +15,8 @@ egui = "0.29"
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
+atomic-queue = "1.1.3" # For lock-free communication between audio and UI threads
+arrayvec = { version = "0.7", features = ["serde"] } # For fixed-size buffers, avoiding heap allocations in audio thread
 
 [dev-dependencies]
 rand = "0.8"
