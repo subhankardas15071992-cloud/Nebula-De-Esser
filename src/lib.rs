@@ -34,11 +34,11 @@ pub const MIDI_PARAM_NAMES: &[&str] = &["Threshold", "Max Reduction", "Stereo Li
 
 pub struct MidiLearnShared {
     pub learning_target: AtomicI32,
-    pub mappings: Mutex<HashMap<u8, u8>>,
-    pub saved_mappings: Mutex<HashMap<u8, u8>>,
+    pub mappings: Mutex&lt;HashMap>,
+    pub saved_mappings: Mutex&lt;HashMap>,
     pub midi_enabled: AtomicBool,
-    pub cc_values: Vec<AtomicU32>,
-    pub cc_dirty: Vec<AtomicBool>,
+    pub cc_values: Vec,
+    pub cc_dirty: Vec,
 }
 impl MidiLearnShared {
     fn new() -> Self {
@@ -54,7 +54,7 @@ impl MidiLearnShared {
 #[derive(Params)]
 struct NebulaParams {
     #[persist = "editor-state"]
-    editor_state: Arc<EguiState>,
+    editor_state: Arc,
     #[id = "threshold"] pub threshold: FloatParam,
     #[id = "max_reduction"] pub max_reduction: FloatParam,
     #[id = "min_freq"] pub min_freq: FloatParam,
@@ -117,10 +117,10 @@ struct Meters { det_bits: AtomicU32, det_max_bits: AtomicU32, red_bits: AtomicU3
 impl Default for Meters { fn default() -> Self { Self { det_bits: AtomicU32::new(f32_to_u32(-60.0)), det_max_bits: AtomicU32::new(f32_to_u32(-60.0)), red_bits: AtomicU32::new(f32_to_u32(0.0)), red_max_bits: AtomicU32::new(f32_to_u32(0.0)), reset_det: AtomicI32::new(0), reset_red: AtomicI32::new(0) } } }
 
 struct NebulaDeEsser {
-    params: Arc<NebulaParams>, sample_rate: f64, dsp: DeEsserDsp, os_dsp: DeEsserDsp, analyzer: SpectrumAnalyzer,
-    meters: Arc<Meters>, midi_learn: Arc<MidiLearnShared>,
+    params: Arc, sample_rate: f64, dsp: DeEsserDsp, os_dsp: DeEsserDsp, analyzer: SpectrumAnalyzer,
+    meters: Arc, midi_learn: Arc,
     last_min_freq: f64, last_max_freq: f64, last_use_peak: bool, last_lookahead_ms: f64, last_lookahead_en: bool, last_vocal: bool, last_os_factor: u32, prev_in_l: f64, prev_in_r: f64,
-    out_l_buffer: Vec<f64>, out_r_buffer: Vec<f64>,
+    out_l_buffer: Vec, out_r_buffer: Vec,
 }
 
 impl Default for NebulaDeEsser {
@@ -150,9 +150,9 @@ impl Plugin for NebulaDeEsser {
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     type SysExMessage = ();
     type BackgroundTask = ();
-    fn params(&self) -> Arc<dyn Params> { self.params.clone() }
+    fn params(&self) -> Arc { self.params.clone() }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<NebulaDeEsser>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option&lt;Box> {
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -163,7 +163,6 @@ impl Plugin for NebulaDeEsser {
                 for (&cc, &pidx) in mappings.iter() {
                     if midi_learn.cc_dirty[(cc as usize).min(127)].swap(false, Ordering::AcqRel) {
                         let v = u32_to_f32(midi_learn.cc_values[(cc as usize).min(127)].load(Ordering::Relaxed));
-                        // FIX: Added double braces to macro to make it a valid expression
                         macro_rules! scc {
                             ($p:expr, $val:expr) => {{
                                 setter.begin_set_parameter(&$p);
@@ -209,7 +208,7 @@ impl Plugin for NebulaDeEsser {
         })
     }
 
-    fn initialize(&mut self, _layout: &AudioIOLayout, buffer_config: &BufferConfig, _ctx: &mut impl InitContext<NebulaDeEsser>) -> bool {
+    fn initialize(&mut self, _layout: &AudioIOLayout, buffer_config: &BufferConfig, _ctx: &mut impl InitContext) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
         self.os_dsp = DeEsserDsp::new(self.sample_rate);
@@ -223,7 +222,7 @@ impl Plugin for NebulaDeEsser {
     }
     fn reset(&mut self) { self.dsp.reset(); self.os_dsp.reset(); self.analyzer.reset(); self.prev_in_l = 0.0; self.prev_in_r = 0.0; }
 
-    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext<NebulaDeEsser>) -> ProcessStatus {
+    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext) -> ProcessStatus {
         while let Some(event) = ctx.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) { continue; }
@@ -308,21 +307,9 @@ impl Plugin for NebulaDeEsser {
         let in_l_slice: &[f32] = if num_channels > 0 { &channels[0] } else { &[] };
         let in_r_slice: &[f32] = if num_channels > 1 { &channels[1] } else { in_l_slice };
 
-        // FIX: Resolve type mismatch by converting to immutable slices immediately
-        let sc_l_slice: &[f32] = if have_sc {
-            let aux_buf = &aux.inputs[0];
-            let slice = aux_buf.as_slice(); // &mut [&mut [f32]]
-            if !slice.is_empty() { &*slice[0] } else { &[] } // &*[..] converts mut to immut
-        } else {
-            &[]
-        };
-        let sc_r_slice: &[f32] = if have_sc {
-            let aux_buf = &aux.inputs[0];
-            let slice = aux_buf.as_slice();
-            if slice.len() > 1 { &*slice[1] } else { sc_l_slice }
-        } else {
-            &[]
-        };
+        // FIX: Use Index access on Buffer (&Buffer implements Index) to get channel slices immutably
+        let sc_l_slice: &[f32] = if have_sc && aux.inputs[0].len() > 0 { &aux.inputs[0][0] } else { &[] };
+        let sc_r_slice: &[f32] = if have_sc && aux.inputs[0].len() > 1 { &aux.inputs[0][1] } else { sc_l_slice };
 
         let out_l_slice = &mut self.out_l_buffer[..n];
         let out_r_slice = &mut self.out_r_buffer[..n];
@@ -391,8 +378,9 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("https://nebula.audio/support");
-    // FIX: Removed invalid ClapFeature::Mix
+    const CLAP_DESCRIPTION: Option&lt;&'static str&gt; = Some("Nebula DeEsser");
+    const CLAP_MANUAL_URL: Option&lt;&'static str&gt; = Some("https://nebula.audio/manual");
+    const CLAP_SUPPORT_URL: Option&lt;&'static str&gt; = Some("https://nebula.audio/support");
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
 }
 
