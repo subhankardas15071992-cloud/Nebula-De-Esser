@@ -1,19 +1,25 @@
-// Nebula De Esser v2.2.0 — DSP Engine (CORRECTED)
+// Nebula De Esser v2.2.0 — DSP Engine (CORRECTED & VERIFIED)
 // Phase fix: complementary LP/HP split (hi = x - lp(x)) eliminates phase artifacts.
-// New: cut_width (Q multiplier) and cut_depth (gain depth 0..1) parameters.
 // FIX: Replaced Vec in LookaheadDelay with fixed array to prevent allocation crashes.
 
 #![allow(dead_code,unused_variables,clippy::too_many_arguments,clippy::needless_pass_by_ref_mut,clippy::cast_precision_loss,clippy::cast_possible_truncation)]
 use std::f64::consts::PI;
 
-// Max delay time in samples.
-// At 192kHz (max common SR), 20ms = 3840 samples.
-// 8192 provides a safe upper bound for any standard sample rate and max delay.
+// Max delay time in samples. 8192 is safe for 192kHz + 20ms delay.
 const MAX_DELAY_SAMPLES: usize = 8192;
 
 #[inline(always)] pub fn ftz(x:f64)->f64{if(x.to_bits()&0x7FF0_0000_0000_0000)==0{0.0}else{x}}
 #[inline(always)] pub fn db_to_lin(db:f64)->f64{10.0_f64.powf(db/20.0)}
-#[inline(always)] pub fn lin_to_db(x:f64)->f64{if xSelf{
+#[inline(always)] pub fn lin_to_db(x:f64)->f64{if x<f64::EPSILON{-120.0}else{20.0*x.log10()}}
+
+#[derive(Clone,Default,Debug)]
+pub struct BiquadState{pub x1:f64,pub x2:f64,pub y1:f64,pub y2:f64}
+
+#[derive(Clone,Debug)]
+pub struct BiquadCoeffs{pub b0:f64,pub b1:f64,pub b2:f64,pub a1:f64,pub a2:f64}
+impl BiquadCoeffs{
+    #[inline(always)]
+    pub fn highpass(f:f64,q:f64,sr:f64)->Self{
         let w=2.0*PI*f/sr;let c=w.cos();let s=w.sin();let a=s/(2.0*q);
         let b0=(1.0+c)/2.0;let b1=-(1.0+c);let b2=b0;let a0=1.0+a;
         Self{b0:b0/a0,b1:b1/a0,b2:b2/a0,a1:(-2.0*c)/a0,a2:(1.0-a)/a0}
@@ -29,7 +35,6 @@ const MAX_DELAY_SAMPLES: usize = 8192;
         let w=2.0*PI*f/sr;let c=w.cos();let s=w.sin();let a=s/(2.0*q);let a0=1.0+a;
         Self{b0:(s/2.0)/a0,b1:0.0,b2:-(s/2.0)/a0,a1:(-2.0*c)/a0,a2:(1.0-a)/a0}
     }
-    /// Parametric EQ bell — used for the cut itself (phase-coherent gain change)
     #[inline(always)]
     pub fn bell(f:f64,q:f64,gain_db:f64,sr:f64)->Self{
         let w=2.0*PI*f/sr;let c=w.cos();let s=w.sin();
@@ -51,9 +56,6 @@ const MAX_DELAY_SAMPLES: usize = 8192;
     }
 }
 
-// ── Complementary LP split state ─────────────────────────────────────────────
-// Uses a single LP chain; hi = x - lp(x).  This guarantees lo + hi = x
-// at every sample, so recombination is perfectly phase-transparent.
 #[derive(Clone,Default)]
 pub struct SplitState{
     pub lp1:BiquadState,
@@ -65,7 +67,15 @@ pub struct SplitState{
 pub struct EnvelopeFollower{pub attack_coeff:f64,pub release_coeff:f64,pub envelope:f64}
 impl EnvelopeFollower{
     pub fn new(a:f64,r:f64,sr:f64)->Self{
-        let mk=|ms:f64|if msf64{
+        let mk=|ms:f64|if ms<f64::EPSILON{0.0}else{(-1.0/(ms*0.001*sr)).exp()};
+        Self{
+            attack_coeff:mk(a),
+            release_coeff:mk(r),
+            envelope:0.0,
+        }
+    }
+    #[inline(always)]
+    pub fn process(&mut self,x:f64)->f64{
         let a=x.abs();
         self.envelope=if a>self.envelope{
             self.attack_coeff*(self.envelope-a)+a
@@ -77,9 +87,6 @@ impl EnvelopeFollower{
     pub fn reset(&mut self){self.envelope=0.0;}
 }
 
-// FIX: Replaced Vec with fixed-size array.
-// This removes the heap allocation that was crashing Cakewalk/N-Track during Oversampling changes.
-// The delay TIME is still adjustable via `delay_samples`.
 pub struct LookaheadDelay{
     buffer: [f64; MAX_DELAY_SAMPLES],
     write_pos: usize,
@@ -93,28 +100,22 @@ impl LookaheadDelay{
             delay_samples: 0,
         }
     }
-    // This function allows you to adjust the delay time dynamically
     pub fn set_delay(&mut self,ms:f64,sr:f64){
         let target_samples = (ms * 0.001 * sr).round() as usize;
-        // Clamp to buffer size to prevent panics
         self.delay_samples = target_samples.min(MAX_DELAY_SAMPLES - 1);
     }
     #[inline(always)]
     pub fn process(&mut self,x:f64)->f64{
         self.buffer[self.write_pos] = x;
-        
-        // Calculate read position with wrapping
         let read_pos = if self.write_pos >= self.delay_samples {
             self.write_pos - self.delay_samples
         } else {
             MAX_DELAY_SAMPLES - self.delay_samples + self.write_pos
         };
-        
         self.write_pos = (self.write_pos + 1) % MAX_DELAY_SAMPLES;
         self.buffer[read_pos]
     }
     pub fn reset(&mut self){
-        // Efficiently zero the array
         self.buffer.fill(0.0);
         self.write_pos = 0;
     }
@@ -123,14 +124,13 @@ impl LookaheadDelay{
 #[inline(always)]
 pub fn compute_gain_reduction(det:f64,thr:f64,mx:f64,knee:f64)->f64{
     let o=det-thr;
-    if o<-knee*0.5{
-        0.0
-    } else if o>knee*0.5{
-        let t=(o-knee*0.5)/mx; 
-        t.min(1.0)
-    } else {
-        let t=(o+knee*0.5)/knee; 
+    if o<-knee*0.5{0.0}
+    else if o<knee*0.5{
+        let t=(o+knee*0.5)/knee;
         t*t*0.5
+    } else {
+        let t=(o-knee*0.5)/mx;
+        t.min(1.0)
     }
 }
 
@@ -138,9 +138,23 @@ pub fn compute_gain_reduction(det:f64,thr:f64,mx:f64,knee:f64)->f64{
 pub struct GainSmoother{stage:[f64;4],coeff:f64}
 impl GainSmoother{
     pub fn new(a:f64,r:f64,sr:f64)->Self{
-        let mk=|ms:f64|if msf64{
+        let mk=|ms:f64|if ms<f64::EPSILON{0.0}else{(-1.0/(ms*0.001*sr)).exp()};
+        Self{stage:[0.0;4],coeff:mk(r)}
+    }
+    #[inline(always)]
+    pub fn process(&mut self,t:f64)->f64{
         for s in &mut self.stage{
-            let c=if tSelf{Self{coeff:(-1.0/(200.0*0.001*sr)).exp(),val:0.0}}
+            let c=if t<f64::EPSILON{self.coeff}else{1.0-self.coeff};
+            *s=*s*c+t*(1.0-c);
+        }
+        self.stage[3]
+    }
+    pub fn reset(&mut self){self.stage=[0.0;4];}
+}
+
+pub struct MakeupSmoother{coeff:f64,val:f64}
+impl MakeupSmoother{
+    pub fn new(sr:f64)->Self{Self{coeff:(-1.0/(200.0*0.001*sr)).exp(),val:0.0}}
     #[inline(always)]
     pub fn process(&mut self,gr_db:f64)->f64{
         let t=(-gr_db).max(0.0)*0.5;
@@ -150,13 +164,10 @@ impl GainSmoother{
 }
 
 pub struct ChannelDsp{
-    // Detection filters (HP+LP chain for sidechain only — not applied to audio path)
     pub hp1:BiquadState,pub hp2:BiquadState,pub hp3:BiquadState,
     pub lp1:BiquadState,pub lp2:BiquadState,pub lp3:BiquadState,
     pub peak:BiquadState,
-    // Phase-transparent split (LP only; hi = x - lp(x))
     pub split:SplitState,
-    // Bell EQ for the actual cut (phase-coherent)
     pub bell1:BiquadState,pub bell2:BiquadState,
     pub detect_env:EnvelopeFollower,
     pub full_env:EnvelopeFollower,
@@ -197,15 +208,11 @@ impl ChannelDsp{
 pub struct DeEsserDsp{
     pub channels:[ChannelDsp;2],
     pub sample_rate:f64,
-    // Detection filter coefficients (sidechain only)
     pub hp_c:[BiquadCoeffs;3],
     pub lp_c:[BiquadCoeffs;3],
     pub pk_c:BiquadCoeffs,
-    // Phase-transparent split LP (for split-band mode)
     pub split_lp_c:[BiquadCoeffs;3],
-    // Bell EQ coefficients for the actual cut (two cascaded for steeper notch)
     pub bell_c:[BiquadCoeffs;2],
-    // Cached params for bell rebuild
     pub center_freq:f64,
     pub cut_q:f64,
     pub cut_depth_db:f64,
@@ -246,9 +253,6 @@ impl DeEsserDsp{
 
     pub fn reset(&mut self){for c in &mut self.channels{c.reset();}}
 
-    /// Update detection filters and split LP from min/max freq.
-    /// cut_width: 0..1 → Q range 0.5..6.0 (wider = lower Q = broader cut)
-    /// cut_depth: 0..1 → 0 dB .. -max_reduction dB (applied via bell EQ)
     pub fn update_filters(&mut self,min_f:f64,max_f:f64,_use_peak:bool,
                           cut_width:f64,cut_depth:f64,max_red:f64){
         let sr=self.sample_rate;
@@ -256,27 +260,19 @@ impl DeEsserDsp{
         let mx=max_f.clamp(mn+10.0,sr*0.49);
         let ctr=(mn*mx).sqrt();
 
-        // Detection filter Q (for sidechain envelope detection only)
         let det_q=(ctr/(mx-mn).max(1.0)).clamp(0.5,6.0);
-
-        // cut_width 0..1: 1.0 = narrowest (Q=6), 0.0 = widest (Q=0.5)
-        // Invert so "wide" knob = wider cut
         let q_cut=(0.5+cut_width.clamp(0.0,1.0)*5.5).clamp(0.5,6.0);
-
-        // cut_depth 0..1: depth of the bell cut
         let depth_db=-(cut_depth.clamp(0.0,1.0)*max_red.abs());
 
         self.hp_c=Self::make_hp(mn,sr);
         self.lp_c=Self::make_lp(mx,sr);
         self.pk_c=BiquadCoeffs::bandpass_peak(ctr,det_q,sr);
-        // Split LP uses the geometric center for the crossover
         self.split_lp_c=Self::make_lp(ctr,sr);
 
         self.center_freq=ctr;
         self.cut_q=q_cut;
         self.cut_depth_db=depth_db;
 
-        // Two cascaded bell stages for a steeper, more musical notch
         self.bell_c=[
             BiquadCoeffs::bell(ctr,q_cut,depth_db*0.6,sr),
             BiquadCoeffs::bell(ctr,q_cut*1.4,depth_db*0.4,sr),
@@ -299,7 +295,6 @@ impl DeEsserDsp{
         }
     }
 
-    /// Detection filter — sidechain path only, never touches audio output
     #[inline(always)]
     fn detect_filter(&mut self,x:f64,ch:usize,use_peak:bool)->f64{
         let c=&mut self.channels[ch];
@@ -315,32 +310,24 @@ impl DeEsserDsp{
         }
     }
 
-    /// Phase-transparent split: lo = LP(x), hi = x - lo.
-    /// lo + hi = x exactly at every sample → zero phase error on recombination.
     #[inline(always)]
     fn split_complement(&mut self,x:f64,ch:usize)->(f64,f64){
         let sp=&mut self.channels[ch].split;
         let l1=self.split_lp_c[0].process(&mut sp.lp1,x);
         let l2=self.split_lp_c[1].process(&mut sp.lp2,l1);
         let lo=self.split_lp_c[2].process(&mut sp.lp3,l2);
-        let hi=x-lo;   // complementary — guaranteed lo+hi=x
+        let hi=x-lo;
         (lo,hi)
     }
 
-    /// Apply the bell EQ cut scaled by the smoothed gain reduction amount.
-    /// gain_lin: 0..1 where 0 = full cut, 1 = no cut.
-    /// We interpolate between dry (1.0) and fully-cut bell output.
     #[inline(always)]
     fn apply_bell_cut(&mut self,x:f64,gain_lin:f64,ch:usize)->f64{
         let cut_amount=1.0-gain_lin.clamp(0.0,1.0);
-        if cut_amount < f64::EPSILON { return x; }
-        
-        let c = &mut self.channels[ch];
-        let b1 = self.bell_c[0].process(&mut c.bell1, x);
-        let b2 = self.bell_c[1].process(&mut c.bell2, b1);
-        
-        // Blend dry (x) and wet (b2) based on cut_amount
-        (x * gain_lin) + (b2 * cut_amount)
+        if cut_amount<f64::EPSILON{return x;}
+        let c=&mut self.channels[ch];
+        let b1=self.bell_c[0].process(&mut c.bell1,x);
+        let b2=self.bell_c[1].process(&mut c.bell2,b1);
+        x*gain_lin + b2*cut_amount
     }
 
     #[inline(always)]
@@ -357,7 +344,7 @@ impl DeEsserDsp{
     pub fn process_sample(
         &mut self,
         left_in:f64,right_in:f64,
-        ext_l:Option,ext_r:Option,
+        ext_l:Option<f64>,ext_r:Option<f64>,
         thr:f64,max_red:f64,
         relative:bool,use_peak:bool,use_wide:bool,
         stereo_link:f64,mid_side:bool,
@@ -372,23 +359,19 @@ impl DeEsserDsp{
         let sc_l=ext_l.unwrap_or(l);
         let sc_r=ext_r.unwrap_or(r);
 
-        // Detection (sidechain path — does NOT affect audio)
         let det_l=self.detect_filter(sc_l,0,use_peak);
         let det_r=self.detect_filter(sc_r,1,use_peak);
 
-        // Lookahead delay on audio path
         let(al,ar)=if lookahead_en{
             (self.channels[0].lookahead_audio.process(l),
              self.channels[1].lookahead_audio.process(r))
         }else{(l,r)};
 
-        // Envelope followers
         let el=self.channels[0].detect_env.process(det_l);
         let er=self.channels[1].detect_env.process(det_r);
         let fl=self.channels[0].full_env.process(l.abs());
         let fr=self.channels[1].full_env.process(r.abs());
 
-        // Stereo link
         let lnk=stereo_link.clamp(0.0,1.0);
         let ae=(el+er)*0.5; let af=(fl+fr)*0.5;
         let ell=el*(1.0-lnk)+ae*lnk; let erl=er*(1.0-lnk)+ae*lnk;
@@ -400,21 +383,15 @@ impl DeEsserDsp{
         let avg_gr_db=lin_to_db((gl+gr)*0.5);
 
         let(ol,or_)=if trigger_hear{
-            // Hear the detection signal
             (det_l,det_r)
         }else if filter_solo{
-            // Hear just the detection band
             (det_l*gl,det_r*gr)
         }else if use_wide{
-            // Wide mode: bell EQ cut applied directly — fully phase-coherent
             (self.apply_bell_cut(al,gl,0),
              self.apply_bell_cut(ar,gr,1))
         }else{
-            // Split-band mode: phase-transparent complementary split
-            // lo + hi = x exactly, so recombination has zero phase error
             let(lo_l,hi_l)=self.split_complement(al,0);
             let(lo_r,hi_r)=self.split_complement(ar,1);
-            // Apply gain reduction only to the high band (the sibilant region)
             (lo_l+hi_l*gl, lo_r+hi_r*gr)
         };
 
@@ -432,13 +409,12 @@ impl DeEsserDsp{
         (fl_,fr_,(ddl+ddr)*0.5,avg_gr_db)
     }
 
-    // process_block is provided for convenience but uses sample-by-sample processing internally
     pub fn process_block(
         &mut self,left:&[f64],right:&[f64],
         thr:f64,max_red:f64,relative:bool,use_peak:bool,use_wide:bool,
         stereo_link:f64,mid_side:bool,lookahead_en:bool,
         trigger_hear:bool,filter_solo:bool,auto_makeup:bool,
-    )->(Vec,Vec,Vec,Vec){
+    )->(Vec<f64>,Vec<f64>,Vec<f64>,Vec<f64>){
         let n=left.len();
         let mut ol=vec![0.0;n];let mut or_=vec![0.0;n];
         let mut det=vec![0.0;n];let mut red=vec![0.0;n];
