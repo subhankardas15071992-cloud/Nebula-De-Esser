@@ -30,7 +30,8 @@ pub struct SpectrumAnalyzer {
     hop_counter: usize,
     window: Vec<f64>,
     fft_scratch: Vec<rustfft::num_complex::Complex<f64>>,
-    fft_plan: Arc<dyn rustfft::Fft>,
+    // FIX: Added generic <f64> to Fft trait
+    fft_plan: Arc<dyn Fft<f64>>,
     mags_buffer: [f32; NUM_BINS],
     pub shared: Arc<Mutex<SpectrumData>>,
     pub dirty: Arc<AtomicBool>,
