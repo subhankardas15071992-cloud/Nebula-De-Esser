@@ -15,6 +15,7 @@ egui = "0.29"
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
+ringbuf = "0.4.4"
 
 [dev-dependencies]
 rand = "0.8"
@@ -30,6 +31,3 @@ debug-assertions = false
 [profile.release.build-override]
 opt-level = 3
 codegen-units = 1
-
-[dependencies]
-ringbuf = "0.4.4"
