@@ -432,8 +432,8 @@ impl Plugin for NebulaDeEsser {
 
                     out_l[s] = ol; out_r[s] = or_;
                     self.analyzer.push((ol + or_) * 0.5);
-                    if det_db as f32 > peak_det { peak_det = det_db as f32; }
-                    if red_db as f32 < peak_red { peak_red = red_db as f32; }
+                    if (det_db as f32) > peak_det { peak_det = det_db as f32; }
+                    if (red_db as f32) < peak_red { peak_red = red_db as f32; }
                 }
 
                 // Update meters from within the block
