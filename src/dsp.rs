@@ -1,8 +1,7 @@
-// Nebula De Esser v2.2.0 — DSP Engine (FIXED for Real-Time Safety)
+// Nebula De Esser v2.2.0 — DSP Engine (CORRECTED)
 // Phase fix: complementary LP/HP split (hi = x - lp(x)) eliminates phase artifacts.
 // New: cut_width (Q multiplier) and cut_depth (gain depth 0..1) parameters.
 // FIX: Replaced Vec in LookaheadDelay with fixed array to prevent allocation crashes.
-//      The delay TIME remains fully dynamic and adjustable via set_delay().
 
 #![allow(dead_code,unused_variables,clippy::too_many_arguments,clippy::needless_pass_by_ref_mut,clippy::cast_precision_loss,clippy::cast_possible_truncation)]
 use std::f64::consts::PI;
@@ -124,8 +123,21 @@ impl LookaheadDelay{
 #[inline(always)]
 pub fn compute_gain_reduction(det:f64,thr:f64,mx:f64,knee:f64)->f64{
     let o=det-thr;
-    if o&lt;=-knee*0.5{0.0}
-    else if oSelf{
+    if o<-knee*0.5{
+        0.0
+    } else if o>knee*0.5{
+        let t=(o-knee*0.5)/mx; 
+        t.min(1.0)
+    } else {
+        let t=(o+knee*0.5)/knee; 
+        t*t*0.5
+    }
+}
+
+#[derive(Clone)]
+pub struct GainSmoother{stage:[f64;4],coeff:f64}
+impl GainSmoother{
+    pub fn new(a:f64,r:f64,sr:f64)->Self{
         let mk=|ms:f64|if msf64{
         for s in &mut self.stage{
             let c=if tSelf{Self{coeff:(-1.0/(200.0*0.001*sr)).exp(),val:0.0}}
@@ -320,10 +332,19 @@ impl DeEsserDsp{
     /// We interpolate between dry (1.0) and fully-cut bell output.
     #[inline(always)]
     fn apply_bell_cut(&mut self,x:f64,gain_lin:f64,ch:usize)->f64{
-        // gain_lin=1 → no cut; gain_lin=0 → full bell cut
-        // Blend: out = gain_lin*x + (1-gain_lin)*bell(x)
         let cut_amount=1.0-gain_lin.clamp(0.0,1.0);
-        if cut_amount(f64,f64){
+        if cut_amount < f64::EPSILON { return x; }
+        
+        let c = &mut self.channels[ch];
+        let b1 = self.bell_c[0].process(&mut c.bell1, x);
+        let b2 = self.bell_c[1].process(&mut c.bell2, b1);
+        
+        // Blend dry (x) and wet (b2) based on cut_amount
+        (x * gain_lin) + (b2 * cut_amount)
+    }
+
+    #[inline(always)]
+    fn channel_gain(&mut self,ed:f64,ef:f64,thr:f64,mx:f64,rel:bool,knee:f64,ch:usize)->(f64,f64){
         let dd=lin_to_db(ed);let fd=lin_to_db(ef);
         let(di,ti)=if rel{(dd-fd,thr-20.0)}else{(dd,thr)};
         let gr=compute_gain_reduction(di,ti,mx,knee);
