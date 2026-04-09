@@ -1,91 +1,99 @@
 use ringbuf::{HeapRb, Rb, Producer, Consumer};
-use nih_plug::prelude::Buffer;
+use nih_plug::prelude::*;
+use std::sync::Arc;
 
 pub struct StableBlockAdapter {
-    input_producer: Producer<f64, std::sync::Arc<HeapRb<f64>>>,
-    input_consumer: Consumer<f64, std::sync::Arc<HeapRb<f64>>>,
-    output_producer: Producer<f64, std::sync::Arc<HeapRb<f64>>>,
-    output_consumer: Consumer<f64, std::sync::Arc<HeapRb<f64>>>,
+    // Main Audio Rings
+    in_prod: Producer<f64, Arc<HeapRb<f64>>>,
+    in_cons: Consumer<f64, Arc<HeapRb<f64>>>,
+    out_prod: Producer<f64, Arc<HeapRb<f64>>>,
+    out_cons: Consumer<f64, Arc<HeapRb<f64>>>,
+
+    // Sidechain Rings
+    sc_prod: Producer<f64, Arc<HeapRb<f64>>>,
+    sc_cons: Consumer<f64, Arc<HeapRb<f64>>>,
     
     internal_block_size: usize,
     num_channels: usize,
-    temp_interleaved: Vec<f64>,
+    temp_in: Vec<f64>,
+    temp_sc: Vec<f64>,
+    temp_out: Vec<f64>,
 }
 
 impl StableBlockAdapter {
     pub fn new(block_size: usize, num_channels: usize) -> Self {
-        // Capacity: block_size * channels * safety_multiplier
-        // 8x is plenty for jittery DAWs
-        let capacity = block_size * num_channels * 8;
+        let capacity = block_size * num_channels * 16; // Larger margin for stability
         
-        let rb_in = HeapRb::<f64>::new(capacity);
-        let (prod_in, cons_in) = rb_in.split();
-        
-        let rb_out = HeapRb::<f64>::new(capacity);
-        let (mut prod_out, cons_out) = rb_out.split();
+        let (in_prod, in_cons) = HeapRb::<f64>::new(capacity).split();
+        let (mut out_prod, out_cons) = HeapRb::<f64>::new(capacity).split();
+        let (sc_prod, sc_cons) = HeapRb::<f64>::new(capacity).split();
 
-        // IMPORTANT: Pre-fill the output buffer with silence.
-        // This creates the actual "latency" that allows the ring buffer to work.
-        // Without this, the DAW will try to pop samples that haven't been processed yet.
+        // Prime the output buffer with silence to establish latency
         for _ in 0..(block_size * num_channels) {
-            let _ = prod_out.push(0.0);
+            let _ = out_prod.push(0.0);
         }
 
         Self {
-            input_producer: prod_in,
-            input_consumer: cons_in,
-            output_producer: prod_out,
-            output_consumer: cons_out,
+            in_prod, in_cons,
+            out_prod, out_cons,
+            sc_prod, sc_cons,
             internal_block_size: block_size,
             num_channels,
-            temp_interleaved: vec![0.0; block_size * num_channels],
+            temp_in: vec![0.0; block_size * num_channels],
+            temp_sc: vec![0.0; block_size * num_channels],
+            temp_out: vec![0.0; block_size * num_channels],
         }
     }
 
-    /// The "Shield" logic: Decouples DAW block size from DSP block size.
-    pub fn process_shielded<F>(&mut self, buffer: &mut Buffer, mut dsp_callback: F)
-    where
-        F: FnMut(&mut [f64]),
+    pub fn process_shielded<F>(
+        &mut self, 
+        buffer: &mut Buffer, 
+        aux: &mut AuxiliaryBuffers, 
+        mut dsp_callback: F
+    ) where
+        F: FnMut(&[f64], &[f64], &mut [f64]),
     {
         let num_samples = buffer.samples();
-        let num_channels = buffer.channels();
+        let num_channels = self.num_channels;
 
-        // 1. Capture DAW input (Interleave and Push to Input Ring)
-        for i in 0..num_samples {
-            for channel in 0..num_channels {
-                let sample = buffer.as_slice()[channel][i];
-                let _ = self.input_producer.push(sample as f64);
-            }
-        }
-
-        // 2. Process in STABLE blocks
-        let samples_per_internal_block = self.internal_block_size * self.num_channels;
+        // 1. Push DAW main input and Sidechain input into ring buffers
+        let main_slice = buffer.as_slice();
+        let have_sc = !aux.inputs.is_empty();
         
-        // As long as we have enough samples for a full internal block, process them.
-        while self.input_consumer.len() >= samples_per_internal_block {
-            // Pop samples into our temporary workspace
-            for i in 0..samples_per_internal_block {
-                self.temp_interleaved[i] = self.input_consumer.pop().unwrap_or(0.0);
-            }
+        for i in 0..num_samples {
+            for ch in 0..num_channels {
+                let s = main_slice[ch][i] as f64;
+                let _ = self.in_prod.push(s);
 
-            // Execute the 64-bit DSP
-            dsp_callback(&mut self.temp_interleaved);
-
-            // Push processed samples into the output ring
-            for i in 0..samples_per_internal_block {
-                let _ = self.output_producer.push(self.temp_interleaved[i]);
+                if have_sc {
+                    let sc_s = aux.inputs[0].as_slice()[ch][i] as f64;
+                    let _ = self.sc_prod.push(sc_s);
+                } else {
+                    let _ = self.sc_prod.push(0.0);
+                }
             }
         }
 
-        // 3. Output back to DAW (De-interleave from Output Ring)
+        // 2. Process all available full blocks
+        let samples_per_block = self.internal_block_size * num_channels;
+        while self.in_cons.len() >= samples_per_block {
+            for i in 0..samples_per_block {
+                self.temp_in[i] = self.in_cons.pop().unwrap_or(0.0);
+                self.temp_sc[i] = self.sc_cons.pop().unwrap_or(0.0);
+            }
+
+            // Execute the DSP closure
+            dsp_callback(&self.temp_in, &self.temp_sc, &mut self.temp_out);
+
+            for i in 0..samples_per_block {
+                let _ = self.out_prod.push(self.temp_out[i]);
+            }
+        }
+
+        // 3. Pop from output ring back to DAW
         for i in 0..num_samples {
-            for channel in 0..num_channels {
-                if let Some(out_sample) = self.output_consumer.pop() {
-                    buffer.as_slice()[channel][i] = out_sample as f32;
-                } else {
-                    // Fallback to silence if the buffer is exhausted (should not happen if latency is set correctly)
-                    buffer.as_slice()[channel][i] = 0.0;
-                }
+            for ch in 0..num_channels {
+                buffer.as_slice()[ch][i] = self.out_cons.pop().unwrap_or(0.0) as f32;
             }
         }
     }
