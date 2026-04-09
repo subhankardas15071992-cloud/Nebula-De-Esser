@@ -26,6 +26,8 @@ codegen-units = 1
 strip = "symbols"
 overflow-checks = false
 debug-assertions = false
+panic = "abort"
+
 
 [profile.release.build-override]
 opt-level = 3
