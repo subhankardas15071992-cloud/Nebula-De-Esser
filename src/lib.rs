@@ -24,10 +24,12 @@ use parking_lot::Mutex;
 mod dsp;
 mod analyzer;
 mod gui;
+mod stable_adapter;
 
 use dsp::DeEsserDsp;
 use analyzer::SpectrumAnalyzer;
 use gui::{NebulaGui, GuiParams, draw};
+use stable_adapter::StableBlockAdapter;
 
 fn f32_to_u32(v: f32) -> u32 { v.to_bits() }
 fn u32_to_f32(v: u32) -> f32 { f32::from_bits(v) }
@@ -267,6 +269,7 @@ struct NebulaDeEsser {
     last_os_factor:  u32,
     prev_in_l:       f64,
     prev_in_r:       f64,
+    adapter:         Option<StableBlockAdapter>,
 }
 
 impl Default for NebulaDeEsser {
@@ -484,6 +487,8 @@ impl Plugin for NebulaDeEsser {
         _layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
         _ctx: &mut impl InitContext<Self>,
+        self.adapter = Some(StableBlockAdapter::new(512, 2));
+        context.set_latency_samples(512);
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp     = DeEsserDsp::new(self.sample_rate);
@@ -523,6 +528,13 @@ impl Plugin for NebulaDeEsser {
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
                     continue;
                 }
+                if let Some(adapter) = &mut self.adapter {
+        adapter.process_shielded(buffer, |stable_block| {
+            // stable_block is ALWAYS exactly 1024 floats (512 * 2 channels)
+            self.engine.process_64bit(stable_block, &self.params);
+        });
+    }
+    ProcessStatus::Normal
                 
                 let idx = (cc as usize).min(127);
                 self.midi_learn.cc_values[idx]
@@ -785,27 +797,3 @@ impl ClapPlugin for NebulaDeEsser {
 }
 
 nih_export_clap!(NebulaDeEsser);
-
-// In src/lib.rs
-mod stable_adapter;
-use stable_adapter::StableBlockAdapter;
-
-// ... inside NebulaDeEsser struct
-adapter: Option<StableBlockAdapter>,
-
-// ... inside initialize()
-// 512 is a safe "pseudo-block" that most DAWs handle well
-self.adapter = Some(StableBlockAdapter::new(512, 2));
-// Report latency so the DAW can align audio
-context.set_latency_samples(512);
-
-// ... inside process()
-fn process(&mut self, buffer: &mut Buffer, ...) -> ProcessStatus {
-    if let Some(adapter) = &mut self.adapter {
-        adapter.process_shielded(buffer, |stable_block| {
-            // stable_block is ALWAYS exactly 1024 floats (512 * 2 channels)
-            self.engine.process_64bit(stable_block, &self.params);
-        });
-    }
-    ProcessStatus::Normal
-}
