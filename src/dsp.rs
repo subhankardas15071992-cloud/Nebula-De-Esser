@@ -1,22 +1,20 @@
-// Nebula DeEsser v2.2.0 — DSP Engine
+// Nebula De Esser v2.2.0 — DSP Engine (FIXED for Real-Time Safety)
 // Phase fix: complementary LP/HP split (hi = x - lp(x)) eliminates phase artifacts.
 // New: cut_width (Q multiplier) and cut_depth (gain depth 0..1) parameters.
+// FIX: Replaced Vec in LookaheadDelay with fixed array to prevent allocation crashes.
+//      The delay TIME remains fully dynamic and adjustable via set_delay().
+
 #![allow(dead_code,unused_variables,clippy::too_many_arguments,clippy::needless_pass_by_ref_mut,clippy::cast_precision_loss,clippy::cast_possible_truncation)]
 use std::f64::consts::PI;
 
+// Max delay time in samples.
+// At 192kHz (max common SR), 20ms = 3840 samples.
+// 8192 provides a safe upper bound for any standard sample rate and max delay.
+const MAX_DELAY_SAMPLES: usize = 8192;
+
 #[inline(always)] pub fn ftz(x:f64)->f64{if(x.to_bits()&0x7FF0_0000_0000_0000)==0{0.0}else{x}}
 #[inline(always)] pub fn db_to_lin(db:f64)->f64{10.0_f64.powf(db/20.0)}
-#[inline(always)] pub fn lin_to_db(x:f64)->f64{if x<=1e-10{-200.0}else{20.0*x.log10()}}
-
-#[derive(Clone,Copy,Debug)]
-pub struct BiquadCoeffs{pub b0:f64,pub b1:f64,pub b2:f64,pub a1:f64,pub a2:f64}
-
-#[derive(Clone,Copy,Debug,Default)]
-pub struct BiquadState{pub x1:f64,pub x2:f64,pub y1:f64,pub y2:f64}
-
-impl BiquadCoeffs{
-    #[inline(always)]
-    pub fn highpass(f:f64,q:f64,sr:f64)->Self{
+#[inline(always)] pub fn lin_to_db(x:f64)->f64{if xSelf{
         let w=2.0*PI*f/sr;let c=w.cos();let s=w.sin();let a=s/(2.0*q);
         let b0=(1.0+c)/2.0;let b1=-(1.0+c);let b2=b0;let a0=1.0+a;
         Self{b0:b0/a0,b1:b1/a0,b2:b2/a0,a1:(-2.0*c)/a0,a2:(1.0-a)/a0}
@@ -68,11 +66,7 @@ pub struct SplitState{
 pub struct EnvelopeFollower{pub attack_coeff:f64,pub release_coeff:f64,pub envelope:f64}
 impl EnvelopeFollower{
     pub fn new(a:f64,r:f64,sr:f64)->Self{
-        let mk=|ms:f64|if ms<=0.0{0.0}else{(-1.0/(ms*0.001*sr)).exp()};
-        Self{attack_coeff:mk(a),release_coeff:mk(r),envelope:0.0}
-    }
-    #[inline(always)]
-    pub fn process(&mut self,x:f64)->f64{
+        let mk=|ms:f64|if msf64{
         let a=x.abs();
         self.envelope=if a>self.envelope{
             self.attack_coeff*(self.envelope-a)+a
@@ -84,57 +78,57 @@ impl EnvelopeFollower{
     pub fn reset(&mut self){self.envelope=0.0;}
 }
 
-pub struct LookaheadDelay{buffer:Vec<f64>,write_pos:usize,delay_samples:usize}
+// FIX: Replaced Vec with fixed-size array.
+// This removes the heap allocation that was crashing Cakewalk/N-Track during Oversampling changes.
+// The delay TIME is still adjustable via `delay_samples`.
+pub struct LookaheadDelay{
+    buffer: [f64; MAX_DELAY_SAMPLES],
+    write_pos: usize,
+    delay_samples: usize,
+}
 impl LookaheadDelay{
-    pub fn new(max_ms:f64,sr:f64)->Self{
-        let n=(max_ms*0.001*sr).ceil() as usize+2;
-        Self{buffer:vec![0.0;n.max(2)],write_pos:0,delay_samples:0}
+    pub fn new(_max_ms:f64,_sr:f64)->Self{
+        Self{
+            buffer: [0.0; MAX_DELAY_SAMPLES],
+            write_pos: 0,
+            delay_samples: 0,
+        }
     }
+    // This function allows you to adjust the delay time dynamically
     pub fn set_delay(&mut self,ms:f64,sr:f64){
-        self.delay_samples=((ms*0.001*sr).round() as usize).min(self.buffer.len().saturating_sub(1));
+        let target_samples = (ms * 0.001 * sr).round() as usize;
+        // Clamp to buffer size to prevent panics
+        self.delay_samples = target_samples.min(MAX_DELAY_SAMPLES - 1);
     }
     #[inline(always)]
     pub fn process(&mut self,x:f64)->f64{
-        self.buffer[self.write_pos]=x;
-        let r=if self.write_pos>=self.delay_samples{
-            self.write_pos-self.delay_samples
-        }else{
-            self.buffer.len()-self.delay_samples+self.write_pos
+        self.buffer[self.write_pos] = x;
+        
+        // Calculate read position with wrapping
+        let read_pos = if self.write_pos >= self.delay_samples {
+            self.write_pos - self.delay_samples
+        } else {
+            MAX_DELAY_SAMPLES - self.delay_samples + self.write_pos
         };
-        self.write_pos=(self.write_pos+1)%self.buffer.len();
-        self.buffer[r]
+        
+        self.write_pos = (self.write_pos + 1) % MAX_DELAY_SAMPLES;
+        self.buffer[read_pos]
     }
-    pub fn reset(&mut self){self.buffer.fill(0.0);self.write_pos=0;}
+    pub fn reset(&mut self){
+        // Efficiently zero the array
+        self.buffer.fill(0.0);
+        self.write_pos = 0;
+    }
 }
 
 #[inline(always)]
 pub fn compute_gain_reduction(det:f64,thr:f64,mx:f64,knee:f64)->f64{
     let o=det-thr;
-    if o<=-knee*0.5{0.0}
-    else if o<=knee*0.5{let k=(o+knee*0.5)/knee;-k*k*mx.abs()}
-    else{-mx.abs()}
-}
-
-pub struct GainSmoother{pub att_coeff:f64,pub rel_coeff:f64,stage:[f64;3],pub current:f64}
-impl GainSmoother{
-    pub fn new(a:f64,r:f64,sr:f64)->Self{
-        let mk=|ms:f64|if ms<=0.0{0.0}else{(-1.0/(ms*0.001*sr)).exp()};
-        Self{att_coeff:mk(a),rel_coeff:mk(r),stage:[1.0;3],current:1.0}
-    }
-    #[inline(always)]
-    pub fn process(&mut self,t:f64)->f64{
+    if o&lt;=-knee*0.5{0.0}
+    else if oSelf{
+        let mk=|ms:f64|if msf64{
         for s in &mut self.stage{
-            let c=if t<*s{self.att_coeff}else{self.rel_coeff};
-            *s=c*(*s-t)+t;*s=ftz(*s);
-        }
-        self.current=self.stage[2].clamp(0.0,1.0);self.current
-    }
-    pub fn reset(&mut self){self.stage=[1.0;3];self.current=1.0;}
-}
-
-pub struct MakeupSmoother{coeff:f64,pub val:f64}
-impl MakeupSmoother{
-    pub fn new(sr:f64)->Self{Self{coeff:(-1.0/(200.0*0.001*sr)).exp(),val:0.0}}
+            let c=if tSelf{Self{coeff:(-1.0/(200.0*0.001*sr)).exp(),val:0.0}}
     #[inline(always)]
     pub fn process(&mut self,gr_db:f64)->f64{
         let t=(-gr_db).max(0.0)*0.5;
@@ -329,14 +323,7 @@ impl DeEsserDsp{
         // gain_lin=1 → no cut; gain_lin=0 → full bell cut
         // Blend: out = gain_lin*x + (1-gain_lin)*bell(x)
         let cut_amount=1.0-gain_lin.clamp(0.0,1.0);
-        if cut_amount<1e-6{return x;}
-        let b1=self.bell_c[0].process(&mut self.channels[ch].bell1,x);
-        let b2=self.bell_c[1].process(&mut self.channels[ch].bell2,b1);
-        x*(1.0-cut_amount)+b2*cut_amount
-    }
-
-    #[inline(always)]
-    fn channel_gain(&mut self,ed:f64,ef:f64,thr:f64,mx:f64,rel:bool,knee:f64,ch:usize)->(f64,f64){
+        if cut_amount(f64,f64){
         let dd=lin_to_db(ed);let fd=lin_to_db(ef);
         let(di,ti)=if rel{(dd-fd,thr-20.0)}else{(dd,thr)};
         let gr=compute_gain_reduction(di,ti,mx,knee);
@@ -349,7 +336,7 @@ impl DeEsserDsp{
     pub fn process_sample(
         &mut self,
         left_in:f64,right_in:f64,
-        ext_l:Option<f64>,ext_r:Option<f64>,
+        ext_l:Option,ext_r:Option,
         thr:f64,max_red:f64,
         relative:bool,use_peak:bool,use_wide:bool,
         stereo_link:f64,mid_side:bool,
@@ -424,12 +411,13 @@ impl DeEsserDsp{
         (fl_,fr_,(ddl+ddr)*0.5,avg_gr_db)
     }
 
+    // process_block is provided for convenience but uses sample-by-sample processing internally
     pub fn process_block(
         &mut self,left:&[f64],right:&[f64],
         thr:f64,max_red:f64,relative:bool,use_peak:bool,use_wide:bool,
         stereo_link:f64,mid_side:bool,lookahead_en:bool,
         trigger_hear:bool,filter_solo:bool,auto_makeup:bool,
-    )->(Vec<f64>,Vec<f64>,Vec<f64>,Vec<f64>){
+    )->(Vec,Vec,Vec,Vec){
         let n=left.len();
         let mut ol=vec![0.0;n];let mut or_=vec![0.0;n];
         let mut det=vec![0.0;n];let mut red=vec![0.0;n];
