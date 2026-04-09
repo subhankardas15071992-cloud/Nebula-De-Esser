@@ -34,17 +34,19 @@ pub const MIDI_PARAM_NAMES: &[&str] = &["Threshold", "Max Reduction", "Stereo Li
 
 pub struct MidiLearnShared {
     pub learning_target: AtomicI32,
-    pub mappings: Mutex&lt;HashMap>,
-    pub saved_mappings: Mutex&lt;HashMap>,
+    pub mappings: Mutex<HashMap<u8, u8>>,
+    pub saved_mappings: Mutex<HashMap<u8, u8>>,
     pub midi_enabled: AtomicBool,
-    pub cc_values: Vec,
-    pub cc_dirty: Vec,
+    pub cc_values: Vec<AtomicU32>,
+    pub cc_dirty: Vec<AtomicBool>,
 }
 impl MidiLearnShared {
     fn new() -> Self {
         Self {
-            learning_target: AtomicI32::new(-1), mappings: Mutex::new(HashMap::new()),
-            saved_mappings: Mutex::new(HashMap::new()), midi_enabled: AtomicBool::new(true),
+            learning_target: AtomicI32::new(-1), 
+            mappings: Mutex::new(HashMap::new()),
+            saved_mappings: Mutex::new(HashMap::new()), 
+            midi_enabled: AtomicBool::new(true),
             cc_values: (0..128).map(|_| AtomicU32::new(0)).collect(),
             cc_dirty: (0..128).map(|_| AtomicBool::new(false)).collect(),
         }
@@ -54,7 +56,7 @@ impl MidiLearnShared {
 #[derive(Params)]
 struct NebulaParams {
     #[persist = "editor-state"]
-    editor_state: Arc,
+    editor_state: Arc<EguiState>,
     #[id = "threshold"] pub threshold: FloatParam,
     #[id = "max_reduction"] pub max_reduction: FloatParam,
     #[id = "min_freq"] pub min_freq: FloatParam,
@@ -117,10 +119,10 @@ struct Meters { det_bits: AtomicU32, det_max_bits: AtomicU32, red_bits: AtomicU3
 impl Default for Meters { fn default() -> Self { Self { det_bits: AtomicU32::new(f32_to_u32(-60.0)), det_max_bits: AtomicU32::new(f32_to_u32(-60.0)), red_bits: AtomicU32::new(f32_to_u32(0.0)), red_max_bits: AtomicU32::new(f32_to_u32(0.0)), reset_det: AtomicI32::new(0), reset_red: AtomicI32::new(0) } } }
 
 struct NebulaDeEsser {
-    params: Arc, sample_rate: f64, dsp: DeEsserDsp, os_dsp: DeEsserDsp, analyzer: SpectrumAnalyzer,
-    meters: Arc, midi_learn: Arc,
+    params: Arc<NebulaParams>, sample_rate: f64, dsp: DeEsserDsp, os_dsp: DeEsserDsp, analyzer: SpectrumAnalyzer,
+    meters: Arc<Meters>, midi_learn: Arc<MidiLearnShared>,
     last_min_freq: f64, last_max_freq: f64, last_use_peak: bool, last_lookahead_ms: f64, last_lookahead_en: bool, last_vocal: bool, last_os_factor: u32, prev_in_l: f64, prev_in_r: f64,
-    out_l_buffer: Vec, out_r_buffer: Vec,
+    out_l_buffer: Vec<f64>, out_r_buffer: Vec<f64>,
 }
 
 impl Default for NebulaDeEsser {
@@ -150,9 +152,9 @@ impl Plugin for NebulaDeEsser {
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     type SysExMessage = ();
     type BackgroundTask = ();
-    fn params(&self) -> Arc { self.params.clone() }
+    fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option&lt;Box> {
+    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -307,7 +309,6 @@ impl Plugin for NebulaDeEsser {
         let in_l_slice: &[f32] = if num_channels > 0 { &channels[0] } else { &[] };
         let in_r_slice: &[f32] = if num_channels > 1 { &channels[1] } else { in_l_slice };
 
-        // FIX: Use Index access on Buffer (&Buffer implements Index) to get channel slices immutably
         let sc_l_slice: &[f32] = if have_sc && aux.inputs[0].len() > 0 { &aux.inputs[0][0] } else { &[] };
         let sc_r_slice: &[f32] = if have_sc && aux.inputs[0].len() > 1 { &aux.inputs[0][1] } else { sc_l_slice };
 
@@ -378,9 +379,9 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
-    const CLAP_DESCRIPTION: Option&lt;&'static str&gt; = Some("Nebula DeEsser");
-    const CLAP_MANUAL_URL: Option&lt;&'static str&gt; = Some("https://nebula.audio/manual");
-    const CLAP_SUPPORT_URL: Option&lt;&'static str&gt; = Some("https://nebula.audio/support");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Nebula DeEsser");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio/manual");
+    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://nebula.audio/support");
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
 }
 
