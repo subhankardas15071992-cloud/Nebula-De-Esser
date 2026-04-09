@@ -535,9 +535,10 @@ impl Plugin for NebulaDeEsser {
         let in_l_slice: &[f32] = if num_channels > 0 { &channels[0] } else { &[] };
         let in_r_slice: &[f32] = if num_channels > 1 { &channels[1] } else { in_l_slice };
 
-        // Corrected lines for sidechain input
-        let sc_l_slice: &[f32] = if have_sc && aux.inputs[0].channels() > 0 { aux.inputs[0].get_channel_data(0) } else { &[] };
-        let sc_r_slice: &[f32] = if have_sc && aux.inputs[0].channels() > 1 { aux.inputs[0].get_channel_data(1) } else { sc_l_slice };
+        // Correctly access sidechain channels using as_slice()
+        let sc_channels = if have_sc { aux.inputs[0].as_slice() } else { &[] };
+        let sc_l_slice: &[f32] = if sc_channels.len() > 0 { sc_channels[0] } else { &[] };
+        let sc_r_slice: &[f32] = if sc_channels.len() > 1 { sc_channels[1] } else { sc_l_slice };
 
 
         let out_l_slice = &mut self.out_l_buffer[..n];
