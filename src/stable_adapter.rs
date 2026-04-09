@@ -1,4 +1,4 @@
-use ringbuf::{HeapRb, Rb, Producer, Consumer};
+use ringbuf::{HeapRb, traits::{Split, Producer, Consumer}};
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
