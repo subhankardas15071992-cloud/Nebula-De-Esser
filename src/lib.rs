@@ -152,7 +152,7 @@ impl Plugin for NebulaDeEsser {
     type BackgroundTask = ();
     fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<NebulaDeEsser>) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -163,7 +163,14 @@ impl Plugin for NebulaDeEsser {
                 for (&cc, &pidx) in mappings.iter() {
                     if midi_learn.cc_dirty[(cc as usize).min(127)].swap(false, Ordering::AcqRel) {
                         let v = u32_to_f32(midi_learn.cc_values[(cc as usize).min(127)].load(Ordering::Relaxed));
-                        macro_rules! scc { ($p:expr, $val:expr) => { setter.begin_set_parameter(&$p); setter.set_parameter(&$p, $val); setter.end_set_parameter(&$p); }; }
+                        // FIX: Added double braces to macro to make it a valid expression
+                        macro_rules! scc {
+                            ($p:expr, $val:expr) => {{
+                                setter.begin_set_parameter(&$p);
+                                setter.set_parameter(&$p, $val);
+                                setter.end_set_parameter(&$p);
+                            }}
+                        }
                         match pidx {
                             MIDI_THRESHOLD => scc!(params.threshold, -60.0 + v * 60.0), MIDI_MAX_RED => scc!(params.max_reduction, v * 40.0),
                             MIDI_STEREO_LINK => scc!(params.stereo_link, v), MIDI_INPUT_LEVEL => scc!(params.input_level, -60.0 + v * 72.0),
@@ -202,7 +209,7 @@ impl Plugin for NebulaDeEsser {
         })
     }
 
-    fn initialize(&mut self, _layout: &AudioIOLayout, buffer_config: &BufferConfig, _ctx: &mut impl InitContext<Self>) -> bool {
+    fn initialize(&mut self, _layout: &AudioIOLayout, buffer_config: &BufferConfig, _ctx: &mut impl InitContext<NebulaDeEsser>) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
         self.os_dsp = DeEsserDsp::new(self.sample_rate);
@@ -216,7 +223,7 @@ impl Plugin for NebulaDeEsser {
     }
     fn reset(&mut self) { self.dsp.reset(); self.os_dsp.reset(); self.analyzer.reset(); self.prev_in_l = 0.0; self.prev_in_r = 0.0; }
 
-    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext<Self>) -> ProcessStatus {
+    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, ctx: &mut impl ProcessContext<NebulaDeEsser>) -> ProcessStatus {
         while let Some(event) = ctx.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) { continue; }
@@ -295,17 +302,27 @@ impl Plugin for NebulaDeEsser {
         let (in_gl, in_gr) = pan_gains(input_pan, in_gain);
         let (out_gl, out_gr) = pan_gains(output_pan, out_gain);
 
-        // FIX: Safe buffer access logic
         let channels = buffer.as_slice();
         let num_channels = channels.len();
         
-        // FIX: Pre-verified safe access to inputs
         let in_l_slice: &[f32] = if num_channels > 0 { &channels[0] } else { &[] };
         let in_r_slice: &[f32] = if num_channels > 1 { &channels[1] } else { in_l_slice };
 
-        let sc_channels = if have_sc { aux.inputs[0].as_slice() } else { &[] };
-        let sc_l_slice: &[f32] = if sc_channels.is_empty() { &[] } else { &sc_channels[0] };
-        let sc_r_slice: &[f32] = if sc_channels.len() > 1 { &sc_channels[1] } else { sc_l_slice };
+        // FIX: Resolve type mismatch by converting to immutable slices immediately
+        let sc_l_slice: &[f32] = if have_sc {
+            let aux_buf = &aux.inputs[0];
+            let slice = aux_buf.as_slice(); // &mut [&mut [f32]]
+            if !slice.is_empty() { &*slice[0] } else { &[] } // &*[..] converts mut to immut
+        } else {
+            &[]
+        };
+        let sc_r_slice: &[f32] = if have_sc {
+            let aux_buf = &aux.inputs[0];
+            let slice = aux_buf.as_slice();
+            if slice.len() > 1 { &*slice[1] } else { sc_l_slice }
+        } else {
+            &[]
+        };
 
         let out_l_slice = &mut self.out_l_buffer[..n];
         let out_r_slice = &mut self.out_r_buffer[..n];
@@ -374,10 +391,9 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("De-esser plugin");
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo, ClapFeature::Mix];
-    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio");
-    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://nebula.audio/support");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("https://nebula.audio/support");
+    // FIX: Removed invalid ClapFeature::Mix
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
 }
 
 nih_export_clap!(NebulaDeEsser);
