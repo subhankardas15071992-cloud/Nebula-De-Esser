@@ -10,6 +10,7 @@
     clippy::cast_possible_truncation
 )]
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 #[inline(always)]
 pub fn ftz(x: f64) -> f64 {

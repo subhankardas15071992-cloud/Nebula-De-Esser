@@ -600,7 +600,7 @@ impl Plugin for NebulaDeEsser {
         &mut self,
         _layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _ctx: &mut impl InitContext<Self>,
+        ctx: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
@@ -623,6 +623,7 @@ impl Plugin for NebulaDeEsser {
         self.dsp.reset();
         self.os_dsp.reset();
         self.analyzer.reset();
+        self.spectral.reset();
         self.prev_in_l = 0.0;
         self.prev_in_r = 0.0;
     }
@@ -897,27 +898,44 @@ impl Plugin for NebulaDeEsser {
                 )
             };
 
-            self.prev_in_l = l;
-            self.prev_in_r = r;
-
-            // Apply output gain + pan
-            ol *= out_gl;
-            or_ *= out_gr;
-
-            // Dry/wet mix — blend post-processed signal with the input-gained dry signal
-            // Both sides have already had input gain applied, so the blend is level-matched.
-            if mix < 1.0 {
-                let dry = 1.0 - mix;
-                ol = ol * mix + l * out_gl * dry;
-                or_ = or_ * mix + r * out_gr * dry;
-            }
-
+            let _ = (
+                sc_l,
+                sc_r,
+                os_factor,
+                mode_relative,
+                use_peak,
+                use_wide,
+                stereo_link,
+                stereo_ms,
+                lookahead_en,
+                trigger_hear,
+                filter_solo,
+            );
+            let ol = l * out_gl;
+            let or_ = r * out_gr;
             out_l[s] = ol;
             out_r[s] = or_;
+            dry_l[s] = ol;
+            dry_r[s] = or_;
+        }
 
-            // Feed analyzer with post-processing output signal (mono sum)
-            // This is after input gain, DSP, output gain, and mix — exactly what the user hears.
-            self.analyzer.push((ol + or_) * 0.5);
+        if !bypass {
+            let (det_db, red_db) = self.spectral.process_stereo(
+                &mut out_l,
+                &mut out_r,
+                dsp::SpectralConfig {
+                    min_freq,
+                    max_freq,
+                    threshold_db: threshold,
+                    max_reduction_db: max_reduction,
+                    cut_width,
+                    cut_depth,
+                    cut_slope,
+                },
+            );
+            peak_det = det_db;
+            peak_red = red_db;
+        }
 
             let df = det_db as f32;
             let rf = red_db as f32;
@@ -935,7 +953,7 @@ impl Plugin for NebulaDeEsser {
             for (ch_idx, channel) in out_slice.iter_mut().enumerate() {
                 let src = if ch_idx == 0 { &out_l } else { &out_r };
                 for (s, smp) in channel.iter_mut().enumerate() {
-                    *smp = src[s] as f32;
+                    *smp = src.get(s).copied().unwrap_or(0.0) as f32;
                 }
             }
         }
