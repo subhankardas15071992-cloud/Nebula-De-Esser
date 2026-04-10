@@ -40,6 +40,7 @@ The entire GUI has been rebuilt from scratch with a new dark sci-fi aesthetic �
 - **CommandBar toolbar** — flat strip with button-style controls: tinted fill at rest, neon highlight on hover, solid accent fill when active, divider separators between groups
 - **RadioButton groups** — the five mode selectors (Mode, Range, Filter, Sidechain, Vocal) use radio controls with outer ring and filled inner dot
 - **ToggleSwitches** — the four boolean toggles (Filter Solo, Trigger Hear, Lookahead, Mid/Side) use pill-track switches: fills cyan when on, thumb shifts position
+- **Cut Slope knob** — lets the user fine tune the slope of the notch from 0 dB/oct to 100 dB/oct.
 - **Knob colour identity** — main parameters in cyan, cut shape knobs in magenta, I/O knobs in purple
 - **ContentDialog popups** — scrim overlay, elevated card with rounded corners, TextBox with accent focus underline, primary/secondary button row
 - **Flyout dropdowns** — elevated card with drop shadow, accent-filled selected row
