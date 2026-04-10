@@ -9,9 +9,9 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.3.0 is a focused stability and accuracy release — a complete UI redesign, critical audio thread safety fixes, and a fully corrected spectrum analyzer that now shows the post-processed signal rather than the raw input.
+Version 2.4.0 has additional stability fixes, and now features the Cut Slope knob to fine tune the slope of the notch.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/2da2d9ca-6ea6-42fc-b4b3-04f1a6357044" />
+
 
 ---
 
@@ -24,6 +24,15 @@ If you find this open-source software helpful and would like to support its deve
     <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
   </a>
 </p>
+
+---
+
+## **What's New in v2.3.0**
+
+### **Enhanced stability and even more precise control**
+
+- **Stability updates** — further stability tuning to ensure lower CPU consumption.
+- **Cut Slope** — Lets the user fine tune the slope of the notch, continuosly varible from 0 dB/oct to 100 dB/oct for precise tuning.
 
 ---
 
