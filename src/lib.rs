@@ -364,7 +364,6 @@ struct NebulaDeEsser {
     dsp: DeEsserDsp,
     os_dsp: DeEsserDsp,
     analyzer: SpectrumAnalyzer,
-    spectral: dsp::SpectralProcessor,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
     last_min_freq: f64,
@@ -386,7 +385,6 @@ impl Default for NebulaDeEsser {
             dsp: DeEsserDsp::new(44100.0),
             os_dsp: DeEsserDsp::new(44100.0),
             analyzer: SpectrumAnalyzer::new(),
-            spectral: dsp::SpectralProcessor::new(44100.0, 1024, 256),
             meters: Arc::new(Meters::default()),
             midi_learn: Arc::new(MidiLearnShared::new()),
             last_min_freq: -1.0,
@@ -612,8 +610,6 @@ impl Plugin for NebulaDeEsser {
         // Creating a new analyzer here produces a new Arc, permanently
         // disconnecting the GUI (which holds the old Arc) from the audio thread.
         self.analyzer.reset();
-        self.spectral = dsp::SpectralProcessor::new(self.sample_rate, 1024, 256);
-        ctx.set_latency_samples(self.spectral.latency_samples());
         self.last_min_freq = -1.0;
         self.last_max_freq = -1.0;
         self.last_lookahead_ms = -1.0;
@@ -795,8 +791,6 @@ impl Plugin for NebulaDeEsser {
         // ── Sample processing ─────────────────────────────────────────────────
         let mut out_l = vec![0.0_f64; n];
         let mut out_r = vec![0.0_f64; n];
-        let mut dry_l = vec![0.0_f64; n];
-        let mut dry_r = vec![0.0_f64; n];
         let mut peak_det: f32 = -120.0;
         let mut peak_red: f32 = 0.0;
 
@@ -848,6 +842,62 @@ impl Plugin for NebulaDeEsser {
                 None
             };
 
+            let (mut ol, mut or_, det_db, red_db) = if bypass {
+                (l, r, -120.0_f64, 0.0_f64)
+            } else if os_factor > 1 {
+                // Linear interpolation upsampling → process → average
+                let mut acc_l = 0.0;
+                let mut acc_r = 0.0;
+                let mut last_d = -120.0_f64;
+                let mut last_r_db = 0.0_f64;
+                for k in 0..os_factor as usize {
+                    let t = k as f64 / os_factor as f64;
+                    let ul = self.prev_in_l + t * (l - self.prev_in_l);
+                    let ur = self.prev_in_r + t * (r - self.prev_in_r);
+                    let (o_l, o_r, d, rd) = self.os_dsp.process_sample(
+                        ul,
+                        ur,
+                        sc_l,
+                        sc_r,
+                        threshold,
+                        max_reduction,
+                        mode_relative,
+                        use_peak,
+                        use_wide,
+                        stereo_link,
+                        stereo_ms,
+                        lookahead_en,
+                        trigger_hear,
+                        filter_solo,
+                        false,
+                    );
+                    acc_l += o_l;
+                    acc_r += o_r;
+                    last_d = d;
+                    last_r_db = rd;
+                }
+                let inv = 1.0 / os_factor as f64;
+                (acc_l * inv, acc_r * inv, last_d, last_r_db)
+            } else {
+                self.dsp.process_sample(
+                    l,
+                    r,
+                    sc_l,
+                    sc_r,
+                    threshold,
+                    max_reduction,
+                    mode_relative,
+                    use_peak,
+                    use_wide,
+                    stereo_link,
+                    stereo_ms,
+                    lookahead_en,
+                    trigger_hear,
+                    filter_solo,
+                    false,
+                )
+            };
+
             let _ = (
                 sc_l,
                 sc_r,
@@ -887,16 +937,14 @@ impl Plugin for NebulaDeEsser {
             peak_red = red_db;
         }
 
-        if mix < 1.0 {
-            let dry = 1.0 - mix;
-            for s in 0..n {
-                out_l[s] = out_l[s] * mix + dry_l[s] * dry;
-                out_r[s] = out_r[s] * mix + dry_r[s] * dry;
+            let df = det_db as f32;
+            let rf = red_db as f32;
+            if df > peak_det {
+                peak_det = df;
             }
-        }
-
-        for s in 0..n {
-            self.analyzer.push((out_l[s] + out_r[s]) * 0.5);
+            if rf < peak_red {
+                peak_red = rf;
+            }
         }
 
         // ── Write output ──────────────────────────────────────────────────────
