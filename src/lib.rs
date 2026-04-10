@@ -316,6 +316,9 @@ impl Default for NebulaParams {
                 .with_step_size(0.01),
             cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
+                .with_step_size(0.01),
+            cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
             mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
             cut_slope: FloatParam::new(
@@ -811,6 +814,8 @@ impl Plugin for NebulaDeEsser {
         let mut out_r = vec![0.0_f64; n];
         let mut dry_l = vec![0.0_f64; n];
         let mut dry_r = vec![0.0_f64; n];
+        let mut out_l = vec![0.0_f64; n];
+        let mut out_r = vec![0.0_f64; n];
         let mut peak_det: f32 = -120.0;
         let mut peak_red: f32 = 0.0;
 
@@ -924,6 +929,75 @@ impl Plugin for NebulaDeEsser {
                 continue;
             }
 
+            } else {
+                None
+            };
+            let sc_r = if have_sc {
+                sc_data
+                    .get(1)
+                    .and_then(|c| c.get(s))
+                    .copied()
+                    .map(|v| v as f64)
+            } else {
+                None
+            };
+
+            let (mut ol, mut or_, det_db, red_db) = if bypass {
+                (l, r, -120.0_f64, 0.0_f64)
+            } else if os_factor > 1 {
+                // Linear interpolation upsampling → process → average
+                let mut acc_l = 0.0;
+                let mut acc_r = 0.0;
+                let mut last_d = -120.0_f64;
+                let mut last_r_db = 0.0_f64;
+                for k in 0..os_factor as usize {
+                    let t = k as f64 / os_factor as f64;
+                    let ul = self.prev_in_l + t * (l - self.prev_in_l);
+                    let ur = self.prev_in_r + t * (r - self.prev_in_r);
+                    let (o_l, o_r, d, rd) = self.os_dsp.process_sample(
+                        ul,
+                        ur,
+                        sc_l,
+                        sc_r,
+                        threshold,
+                        max_reduction,
+                        mode_relative,
+                        use_peak,
+                        use_wide,
+                        stereo_link,
+                        stereo_ms,
+                        lookahead_en,
+                        trigger_hear,
+                        filter_solo,
+                        false,
+                    );
+                    acc_l += o_l;
+                    acc_r += o_r;
+                    last_d = d;
+                    last_r_db = rd;
+                }
+                let inv = 1.0 / os_factor as f64;
+                (acc_l * inv, acc_r * inv, last_d, last_r_db)
+            } else {
+                self.dsp.process_sample(
+                    l,
+                    r,
+                    sc_l,
+                    sc_r,
+                    threshold,
+                    max_reduction,
+                    mode_relative,
+                    use_peak,
+                    use_wide,
+                    stereo_link,
+                    stereo_ms,
+                    lookahead_en,
+                    trigger_hear,
+                    filter_solo,
+                    false,
+                )
+            };
+
             let _ = (
                 sc_l,
                 sc_r,
@@ -946,6 +1020,7 @@ impl Plugin for NebulaDeEsser {
         }
 
         if !bypass && !zero_latency_mode {
+        if !bypass {
             let (det_db, red_db) = self.spectral.process_stereo(
                 &mut out_l,
                 &mut out_r,
@@ -973,6 +1048,14 @@ impl Plugin for NebulaDeEsser {
 
         for s in 0..n {
             self.analyzer.push((out_l[s] + out_r[s]) * 0.5);
+            let df = det_db as f32;
+            let rf = red_db as f32;
+            if df > peak_det {
+                peak_det = df;
+            }
+            if rf < peak_red {
+                peak_red = rf;
+            }
         }
 
         // ── Write output ──────────────────────────────────────────────────────

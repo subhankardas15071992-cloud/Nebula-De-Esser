@@ -678,6 +678,8 @@ impl SpectralProcessor {
     }
 }
 
+}
+
 impl DeEsserDsp {
     const BW6Q: [f64; 3] = [0.5176, 0.7071, 1.9319];
 
