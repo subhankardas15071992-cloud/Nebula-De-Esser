@@ -27,7 +27,7 @@ If you find this open-source software helpful and would like to support its deve
 
 ---
 
-## **What's New in v2.3.0**
+## ✨ **What's New in v2.4.0**
 
 ### **Enhanced stability and even more precise control**
 
@@ -210,7 +210,7 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 **This plugin will not work in Cakewalk NXT or Cakewalk Sonar and N-Track Studio. This is a known, confirmed incompatibility.**
 
-Fix for the same is currently under progress, and most likely will be released in version 2.4.0.
+Fix for the same is currently under progress, and most likely will be released in version 2.5.0.
 
 ---
 
