@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.4.0 has additional stability fixes, and now features the Cut Slope knob to fine tune the slope of the notch.
 
-
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/5e364db7-b712-4768-9286-2773f9f35c46" />
 
 ---
 
