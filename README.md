@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.3.0 is a focused stability and accuracy release — a complete UI redesign, critical audio thread safety fixes, and a fully corrected spectrum analyzer that now shows the post-processed signal rather than the raw input.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/737ec891-2cd3-4f49-bfa7-ac3ce81ba4ae" />
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/2da2d9ca-6ea6-42fc-b4b3-04f1a6357044" />
 
 ---
 
