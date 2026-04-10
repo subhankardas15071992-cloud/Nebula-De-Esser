@@ -15,13 +15,13 @@
 //   4. Nyquist bin (index 0 of the mirrored half) is not doubled.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use parking_lot::Mutex;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 pub const FFT_SIZE: usize = 2048;
-pub const FFT_HOP:  usize = 512;       // 75% overlap
+pub const FFT_HOP: usize = 512; // 75% overlap
 pub const NUM_BINS: usize = FFT_SIZE / 2 + 1;
 
 // Hann window coherent gain correction: 4.0 / FFT_SIZE
@@ -30,19 +30,19 @@ const MAG_SCALE: f64 = 4.0 / FFT_SIZE as f64;
 
 /// Shared spectrum data read by the GUI thread
 pub struct SpectrumData {
-    pub magnitudes:  Vec<f32>,
+    pub magnitudes: Vec<f32>,
     pub sample_rate: f64,
-    pub fft_size:    usize,
-    pub fresh:       bool,
+    pub fft_size: usize,
+    pub fresh: bool,
 }
 
 impl Default for SpectrumData {
     fn default() -> Self {
         Self {
-            magnitudes:  vec![-120.0_f32; NUM_BINS],
+            magnitudes: vec![-120.0_f32; NUM_BINS],
             sample_rate: 44100.0,
-            fft_size:    FFT_SIZE,
-            fresh:       false,
+            fft_size: FFT_SIZE,
+            fresh: false,
         }
     }
 }
@@ -62,15 +62,15 @@ pub struct SpectrumAnalyzer {
     /// Circular sample buffer — always FFT_SIZE samples
     ring_buffer: Vec<f64>,
     /// Index of the *next* write position (oldest sample is at write_pos)
-    write_pos:   usize,
+    write_pos: usize,
     /// Counts samples since last FFT trigger
     hop_counter: usize,
-    window:      Vec<f64>,
+    window: Vec<f64>,
     /// Reused FFT scratch buffer
     fft_scratch: Vec<rustfft::num_complex::Complex<f64>>,
-    planner:     rustfft::FftPlanner<f64>,
-    pub shared:  Arc<Mutex<SpectrumData>>,
-    pub dirty:   Arc<AtomicBool>,
+    planner: rustfft::FftPlanner<f64>,
+    pub shared: Arc<Mutex<SpectrumData>>,
+    pub dirty: Arc<AtomicBool>,
 }
 
 impl SpectrumAnalyzer {
@@ -81,13 +81,13 @@ impl SpectrumAnalyzer {
 
         Self {
             ring_buffer: vec![0.0; FFT_SIZE],
-            write_pos:   0,
+            write_pos: 0,
             hop_counter: 0,
-            window:      make_hann_window(),
+            window: make_hann_window(),
             fft_scratch: vec![rustfft::num_complex::Complex::new(0.0, 0.0); FFT_SIZE],
             planner,
-            shared:      Arc::new(Mutex::new(SpectrumData::default())),
-            dirty:       Arc::new(AtomicBool::new(false)),
+            shared: Arc::new(Mutex::new(SpectrumData::default())),
+            dirty: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -144,14 +144,18 @@ impl SpectrumAnalyzer {
         {
             let i = NUM_BINS - 1;
             let mag = self.fft_scratch[i].norm() * (MAG_SCALE * 0.5);
-            mags[i] = if mag < 1e-12 { -120.0_f32 } else { (20.0 * mag.log10()) as f32 };
+            mags[i] = if mag < 1e-12 {
+                -120.0_f32
+            } else {
+                (20.0 * mag.log10()) as f32
+            };
         }
 
         // Non-blocking write to shared data — skip frame if GUI holds the lock
         if let Some(mut guard) = self.shared.try_lock() {
             guard.magnitudes = mags;
-            guard.fft_size   = FFT_SIZE;
-            guard.fresh      = true;
+            guard.fft_size = FFT_SIZE;
+            guard.fresh = true;
             self.dirty.store(true, Ordering::Release);
         }
     }
@@ -162,10 +166,14 @@ impl SpectrumAnalyzer {
 
     pub fn reset(&mut self) {
         self.ring_buffer.fill(0.0);
-        self.write_pos   = 0;
+        self.write_pos = 0;
         self.hop_counter = 0;
     }
 
-    pub fn num_bins() -> usize  { NUM_BINS }
-    pub fn fft_size() -> usize  { FFT_SIZE }
+    pub fn num_bins() -> usize {
+        NUM_BINS
+    }
+    pub fn fft_size() -> usize {
+        FFT_SIZE
+    }
 }
