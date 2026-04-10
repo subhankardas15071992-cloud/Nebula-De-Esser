@@ -29,7 +29,7 @@ If you find this open-source software helpful and would like to support its deve
 
 ## ✨ **What's New in v2.4.0**
 
-### **Enhanced stability and even more precise control**
+### 🔧🎛️ **Enhanced stability and even more precise control**
 
 - **Stability updates** — further stability tuning to ensure lower CPU consumption.
 - **Cut Slope** — Lets the user fine tune the slope of the notch, continuosly varible from 0 dB/oct to 100 dB/oct for precise tuning.
