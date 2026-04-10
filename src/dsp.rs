@@ -9,6 +9,7 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation
 )]
+use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -371,6 +372,312 @@ pub struct DeEsserDsp {
     pub center_freq: f64,
     pub cut_q: f64,
     pub cut_depth_db: f64,
+}
+
+pub fn spectral_deess_block(
+    left: &mut [f64],
+    right: &mut [f64],
+    sample_rate: f64,
+    min_freq: f64,
+    max_freq: f64,
+    threshold_db: f64,
+    max_reduction_db: f64,
+    cut_width: f64,
+    cut_depth: f64,
+    cut_slope: f64,
+) -> (f32, f32) {
+    fn process_channel(
+        chan: &mut [f64],
+        sample_rate: f64,
+        min_freq: f64,
+        max_freq: f64,
+        threshold_db: f64,
+        max_reduction_db: f64,
+        cut_width: f64,
+        cut_depth: f64,
+        cut_slope: f64,
+    ) -> (f64, f64) {
+        let n = chan.len();
+        if n == 0 {
+            return (-120.0, 0.0);
+        }
+        let fft_n = n.next_power_of_two().max(64);
+        let mut planner = FftPlanner::<f64>::new();
+        let fft = planner.plan_fft_forward(fft_n);
+        let ifft = planner.plan_fft_inverse(fft_n);
+        let mut bins = vec![Complex::new(0.0, 0.0); fft_n];
+        for (i, v) in chan.iter().enumerate() {
+            bins[i].re = *v;
+        }
+        fft.process(&mut bins);
+
+        let min_f = min_freq.max(20.0).min(sample_rate * 0.49);
+        let max_f = max_freq.max(min_f + 10.0).min(sample_rate * 0.49);
+        let center = (min_f * max_f).sqrt();
+        let width_hz = (max_f - min_f).max(100.0) * (1.2 - cut_width.clamp(0.0, 1.0) * 0.7);
+        let slope_pow = 1.0 + cut_slope.clamp(0.0, 100.0) / 22.0;
+
+        let mut det_peak = -120.0_f64;
+        let mut red_peak = 0.0_f64;
+        for i in 1..(fft_n / 2) {
+            let freq = i as f64 * sample_rate / fft_n as f64;
+            if freq < min_f || freq > max_f {
+                continue;
+            }
+            let mag = bins[i].norm().max(1e-12);
+            let mag_db = 20.0 * mag.log10();
+            det_peak = det_peak.max(mag_db);
+
+            let norm_dist = ((freq - center).abs() / (width_hz * 0.5)).max(0.0);
+            let shape = 1.0 / (1.0 + norm_dist.powf(slope_pow));
+            let excess = (mag_db - threshold_db).max(0.0);
+            let reduce_db =
+                (excess * 0.65 * cut_depth.clamp(0.0, 1.0) * shape).min(max_reduction_db.abs());
+            red_peak = red_peak.max(reduce_db);
+            let gain = 10.0_f64.powf(-reduce_db / 20.0);
+            bins[i] *= gain;
+            bins[fft_n - i] *= gain;
+        }
+
+        ifft.process(&mut bins);
+        let norm = 1.0 / fft_n as f64;
+        for i in 0..n {
+            chan[i] = bins[i].re * norm;
+        }
+        (det_peak, -red_peak)
+    }
+
+    let (det_l, red_l) = process_channel(
+        left,
+        sample_rate,
+        min_freq,
+        max_freq,
+        threshold_db,
+        max_reduction_db,
+        cut_width,
+        cut_depth,
+        cut_slope,
+    );
+    let (det_r, red_r) = process_channel(
+        right,
+        sample_rate,
+        min_freq,
+        max_freq,
+        threshold_db,
+        max_reduction_db,
+        cut_width,
+        cut_depth,
+        cut_slope,
+    );
+    (
+        ((det_l + det_r) * 0.5) as f32,
+        ((red_l + red_r) * 0.5) as f32,
+    )
+}
+
+#[derive(Clone, Copy)]
+pub struct SpectralConfig {
+    pub min_freq: f64,
+    pub max_freq: f64,
+    pub threshold_db: f64,
+    pub max_reduction_db: f64,
+    pub cut_width: f64,
+    pub cut_depth: f64,
+    pub cut_slope: f64,
+}
+
+struct SpectralChannel {
+    input_tail: Vec<f64>,
+    output_tail: Vec<f64>,
+    mask_state: Vec<f64>,
+    tracked_center_hz: f64,
+}
+
+pub struct SpectralProcessor {
+    pub sample_rate: f64,
+    pub fft_size: usize,
+    pub hop_size: usize,
+    window: Vec<f64>,
+    fft: Arc<dyn Fft<f64>>,
+    ifft: Arc<dyn Fft<f64>>,
+    channels: [SpectralChannel; 2],
+}
+
+impl SpectralProcessor {
+    pub fn new(sample_rate: f64, fft_size: usize, hop_size: usize) -> Self {
+        let mut planner = FftPlanner::<f64>::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        let ifft = planner.plan_fft_inverse(fft_size);
+        let window = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (fft_size - 1) as f64).cos()))
+            .collect::<Vec<_>>();
+        let overlap = fft_size.saturating_sub(hop_size);
+        let bins = fft_size / 2;
+        let default_center = 8000.0_f64.min(sample_rate * 0.45).max(2000.0);
+        Self {
+            sample_rate,
+            fft_size,
+            hop_size,
+            window,
+            fft,
+            ifft,
+            channels: [
+                SpectralChannel {
+                    input_tail: vec![0.0; overlap],
+                    output_tail: vec![0.0; overlap],
+                    mask_state: vec![1.0; bins],
+                    tracked_center_hz: default_center,
+                },
+                SpectralChannel {
+                    input_tail: vec![0.0; overlap],
+                    output_tail: vec![0.0; overlap],
+                    mask_state: vec![1.0; bins],
+                    tracked_center_hz: default_center,
+                },
+            ],
+        }
+    }
+
+    pub fn latency_samples(&self) -> u32 {
+        self.fft_size.saturating_sub(self.hop_size) as u32
+    }
+
+    pub fn reset(&mut self) {
+        for ch in &mut self.channels {
+            ch.input_tail.fill(0.0);
+            ch.output_tail.fill(0.0);
+            ch.mask_state.fill(1.0);
+        }
+    }
+
+    fn process_channel(
+        &mut self,
+        index: usize,
+        input: &[f64],
+        cfg: SpectralConfig,
+    ) -> (Vec<f64>, f64, f64) {
+        let overlap = self.fft_size - self.hop_size;
+        let state = &mut self.channels[index];
+        let mut ext = Vec::with_capacity(overlap + input.len());
+        ext.extend_from_slice(&state.input_tail);
+        ext.extend_from_slice(input);
+
+        let mut ola = vec![0.0; ext.len() + self.fft_size];
+        for (i, v) in state.output_tail.iter().enumerate() {
+            ola[i] += *v;
+        }
+
+        let mut bins = vec![Complex::new(0.0, 0.0); self.fft_size];
+        let mut raw_mask = vec![1.0_f64; self.fft_size / 2];
+        let mut freq_smooth = vec![1.0_f64; self.fft_size / 2];
+        let mut det_peak = -120.0_f64;
+        let mut red_peak = 0.0_f64;
+        let min_f = cfg.min_freq.max(20.0).min(self.sample_rate * 0.49);
+        let max_f = cfg.max_freq.max(min_f + 10.0).min(self.sample_rate * 0.49);
+        let width_hz = (max_f - min_f).max(100.0) * (1.2 - cfg.cut_width.clamp(0.0, 1.0) * 0.7);
+        let slope_pow = 1.0 + cfg.cut_slope.clamp(0.0, 100.0) / 22.0;
+        let min_gain = 10.0_f64.powf(-(cfg.max_reduction_db.abs() * 0.85) / 20.0);
+
+        if ext.len() >= self.fft_size {
+            let max_start = ext.len() - self.fft_size;
+            for start in (0..=max_start).step_by(self.hop_size) {
+                for i in 0..self.fft_size {
+                    bins[i] = Complex::new(ext[start + i] * self.window[i], 0.0);
+                }
+                self.fft.process(&mut bins);
+
+                raw_mask.fill(1.0);
+                // Program-dependent band center tracking for transparency
+                let mut w_sum = 0.0_f64;
+                let mut fw_sum = 0.0_f64;
+                for i in 1..(self.fft_size / 2) {
+                    let freq = i as f64 * self.sample_rate / self.fft_size as f64;
+                    if !(min_f..=max_f).contains(&freq) {
+                        continue;
+                    }
+                    let w = bins[i].norm().max(1e-9);
+                    w_sum += w;
+                    fw_sum += freq * w;
+                }
+                if w_sum > 0.0 {
+                    let frame_center = (fw_sum / w_sum).clamp(min_f, max_f);
+                    state.tracked_center_hz = state.tracked_center_hz * 0.9 + frame_center * 0.1;
+                }
+                let center = state.tracked_center_hz;
+
+                for i in 1..(self.fft_size / 2) {
+                    let freq = i as f64 * self.sample_rate / self.fft_size as f64;
+                    if freq < min_f || freq > max_f {
+                        continue;
+                    }
+                    let mag = bins[i].norm().max(1e-12);
+                    let mag_db = 20.0 * mag.log10();
+                    det_peak = det_peak.max(mag_db);
+                    let norm_dist = ((freq - center).abs() / (width_hz * 0.5)).max(0.0);
+                    let shape = 1.0 / (1.0 + norm_dist.powf(slope_pow));
+                    // Smooth-knee spectral transfer
+                    let knee = 6.0_f64;
+                    let delta = mag_db - cfg.threshold_db;
+                    let excess = (delta * delta + knee * knee).sqrt() - knee;
+                    let reduce_db = (excess * 0.65 * cfg.cut_depth.clamp(0.0, 1.0) * shape)
+                        .min(cfg.max_reduction_db.abs());
+                    red_peak = red_peak.max(reduce_db);
+                    raw_mask[i] = 10.0_f64.powf(-reduce_db / 20.0);
+                }
+
+                // Frequency smoothing of the mask
+                for i in 1..(self.fft_size / 2 - 1) {
+                    freq_smooth[i] = (raw_mask[i - 1] + 2.0 * raw_mask[i] + raw_mask[i + 1]) * 0.25;
+                }
+                // Temporal smoothing + spectral floor preservation
+                for i in 1..(self.fft_size / 2) {
+                    let target = freq_smooth[i].clamp(min_gain, 1.0);
+                    let prev = state.mask_state[i];
+                    let coeff = if target < prev { 0.35 } else { 0.92 };
+                    let smoothed = coeff * prev + (1.0 - coeff) * target;
+                    state.mask_state[i] = smoothed.clamp(min_gain, 1.0);
+                    bins[i] *= state.mask_state[i];
+                    bins[self.fft_size - i] *= state.mask_state[i];
+                }
+
+                self.ifft.process(&mut bins);
+                let norm = 1.0 / self.fft_size as f64;
+                for i in 0..self.fft_size {
+                    ola[start + i] += bins[i].re * self.window[i] * norm;
+                }
+            }
+        }
+
+        let mut out = vec![0.0; input.len()];
+        for i in 0..input.len() {
+            out[i] = ola[overlap + i];
+        }
+        state
+            .input_tail
+            .copy_from_slice(&ext[ext.len() - overlap..]);
+        for i in 0..overlap {
+            state.output_tail[i] = ola[overlap + input.len() + i];
+        }
+        (out, det_peak, -red_peak)
+    }
+
+    pub fn process_stereo(
+        &mut self,
+        left: &mut [f64],
+        right: &mut [f64],
+        cfg: SpectralConfig,
+    ) -> (f32, f32) {
+        let (l, det_l, red_l) = self.process_channel(0, left, cfg);
+        let (r, det_r, red_r) = self.process_channel(1, right, cfg);
+        left.copy_from_slice(&l);
+        right.copy_from_slice(&r);
+        (
+            ((det_l + det_r) * 0.5) as f32,
+            ((red_l + red_r) * 0.5) as f32,
+        )
+    }
+}
+
 }
 
 impl DeEsserDsp {

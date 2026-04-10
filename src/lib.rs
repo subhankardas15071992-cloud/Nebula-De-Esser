@@ -316,6 +316,9 @@ impl Default for NebulaParams {
                 .with_step_size(0.01),
             cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
+                .with_step_size(0.01),
+            cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01),
             mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
             cut_slope: FloatParam::new(
@@ -364,6 +367,7 @@ struct NebulaDeEsser {
     dsp: DeEsserDsp,
     os_dsp: DeEsserDsp,
     analyzer: SpectrumAnalyzer,
+    spectral: dsp::SpectralProcessor,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
     last_min_freq: f64,
@@ -373,6 +377,7 @@ struct NebulaDeEsser {
     last_lookahead_en: bool,
     last_vocal: bool,
     last_os_factor: u32,
+    reported_latency: u32,
     prev_in_l: f64,
     prev_in_r: f64,
 }
@@ -385,6 +390,7 @@ impl Default for NebulaDeEsser {
             dsp: DeEsserDsp::new(44100.0),
             os_dsp: DeEsserDsp::new(44100.0),
             analyzer: SpectrumAnalyzer::new(),
+            spectral: dsp::SpectralProcessor::new(44100.0, 1024, 256),
             meters: Arc::new(Meters::default()),
             midi_learn: Arc::new(MidiLearnShared::new()),
             last_min_freq: -1.0,
@@ -394,6 +400,7 @@ impl Default for NebulaDeEsser {
             last_lookahead_en: false,
             last_vocal: true,
             last_os_factor: 1,
+            reported_latency: 0,
             prev_in_l: 0.0,
             prev_in_r: 0.0,
         }
@@ -610,6 +617,9 @@ impl Plugin for NebulaDeEsser {
         // Creating a new analyzer here produces a new Arc, permanently
         // disconnecting the GUI (which holds the old Arc) from the audio thread.
         self.analyzer.reset();
+        self.spectral = dsp::SpectralProcessor::new(self.sample_rate, 1024, 256);
+        self.reported_latency = self.spectral.latency_samples();
+        ctx.set_latency_samples(self.reported_latency);
         self.last_min_freq = -1.0;
         self.last_max_freq = -1.0;
         self.last_lookahead_ms = -1.0;
@@ -789,6 +799,21 @@ impl Plugin for NebulaDeEsser {
         let (out_gl, out_gr) = pan_gains(output_pan, out_gain);
 
         // ── Sample processing ─────────────────────────────────────────────────
+        let zero_latency_mode = !lookahead_en || lookahead_ms <= 0.01;
+        let target_latency = if zero_latency_mode {
+            0
+        } else {
+            self.spectral.latency_samples()
+        };
+        if target_latency != self.reported_latency {
+            ctx.set_latency_samples(target_latency);
+            self.reported_latency = target_latency;
+        }
+
+        let mut out_l = vec![0.0_f64; n];
+        let mut out_r = vec![0.0_f64; n];
+        let mut dry_l = vec![0.0_f64; n];
+        let mut dry_r = vec![0.0_f64; n];
         let mut out_l = vec![0.0_f64; n];
         let mut out_r = vec![0.0_f64; n];
         let mut peak_det: f32 = -120.0;
@@ -829,6 +854,81 @@ impl Plugin for NebulaDeEsser {
                     .and_then(|c| c.get(s))
                     .copied()
                     .map(|v| v as f64)
+            } else {
+                None
+            };
+            let sc_r = if have_sc {
+                sc_data
+                    .get(1)
+                    .and_then(|c| c.get(s))
+                    .copied()
+                    .map(|v| v as f64)
+            } else {
+                None
+            };
+
+            if !zero_latency_mode && !bypass {
+                let _ = (
+                    sc_l,
+                    sc_r,
+                    os_factor,
+                    mode_relative,
+                    use_peak,
+                    use_wide,
+                    stereo_link,
+                    stereo_ms,
+                    lookahead_en,
+                    trigger_hear,
+                    filter_solo,
+                );
+            } else {
+                if bypass {
+                    let ol = l * out_gl;
+                    let or_ = r * out_gr;
+                    out_l[s] = ol;
+                    out_r[s] = or_;
+                    dry_l[s] = ol;
+                    dry_r[s] = or_;
+                    self.prev_in_l = l;
+                    self.prev_in_r = r;
+                    continue;
+                }
+                let (ol_proc, or_proc, det_db, red_db) = self.dsp.process_sample(
+                    l,
+                    r,
+                    sc_l,
+                    sc_r,
+                    threshold,
+                    max_reduction,
+                    mode_relative,
+                    use_peak,
+                    use_wide,
+                    stereo_link,
+                    stereo_ms,
+                    false,
+                    trigger_hear,
+                    filter_solo,
+                    false,
+                );
+                let ol = ol_proc * out_gl;
+                let or_ = or_proc * out_gr;
+                out_l[s] = ol;
+                out_r[s] = or_;
+                dry_l[s] = l * out_gl;
+                dry_r[s] = r * out_gr;
+                let df = det_db as f32;
+                let rf = red_db as f32;
+                if df > peak_det {
+                    peak_det = df;
+                }
+                if rf < peak_red {
+                    peak_red = rf;
+                }
+                self.prev_in_l = l;
+                self.prev_in_r = r;
+                continue;
+            }
+
             } else {
                 None
             };
@@ -919,6 +1019,7 @@ impl Plugin for NebulaDeEsser {
             dry_r[s] = or_;
         }
 
+        if !bypass && !zero_latency_mode {
         if !bypass {
             let (det_db, red_db) = self.spectral.process_stereo(
                 &mut out_l,
@@ -937,6 +1038,16 @@ impl Plugin for NebulaDeEsser {
             peak_red = red_db;
         }
 
+        if mix < 1.0 {
+            let dry = 1.0 - mix;
+            for s in 0..n {
+                out_l[s] = out_l[s] * mix + dry_l[s] * dry;
+                out_r[s] = out_r[s] * mix + dry_r[s] * dry;
+            }
+        }
+
+        for s in 0..n {
+            self.analyzer.push((out_l[s] + out_r[s]) * 0.5);
             let df = det_db as f32;
             let rf = red_db as f32;
             if df > peak_det {
