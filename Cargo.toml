@@ -1,15 +1,19 @@
 [package]
 name = "nebula_desser"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
 authors = ["Nebula Audio"]
-description = "Nebula DeEsser v2 - Hyper-optimized 64-bit CLAP De-esser Plugin"
+description = "Nebula DeEsser - Rust de-esser plugin for CLAP and VST3"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = ["xtask"]
+resolver = "2"
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 egui = "0.29"
 parking_lot = "0.12"
