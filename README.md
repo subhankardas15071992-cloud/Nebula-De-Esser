@@ -11,6 +11,8 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.4.0 has additional stability fixes, and now features the Cut Slope knob to fine tune the slope of the notch.
 
+Please note, version 2.4.0 will be the last version to use spectral compression based algorithm, for upcoming version 2.5.0 Nebula De-Esser is undergoing a complete re-write to switch to even more transparent Orthogonal Subspace Projection algorithm using Teager-Kaiser Energy Operator.
+
 <img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/5e364db7-b712-4768-9286-2773f9f35c46" />
 
 ---
