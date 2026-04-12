@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.3.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser v2.4.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,12 +28,8 @@ const ACRYLIC_HIGH: Color32 = Color32::from_rgb(20, 12, 46); // hover / active s
 // Control fills — dark tinted, not grey
 const CTRL_DEFAULT: Color32 = Color32::from_rgb(18, 10, 38); // resting control
 const CTRL_HOVER: Color32 = Color32::from_rgb(26, 16, 54); // hover lift
-const CTRL_PRESSED: Color32 = Color32::from_rgb(12, 6, 28); // pressed sink
-const CTRL_DISABLED: Color32 = Color32::from_rgb(8, 4, 18);
-
-// Borders — neon-tinted strokes
+                                                           // Borders — neon-tinted strokes
 const STROKE_DEF: Color32 = Color32::from_rgb(50, 30, 90); // purple-tinted border
-const STROKE_OUT: Color32 = Color32::from_rgb(0, 0, 0);
 const DIVIDER: Color32 = Color32::from_rgb(30, 18, 60); // separator
 
 // Accent — electric cyan as primary (replaces Windows blue)
@@ -45,7 +41,6 @@ const ACCENT_BORDER: Color32 = Color32::from_rgb(0, 90, 130);
 // Semantic neon colours
 const RED: Color32 = Color32::from_rgb(255, 55, 55); // hot red
 const ORANGE: Color32 = Color32::from_rgb(255, 160, 0); // neon amber
-const GREEN: Color32 = Color32::from_rgb(0, 220, 90); // neon green
 const TEAL: Color32 = Color32::from_rgb(0, 200, 180); // neon teal
 const MAGENTA: Color32 = Color32::from_rgb(255, 0, 200); // hot magenta (knob accent)
 const PURPLE: Color32 = Color32::from_rgb(160, 40, 255); // electric purple (I/O accent)
@@ -502,7 +497,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.3",
+        "v2.4",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -1237,16 +1232,16 @@ fn draw_controls(
         (
             "Min Freq",
             p.min_freq,
-            1000.0,
-            16000.0,
+            1.0,
+            24000.0,
             "Hz",
             NumTarget::MinFreq,
         ),
         (
             "Max Freq",
             p.max_freq,
-            1000.0,
-            20000.0,
+            1.0,
+            24000.0,
             "Hz",
             NumTarget::MaxFreq,
         ),
@@ -1316,8 +1311,8 @@ fn draw_controls(
         (
             "In Level",
             p.input_level,
-            -60.0,
-            12.0,
+            -100.0,
+            100.0,
             "dB",
             NumTarget::InputLevel,
         ),
@@ -1325,8 +1320,8 @@ fn draw_controls(
         (
             "Out Level",
             p.output_level,
-            -60.0,
-            12.0,
+            -100.0,
+            100.0,
             "dB",
             NumTarget::OutputLevel,
         ),
@@ -1748,7 +1743,7 @@ fn draw_spectrum(
     acrylic_card(&pa, rect, 8.0 * s);
     let inner = rect.shrink(5.0 * s);
     let ph = (inner.height() - 16.0 * s).max(10.0);
-    let sr = 44100.0_f32;
+    let sr;
 
     // Grid
     for &db in &[-80.0_f32, -60.0, -40.0, -20.0, -10.0] {
@@ -1791,6 +1786,7 @@ fn draw_spectrum(
     // Smooth magnitudes
     {
         let spec = gui.spectrum.lock();
+        sr = spec.sample_rate as f32;
         let mags = &spec.magnitudes;
         let nb = mags.len();
         if gui.smooth_mags.len() != nb {
@@ -1894,14 +1890,13 @@ fn draw_spectrum(
     let mr = ui.allocate_rect(min_hit, Sense::drag());
     if mr.dragged() {
         let nx = (min_x + mr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
-        ch.min_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(1000.0, p.max_freq - 100.0));
+        ch.min_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(1.0, p.max_freq - 1.0));
     }
     let max_hit = Rect::from_center_size(Pos2::new(max_x, node_y), Vec2::splat(hit_sz));
     let xr = ui.allocate_rect(max_hit, Sense::drag());
     if xr.dragged() {
         let nx = (max_x + xr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
-        ch.max_freq =
-            Some((x_to_freq(nx, inner.width()) as f64).clamp(p.min_freq + 100.0, 20000.0));
+        ch.max_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(p.min_freq + 1.0, 24000.0));
     }
     freq_node(&pa, Pos2::new(min_x, node_y), TEAL, "Min", s);
     freq_node(&pa, Pos2::new(max_x, node_y), ORANGE, "Max", s);
