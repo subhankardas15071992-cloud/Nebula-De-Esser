@@ -216,7 +216,7 @@ Fix for the same is currently under progress, and most likely will be released i
 
 ## ⚠️ N-Track Studio
 
-**The stability issues on N-Track Studio was actually due to my TCP set-up, I forgot to enable expand to stereo mode on the TCP that's why the signal was not gong through the plugin. Enabled expand to stereo for the TCP and it works fine. For some reason I forgot that this plugin has dedicated panning controls. Other DAWs do this switch automatically, N-Track Studio doesn't do it automatically**
+**The stability issues on N-Track Studio was actually due to my TCP set-up, I forgot to enable expand to stereo mode on the TCP that's why the signal was not gong through the plugin. Enabled expand to stereo for the TCP and it works fine. For some reason I forgot that this plugin has dedicated panning controls. Other DAWs do this switch automatically, N-Track Studio doesn't do it automatically. It doesn't use dynamic channel count negotiations to ensure compariblity with old and obsolete DirectX (DX/DXi) plugins, a rather useless feature for modern DAWs but it's their way of doing things.**
 
 ---
 
