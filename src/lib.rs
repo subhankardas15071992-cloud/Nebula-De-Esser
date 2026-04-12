@@ -1,18 +1,5 @@
-#![allow(unused_mut, unused_variables, dead_code)]
-// ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.0.0
-// 64-bit CLAP de-esser — Rust + nih-plug + egui
-// New in v2: Presets, Undo/Redo, MIDI Learn, FX Bypass,
-//            Input/Output Level+Pan, Oversampling, fixed Spectrum Analyzer
-// ─────────────────────────────────────────────────────────────────────────────
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::too_many_arguments,
-    clippy::needless_pass_by_ref_mut
-)]
-
 use std::collections::HashMap;
+use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -20,22 +7,25 @@ use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui::Context, EguiState};
 use parking_lot::Mutex;
 
-mod analyzer;
-mod dsp;
+pub mod analyzer;
+pub mod dsp;
 mod gui;
 
 use analyzer::SpectrumAnalyzer;
-use dsp::DeEsserDsp;
+use dsp::{db_to_lin, DeEsserDsp, ProcessFrame, ProcessSettings};
 use gui::{draw, GuiParams, NebulaGui};
 
-fn f32_to_u32(v: f32) -> u32 {
-    v.to_bits()
-}
-fn u32_to_f32(v: u32) -> f32 {
-    f32::from_bits(v)
+const UNMAPPED_CC: i32 = -1;
+
+#[inline]
+fn f32_to_u32(value: f32) -> u32 {
+    value.to_bits()
 }
 
-// ─── MIDI Learn Parameter Indices ─────────────────────────────────────────────
+#[inline]
+fn u32_to_f32(value: u32) -> f32 {
+    f32::from_bits(value)
+}
 
 pub const MIDI_THRESHOLD: u8 = 0;
 pub const MIDI_MAX_RED: u8 = 1;
@@ -57,49 +47,78 @@ pub const MIDI_PARAM_NAMES: &[&str] = &[
     "Input Pan",
     "Output Level",
     "Output Pan",
-    "Min Freq",
-    "Max Freq",
+    "Min Frequency",
+    "Max Frequency",
     "Lookahead",
 ];
 
-// ─── Shared MIDI Learn State ──────────────────────────────────────────────────
-
 pub struct MidiLearnShared {
-    /// -1 = idle, 0..N = currently learning that param index
     pub learning_target: AtomicI32,
-    /// CC (0-127) → param index
     pub mappings: Mutex<HashMap<u8, u8>>,
-    /// Saved mappings for rollback
     pub saved_mappings: Mutex<HashMap<u8, u8>>,
-    /// MIDI control enabled globally
     pub midi_enabled: AtomicBool,
-    /// Latest raw CC value (0..=1 f32 bits) for each CC number
     pub cc_values: Vec<AtomicU32>,
-    /// True when a CC value has changed and the GUI hasn't applied it yet
     pub cc_dirty: Vec<AtomicBool>,
+    cc_bindings: Vec<AtomicI32>,
+    bindings_dirty: AtomicBool,
 }
 
 impl MidiLearnShared {
     fn new() -> Self {
         Self {
-            learning_target: AtomicI32::new(-1),
+            learning_target: AtomicI32::new(UNMAPPED_CC),
             mappings: Mutex::new(HashMap::new()),
             saved_mappings: Mutex::new(HashMap::new()),
             midi_enabled: AtomicBool::new(true),
             cc_values: (0..128).map(|_| AtomicU32::new(0)).collect(),
             cc_dirty: (0..128).map(|_| AtomicBool::new(false)).collect(),
+            cc_bindings: (0..128).map(|_| AtomicI32::new(UNMAPPED_CC)).collect(),
+            bindings_dirty: AtomicBool::new(false),
+        }
+    }
+
+    fn binding_for_cc(&self, cc: usize) -> Option<u8> {
+        let binding = self.cc_bindings[cc.min(127)].load(Ordering::Acquire);
+        (binding >= 0).then_some(binding as u8)
+    }
+
+    fn learn_cc(&self, cc: u8, parameter_index: u8) {
+        self.cc_bindings[cc as usize].store(parameter_index as i32, Ordering::Release);
+        self.bindings_dirty.store(true, Ordering::Release);
+    }
+
+    fn sync_mutex_from_atomic_if_needed(&self) {
+        if !self.bindings_dirty.swap(false, Ordering::AcqRel) {
+            return;
+        }
+
+        let mut mappings = self.mappings.lock();
+        mappings.clear();
+        for (cc, binding) in self.cc_bindings.iter().enumerate() {
+            let value = binding.load(Ordering::Acquire);
+            if value >= 0 {
+                mappings.insert(cc as u8, value as u8);
+            }
+        }
+    }
+
+    fn sync_atomic_from_mutex(&self) {
+        for binding in &self.cc_bindings {
+            binding.store(UNMAPPED_CC, Ordering::Release);
+        }
+
+        let mappings = self.mappings.lock().clone();
+        for (cc, parameter_index) in mappings {
+            self.cc_bindings[cc as usize].store(parameter_index as i32, Ordering::Release);
         }
     }
 }
-
-// ─── Parameters ───────────────────────────────────────────────────────────────
 
 #[derive(Params)]
 struct NebulaParams {
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
 
-    // ── De-esser core ──
     #[id = "threshold"]
     pub threshold: FloatParam,
     #[id = "max_reduction"]
@@ -130,8 +149,6 @@ struct NebulaParams {
     pub sidechain_external: FloatParam,
     #[id = "vocal_mode"]
     pub vocal_mode: FloatParam,
-
-    // ── v2 additions ──
     #[id = "input_level"]
     pub input_level: FloatParam,
     #[id = "input_pan"]
@@ -144,8 +161,6 @@ struct NebulaParams {
     pub bypass: FloatParam,
     #[id = "oversampling"]
     pub oversampling: FloatParam,
-
-    // ── v2.2 additions ──
     #[id = "cut_width"]
     pub cut_width: FloatParam,
     #[id = "cut_depth"]
@@ -158,9 +173,14 @@ struct NebulaParams {
 
 impl Default for NebulaParams {
     fn default() -> Self {
+        let freq_range = FloatRange::Skewed {
+            min: 1.0,
+            max: 24_000.0,
+            factor: FloatRange::skew_factor(-2.0),
+        };
+
         Self {
             editor_state: EguiState::from_size(860, 640),
-
             threshold: FloatParam::new(
                 "Threshold",
                 -20.0,
@@ -171,7 +191,6 @@ impl Default for NebulaParams {
             )
             .with_unit(" dB")
             .with_step_size(0.1),
-
             max_reduction: FloatParam::new(
                 "Max Reduction",
                 12.0,
@@ -182,55 +201,20 @@ impl Default for NebulaParams {
             )
             .with_unit(" dB")
             .with_step_size(0.1),
-
-            min_freq: FloatParam::new(
-                "Min Frequency",
-                4000.0,
-                FloatRange::Skewed {
-                    min: 1000.0,
-                    max: 16000.0,
-                    factor: FloatRange::skew_factor(-1.5),
-                },
-            )
-            .with_unit(" Hz")
-            .with_step_size(1.0),
-
-            max_freq: FloatParam::new(
-                "Max Frequency",
-                12000.0,
-                FloatRange::Skewed {
-                    min: 1000.0,
-                    max: 20000.0,
-                    factor: FloatRange::skew_factor(-1.5),
-                },
-            )
-            .with_unit(" Hz")
-            .with_step_size(1.0),
-
-            mode_relative: FloatParam::new("Mode", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            use_peak_filter: FloatParam::new(
-                "Filter",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-            use_wide_range: FloatParam::new(
-                "Range",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-            filter_solo: FloatParam::new(
-                "Filter Solo",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-            lookahead_enabled: FloatParam::new(
-                "Lookahead Enable",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            min_freq: FloatParam::new("Min Frequency", 4_000.0, freq_range.clone())
+                .with_unit(" Hz")
+                .with_step_size(1.0),
+            max_freq: FloatParam::new("Max Frequency", 12_000.0, freq_range)
+                .with_unit(" Hz")
+                .with_step_size(1.0),
+            mode_relative: bool_param("Mode", true),
+            use_peak_filter: bool_param("Filter", false),
+            use_wide_range: bool_param("Range", false),
+            filter_solo: bool_param("Filter Solo", false),
+            lookahead_enabled: bool_param("Lookahead Enabled", false),
             lookahead_ms: FloatParam::new(
                 "Lookahead",
-                2.0,
+                0.0,
                 FloatRange::Linear {
                     min: 0.0,
                     max: 20.0,
@@ -238,44 +222,27 @@ impl Default for NebulaParams {
             )
             .with_unit(" ms")
             .with_step_size(0.1),
-            trigger_hear: FloatParam::new(
-                "Trigger Hear",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            trigger_hear: bool_param("Trigger Hear", false),
             stereo_link: FloatParam::new(
                 "Stereo Link",
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_step_size(0.01),
-            stereo_mid_side: FloatParam::new(
-                "Stereo Link Mode",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-            sidechain_external: FloatParam::new(
-                "Sidechain",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-            vocal_mode: FloatParam::new(
-                "Processing Mode",
-                1.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
-
-            // v2
+            stereo_mid_side: bool_param("Mid/Side", false),
+            sidechain_external: bool_param("Sidechain", false),
+            vocal_mode: bool_param("Vocal Mode", true),
             input_level: FloatParam::new(
                 "Input Level",
                 0.0,
                 FloatRange::Linear {
-                    min: -60.0,
-                    max: 12.0,
+                    min: -100.0,
+                    max: 100.0,
                 },
             )
             .with_unit(" dB")
-            .with_step_size(0.1),
+            .with_step_size(0.1)
+            .with_smoother(SmoothingStyle::Linear(20.0)),
             input_pan: FloatParam::new(
                 "Input Pan",
                 0.0,
@@ -284,17 +251,19 @@ impl Default for NebulaParams {
                     max: 1.0,
                 },
             )
-            .with_step_size(0.01),
+            .with_step_size(0.01)
+            .with_smoother(SmoothingStyle::Linear(20.0)),
             output_level: FloatParam::new(
                 "Output Level",
                 0.0,
                 FloatRange::Linear {
-                    min: -60.0,
-                    max: 12.0,
+                    min: -100.0,
+                    max: 100.0,
                 },
             )
             .with_unit(" dB")
-            .with_step_size(0.1),
+            .with_step_size(0.1)
+            .with_smoother(SmoothingStyle::Linear(20.0)),
             output_pan: FloatParam::new(
                 "Output Pan",
                 0.0,
@@ -303,24 +272,22 @@ impl Default for NebulaParams {
                     max: 1.0,
                 },
             )
-            .with_step_size(0.01),
-            bypass: FloatParam::new("Bypass", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            .with_step_size(0.01)
+            .with_smoother(SmoothingStyle::Linear(20.0)),
+            bypass: bool_param("Bypass", false),
             oversampling: FloatParam::new(
                 "Oversampling",
                 0.0,
                 FloatRange::Linear { min: 0.0, max: 4.0 },
             )
             .with_step_size(1.0),
-
             cut_width: FloatParam::new("Cut Width", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
             cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01),
-                .with_step_size(0.01),
-            cut_depth: FloatParam::new("Cut Depth", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_step_size(0.01),
             mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_step_size(0.01),
+                .with_step_size(0.01)
+                .with_smoother(SmoothingStyle::Linear(10.0)),
             cut_slope: FloatParam::new(
                 "Cut Slope",
                 50.0,
@@ -335,7 +302,13 @@ impl Default for NebulaParams {
     }
 }
 
-// ─── Shared meter state ────────────────────────────────────────────────────────
+fn bool_param(name: &str, default: bool) -> FloatParam {
+    FloatParam::new(
+        name,
+        if default { 1.0 } else { 0.0 },
+        FloatRange::Linear { min: 0.0, max: 1.0 },
+    )
+}
 
 struct Meters {
     det_bits: AtomicU32,
@@ -349,8 +322,8 @@ struct Meters {
 impl Default for Meters {
     fn default() -> Self {
         Self {
-            det_bits: AtomicU32::new(f32_to_u32(-60.0)),
-            det_max_bits: AtomicU32::new(f32_to_u32(-60.0)),
+            det_bits: AtomicU32::new(f32_to_u32(-120.0)),
+            det_max_bits: AtomicU32::new(f32_to_u32(-120.0)),
             red_bits: AtomicU32::new(f32_to_u32(0.0)),
             red_max_bits: AtomicU32::new(f32_to_u32(0.0)),
             reset_det: AtomicI32::new(0),
@@ -359,7 +332,39 @@ impl Default for Meters {
     }
 }
 
-// ─── Plugin struct ────────────────────────────────────────────────────────────
+struct WetMixSmoother {
+    coeff: f64,
+    current: f64,
+}
+
+impl WetMixSmoother {
+    fn new(sample_rate: f64) -> Self {
+        let mut smoother = Self {
+            coeff: 0.0,
+            current: 1.0,
+        };
+        smoother.set_sample_rate(sample_rate);
+        smoother
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.coeff = if sample_rate <= 0.0 {
+            0.0
+        } else {
+            (-1.0 / (0.010 * sample_rate)).exp()
+        };
+    }
+
+    fn reset(&mut self, value: f64) {
+        self.current = value.clamp(0.0, 1.0);
+    }
+
+    fn next(&mut self, target: f64) -> f64 {
+        let target = target.clamp(0.0, 1.0);
+        self.current = target + self.coeff * (self.current - target);
+        self.current.clamp(0.0, 1.0)
+    }
+}
 
 struct NebulaDeEsser {
     params: Arc<NebulaParams>,
@@ -367,42 +372,35 @@ struct NebulaDeEsser {
     dsp: DeEsserDsp,
     os_dsp: DeEsserDsp,
     analyzer: SpectrumAnalyzer,
-    spectral: dsp::SpectralProcessor,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
-    last_min_freq: f64,
-    last_max_freq: f64,
-    last_use_peak: bool,
-    last_lookahead_ms: f64,
-    last_lookahead_en: bool,
-    last_vocal: bool,
-    last_os_factor: u32,
+    current_os_factor: u32,
     reported_latency: u32,
-    prev_in_l: f64,
-    prev_in_r: f64,
+    wet_mix: WetMixSmoother,
+    prev_main_l: f64,
+    prev_main_r: f64,
+    prev_sc_l: f64,
+    prev_sc_r: f64,
 }
 
 impl Default for NebulaDeEsser {
     fn default() -> Self {
+        let sample_rate = 44_100.0;
         Self {
             params: Arc::new(NebulaParams::default()),
-            sample_rate: 44100.0,
-            dsp: DeEsserDsp::new(44100.0),
-            os_dsp: DeEsserDsp::new(44100.0),
+            sample_rate,
+            dsp: DeEsserDsp::new(sample_rate),
+            os_dsp: DeEsserDsp::new(sample_rate),
             analyzer: SpectrumAnalyzer::new(),
-            spectral: dsp::SpectralProcessor::new(44100.0, 1024, 256),
             meters: Arc::new(Meters::default()),
             midi_learn: Arc::new(MidiLearnShared::new()),
-            last_min_freq: -1.0,
-            last_max_freq: -1.0,
-            last_use_peak: false,
-            last_lookahead_ms: -1.0,
-            last_lookahead_en: false,
-            last_vocal: true,
-            last_os_factor: 1,
+            current_os_factor: 1,
             reported_latency: 0,
-            prev_in_l: 0.0,
-            prev_in_r: 0.0,
+            wet_mix: WetMixSmoother::new(sample_rate),
+            prev_main_l: 0.0,
+            prev_main_r: 0.0,
+            prev_sc_l: 0.0,
+            prev_sc_r: 0.0,
         }
     }
 }
@@ -410,9 +408,9 @@ impl Default for NebulaDeEsser {
 impl Plugin for NebulaDeEsser {
     const NAME: &'static str = "Nebula DeEsser";
     const VENDOR: &'static str = "Nebula Audio";
-    const URL: &'static str = "https://nebula.audio";
+    const URL: &'static str = "https://github.com/subhankardas15071992-cloud/Nebula-De-Esser";
     const EMAIL: &'static str = "support@nebula.audio";
-    const VERSION: &'static str = "2.2.0";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         AudioIOLayout {
@@ -465,43 +463,19 @@ impl Plugin for NebulaDeEsser {
             NebulaGui::new(spectrum, midi_learn.clone()),
             |_ctx: &Context, _state: &mut NebulaGui| {},
             move |ctx: &Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
-                // ── Apply MIDI-driven param changes via setter ────────────────
-                {
-                    // Check if MIDI is enabled
-                    if midi_learn.midi_enabled.load(Ordering::Relaxed) {
-                        let mappings = midi_learn.mappings.lock();
-                        for (&cc, &pidx) in mappings.iter() {
-                            if midi_learn.cc_dirty[(cc as usize).min(127)]
-                                .swap(false, Ordering::AcqRel)
-                            {
-                                let v = u32_to_f32(
-                                    midi_learn.cc_values[(cc as usize).min(127)]
-                                        .load(Ordering::Relaxed),
-                                );
-                                macro_rules! scc {
-                                    ($p:expr, $val:expr) => {{
-                                        setter.begin_set_parameter(&$p);
-                                        setter.set_parameter(&$p, $val);
-                                        setter.end_set_parameter(&$p);
-                                    }};
-                                }
-                                match pidx {
-                                    MIDI_THRESHOLD => scc!(params.threshold, -60.0 + v * 60.0),
-                                    MIDI_MAX_RED => scc!(params.max_reduction, v * 40.0),
-                                    MIDI_STEREO_LINK => scc!(params.stereo_link, v),
-                                    MIDI_INPUT_LEVEL => scc!(params.input_level, -60.0 + v * 72.0),
-                                    MIDI_INPUT_PAN => scc!(params.input_pan, v * 2.0 - 1.0),
-                                    MIDI_OUTPUT_LEVEL => {
-                                        scc!(params.output_level, -60.0 + v * 72.0)
-                                    }
-                                    MIDI_OUTPUT_PAN => scc!(params.output_pan, v * 2.0 - 1.0),
-                                    MIDI_MIN_FREQ => scc!(params.min_freq, 1000.0 + v * 15000.0),
-                                    MIDI_MAX_FREQ => scc!(params.max_freq, 1000.0 + v * 19000.0),
-                                    MIDI_LOOKAHEAD => scc!(params.lookahead_ms, v * 20.0),
-                                    _ => {}
-                                }
-                            }
+                midi_learn.sync_mutex_from_atomic_if_needed();
+
+                if midi_learn.midi_enabled.load(Ordering::Relaxed) {
+                    for cc in 0..128 {
+                        if !midi_learn.cc_dirty[cc].swap(false, Ordering::AcqRel) {
+                            continue;
                         }
+
+                        let Some(parameter_index) = midi_learn.binding_for_cc(cc) else {
+                            continue;
+                        };
+                        let value = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
+                        apply_midi_mapping(parameter_index, value, &params, setter);
                     }
                 }
 
@@ -510,7 +484,7 @@ impl Plugin for NebulaDeEsser {
                 let red_db = u32_to_f32(meters.red_bits.load(Ordering::Relaxed));
                 let red_max = u32_to_f32(meters.red_max_bits.load(Ordering::Relaxed));
 
-                let gp = GuiParams {
+                let gui_params = GuiParams {
                     threshold: params.threshold.value() as f64,
                     max_reduction: params.max_reduction.value() as f64,
                     min_freq: params.min_freq.value() as f64,
@@ -542,61 +516,14 @@ impl Plugin for NebulaDeEsser {
                     cut_slope: params.cut_slope.value() as f64,
                 };
 
-                let ch = draw(ctx, &params.editor_state, gui_state, &gp);
+                let changes = draw(ctx, &params.editor_state, gui_state, &gui_params);
+                apply_gui_changes(&changes, &params, setter);
+                midi_learn.sync_atomic_from_mutex();
 
-                macro_rules! set_f {
-                    ($opt:expr, $param:expr) => {
-                        if let Some(v) = $opt {
-                            setter.begin_set_parameter(&$param);
-                            setter.set_parameter(&$param, v as f32);
-                            setter.end_set_parameter(&$param);
-                        }
-                    };
-                }
-                macro_rules! set_b {
-                    ($opt:expr, $param:expr) => {
-                        if let Some(v) = $opt {
-                            setter.begin_set_parameter(&$param);
-                            setter.set_parameter(&$param, if v { 1.0_f32 } else { 0.0_f32 });
-                            setter.end_set_parameter(&$param);
-                        }
-                    };
-                }
-
-                set_f!(ch.threshold, params.threshold);
-                set_f!(ch.max_reduction, params.max_reduction);
-                set_f!(ch.min_freq, params.min_freq);
-                set_f!(ch.max_freq, params.max_freq);
-                set_f!(ch.stereo_link, params.stereo_link);
-                set_f!(ch.lookahead_ms, params.lookahead_ms);
-                set_b!(ch.mode_relative, params.mode_relative);
-                set_b!(ch.use_peak_filter, params.use_peak_filter);
-                set_b!(ch.use_wide_range, params.use_wide_range);
-                set_b!(ch.filter_solo, params.filter_solo);
-                set_b!(ch.lookahead_enabled, params.lookahead_enabled);
-                set_b!(ch.trigger_hear, params.trigger_hear);
-                set_b!(ch.stereo_mid_side, params.stereo_mid_side);
-                set_b!(ch.sidechain_external, params.sidechain_external);
-                set_b!(ch.vocal_mode, params.vocal_mode);
-                set_f!(ch.input_level, params.input_level);
-                set_f!(ch.input_pan, params.input_pan);
-                set_f!(ch.output_level, params.output_level);
-                set_f!(ch.output_pan, params.output_pan);
-                set_b!(ch.bypass, params.bypass);
-                if let Some(v) = ch.oversampling {
-                    setter.begin_set_parameter(&params.oversampling);
-                    setter.set_parameter(&params.oversampling, v as f32);
-                    setter.end_set_parameter(&params.oversampling);
-                }
-                set_f!(ch.cut_width, params.cut_width);
-                set_f!(ch.cut_depth, params.cut_depth);
-                set_f!(ch.mix, params.mix);
-                set_f!(ch.cut_slope, params.cut_slope);
-
-                if ch.detection_max_reset {
+                if changes.detection_max_reset {
                     meters.reset_det.store(1, Ordering::Release);
                 }
-                if ch.reduction_max_reset {
+                if changes.reduction_max_reset {
                     meters.reset_red.store(1, Ordering::Release);
                 }
             },
@@ -605,27 +532,24 @@ impl Plugin for NebulaDeEsser {
 
     fn initialize(
         &mut self,
-        _layout: &AudioIOLayout,
+        _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        ctx: &mut impl InitContext<Self>,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
         self.os_dsp = DeEsserDsp::new(self.sample_rate);
-        // Reset only — do NOT replace with SpectrumAnalyzer::new().
-        // editor() gave the GUI an Arc clone of self.analyzer.shared.
-        // Creating a new analyzer here produces a new Arc, permanently
-        // disconnecting the GUI (which holds the old Arc) from the audio thread.
+        self.current_os_factor = 1;
+        self.reported_latency = 0;
         self.analyzer.reset();
-        self.spectral = dsp::SpectralProcessor::new(self.sample_rate, 1024, 256);
-        self.reported_latency = self.spectral.latency_samples();
-        ctx.set_latency_samples(self.reported_latency);
-        self.last_min_freq = -1.0;
-        self.last_max_freq = -1.0;
-        self.last_lookahead_ms = -1.0;
-        self.last_os_factor = 1;
-        self.prev_in_l = 0.0;
-        self.prev_in_r = 0.0;
+        self.analyzer.set_sample_rate(self.sample_rate);
+        self.wet_mix.set_sample_rate(self.sample_rate);
+        self.wet_mix.reset(self.params.mix.value() as f64);
+        self.prev_main_l = 0.0;
+        self.prev_main_r = 0.0;
+        self.prev_sc_l = 0.0;
+        self.prev_sc_r = 0.0;
+        context.set_latency_samples(0);
         true
     }
 
@@ -633,154 +557,43 @@ impl Plugin for NebulaDeEsser {
         self.dsp.reset();
         self.os_dsp.reset();
         self.analyzer.reset();
-        self.spectral.reset();
-        self.prev_in_l = 0.0;
-        self.prev_in_r = 0.0;
+        self.wet_mix.reset(self.params.mix.value() as f64);
+        self.prev_main_l = 0.0;
+        self.prev_main_r = 0.0;
+        self.prev_sc_l = 0.0;
+        self.prev_sc_r = 0.0;
     }
 
     fn process(
         &mut self,
         buffer: &mut Buffer,
         aux: &mut AuxiliaryBuffers,
-        ctx: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // ── Consume MIDI events ──────────────────────────────────────────────
-        while let Some(event) = ctx.next_event() {
+        while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
-                // Check if MIDI is enabled
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
                     continue;
                 }
 
-                let idx = (cc as usize).min(127);
-                self.midi_learn.cc_values[idx].store(f32_to_u32(value), Ordering::Relaxed);
-                self.midi_learn.cc_dirty[idx].store(true, Ordering::Release);
+                let cc_index = (cc as usize).min(127);
+                self.midi_learn.cc_values[cc_index].store(f32_to_u32(value), Ordering::Relaxed);
+                self.midi_learn.cc_dirty[cc_index].store(true, Ordering::Release);
 
-                let target = self.midi_learn.learning_target.load(Ordering::Acquire);
-                if target >= 0 {
-                    self.midi_learn.learning_target.store(-1, Ordering::Release);
-                    let mut m = self.midi_learn.mappings.lock();
-                    m.insert(cc, target as u8);
+                let learning_target = self.midi_learn.learning_target.load(Ordering::Acquire);
+                if learning_target >= 0 {
+                    self.midi_learn
+                        .learning_target
+                        .store(UNMAPPED_CC, Ordering::Release);
+                    self.midi_learn.learn_cc(cc, learning_target as u8);
                 }
             }
         }
 
-        // ── Read params ──────────────────────────────────────────────────────
-        let bypass = self.params.bypass.value() > 0.5;
-        let input_level_db = self.params.input_level.value() as f64;
-        let input_pan = self.params.input_pan.value() as f64;
-        let output_level_db = self.params.output_level.value() as f64;
-        let output_pan = self.params.output_pan.value() as f64;
-        let oversampling = self.params.oversampling.value() as u32;
-        let os_factor = match oversampling {
-            0 => 1,
-            1 => 2,
-            2 => 4,
-            3 => 6,
-            4 => 8,
-            _ => 1,
-        };
-
-        let threshold = self.params.threshold.value() as f64;
-        let max_reduction = self.params.max_reduction.value() as f64;
-        let min_freq = self.params.min_freq.value() as f64;
-        let max_freq = self.params.max_freq.value() as f64;
-        let mode_relative = self.params.mode_relative.value() > 0.5;
-        let use_peak = self.params.use_peak_filter.value() > 0.5;
-        let use_wide = self.params.use_wide_range.value() > 0.5;
-        let filter_solo = self.params.filter_solo.value() > 0.5;
-        let lookahead_en = self.params.lookahead_enabled.value() > 0.5;
-        let lookahead_ms = self.params.lookahead_ms.value() as f64;
-        let trigger_hear = self.params.trigger_hear.value() > 0.5;
-        let stereo_link = self.params.stereo_link.value() as f64;
-        let stereo_ms = self.params.stereo_mid_side.value() > 0.5;
-        let sc_external = self.params.sidechain_external.value() > 0.5;
-        let vocal_mode = self.params.vocal_mode.value() > 0.5;
-
-        // ── Update main DSP filters ──────────────────────────────────────────
-        let cut_width = self.params.cut_width.value() as f64;
-        let cut_depth = self.params.cut_depth.value() as f64;
-        let mix = self.params.mix.value() as f64;
-        let cut_slope = self.params.cut_slope.value() as f64;
-        if (min_freq - self.last_min_freq).abs() > 0.5
-            || (max_freq - self.last_max_freq).abs() > 0.5
-            || use_peak != self.last_use_peak
-        {
-            self.dsp.update_filters(
-                min_freq,
-                max_freq,
-                use_peak,
-                cut_width,
-                cut_depth,
-                cut_slope,
-                max_reduction,
-            );
-            self.last_min_freq = min_freq;
-            self.last_max_freq = max_freq;
-            self.last_use_peak = use_peak;
-        } else {
-            // Always update bell coeffs since width/depth can change independently
-            self.dsp.update_filters(
-                min_freq,
-                max_freq,
-                use_peak,
-                cut_width,
-                cut_depth,
-                cut_slope,
-                max_reduction,
-            );
-        }
-
-        // ── Update oversampled DSP ───────────────────────────────────────────
-        if os_factor != self.last_os_factor {
-            let os_sr = self.sample_rate * os_factor as f64;
-            self.os_dsp = DeEsserDsp::new(os_sr);
-            self.os_dsp.update_filters(
-                min_freq,
-                max_freq,
-                use_peak,
-                cut_width,
-                cut_depth,
-                cut_slope,
-                max_reduction,
-            );
-            let eff_la = if lookahead_en { lookahead_ms } else { 0.0 };
-            self.os_dsp.update_lookahead(eff_la);
-            if vocal_mode {
-                self.os_dsp.update_envelope(0.1, 60.0);
-            } else {
-                self.os_dsp.update_envelope(0.2, 100.0);
-            }
-            self.last_os_factor = os_factor;
-        }
-
-        // ── Lookahead ────────────────────────────────────────────────────────
-        let eff_lookahead = if lookahead_en { lookahead_ms } else { 0.0 };
-        if (eff_lookahead - self.last_lookahead_ms).abs() > 0.01
-            || lookahead_en != self.last_lookahead_en
-        {
-            self.dsp.update_lookahead(eff_lookahead);
-            self.os_dsp.update_lookahead(eff_lookahead);
-            self.last_lookahead_ms = eff_lookahead;
-            self.last_lookahead_en = lookahead_en;
-        }
-
-        if vocal_mode != self.last_vocal {
-            if vocal_mode {
-                self.dsp.update_envelope(0.1, 60.0);
-                self.os_dsp.update_envelope(0.1, 60.0);
-            } else {
-                self.dsp.update_envelope(0.2, 100.0);
-                self.os_dsp.update_envelope(0.2, 100.0);
-            }
-            self.last_vocal = vocal_mode;
-        }
-
-        // ── Meter resets ─────────────────────────────────────────────────────
         if self.meters.reset_det.swap(0, Ordering::AcqRel) != 0 {
             self.meters
                 .det_max_bits
-                .store(f32_to_u32(-60.0), Ordering::Relaxed);
+                .store(f32_to_u32(-120.0), Ordering::Relaxed);
         }
         if self.meters.reset_red.swap(0, Ordering::AcqRel) != 0 {
             self.meters
@@ -788,288 +601,205 @@ impl Plugin for NebulaDeEsser {
                 .store(f32_to_u32(0.0), Ordering::Relaxed);
         }
 
-        // ── Sidechain input ──────────────────────────────────────────────────
-        let n = buffer.samples();
-        let have_sc = sc_external && !aux.inputs.is_empty();
+        let threshold = self.params.threshold.value() as f64;
+        let max_reduction = self.params.max_reduction.value() as f64;
+        let min_freq = self.params.min_freq.value() as f64;
+        let max_freq = self.params.max_freq.value() as f64;
+        let cut_width = self.params.cut_width.value() as f64;
+        let cut_depth = self.params.cut_depth.value() as f64;
+        let cut_slope = self.params.cut_slope.value() as f64;
+        let mode_relative = self.params.mode_relative.value() > 0.5;
+        let use_peak_filter = self.params.use_peak_filter.value() > 0.5;
+        let use_wide_range = self.params.use_wide_range.value() > 0.5;
+        let filter_solo = self.params.filter_solo.value() > 0.5;
+        let trigger_hear = self.params.trigger_hear.value() > 0.5;
+        let stereo_link = self.params.stereo_link.value() as f64;
+        let stereo_mid_side = self.params.stereo_mid_side.value() > 0.5;
+        let sidechain_external = self.params.sidechain_external.value() > 0.5;
+        let single_vocal = self.params.vocal_mode.value() > 0.5;
+        let lookahead_enabled = self.params.lookahead_enabled.value() > 0.5;
+        let lookahead_ms = self.params.lookahead_ms.value() as f64;
+        let oversampling = self.params.oversampling.value() as u32;
+        let os_factor = oversampling_factor(oversampling);
 
-        // ── I/O gain & pan coefficients ──────────────────────────────────────
-        let in_gain = dsp::db_to_lin(input_level_db);
-        let out_gain = dsp::db_to_lin(output_level_db);
-        let (in_gl, in_gr) = pan_gains(input_pan, in_gain);
-        let (out_gl, out_gr) = pan_gains(output_pan, out_gain);
+        prepare_dsp(
+            &mut self.dsp,
+            min_freq,
+            max_freq,
+            use_peak_filter,
+            cut_width,
+            cut_depth,
+            cut_slope,
+            max_reduction,
+            if lookahead_enabled { lookahead_ms } else { 0.0 },
+            single_vocal,
+        );
 
-        // ── Sample processing ─────────────────────────────────────────────────
-        let zero_latency_mode = !lookahead_en || lookahead_ms <= 0.01;
-        let target_latency = if zero_latency_mode {
-            0
+        if os_factor != self.current_os_factor {
+            self.os_dsp = DeEsserDsp::new(self.sample_rate * os_factor as f64);
+            self.current_os_factor = os_factor;
+        }
+        prepare_dsp(
+            &mut self.os_dsp,
+            min_freq,
+            max_freq,
+            use_peak_filter,
+            cut_width,
+            cut_depth,
+            cut_slope,
+            max_reduction,
+            if lookahead_enabled { lookahead_ms } else { 0.0 },
+            single_vocal,
+        );
+
+        let target_latency = if lookahead_enabled && lookahead_ms > 0.0 {
+            lookahead_latency_samples(lookahead_ms, self.sample_rate)
         } else {
-            self.spectral.latency_samples()
+            0
         };
         if target_latency != self.reported_latency {
-            ctx.set_latency_samples(target_latency);
+            context.set_latency_samples(target_latency);
             self.reported_latency = target_latency;
         }
 
-        let mut out_l = vec![0.0_f64; n];
-        let mut out_r = vec![0.0_f64; n];
-        let mut dry_l = vec![0.0_f64; n];
-        let mut dry_r = vec![0.0_f64; n];
-        let mut out_l = vec![0.0_f64; n];
-        let mut out_r = vec![0.0_f64; n];
-        let mut peak_det: f32 = -120.0;
-        let mut peak_red: f32 = 0.0;
-
-        // Snapshot input and sidechain slices before mutably borrowing buffer for output
-        let input_data: Vec<Vec<f32>> = buffer.as_slice().iter().map(|ch| ch.to_vec()).collect();
-        let sc_data: Vec<Vec<f32>> = if have_sc {
-            aux.inputs[0]
-                .as_slice()
-                .iter()
-                .map(|ch| ch.to_vec())
-                .collect()
-        } else {
-            vec![]
+        let settings = ProcessSettings {
+            threshold_db: threshold,
+            max_reduction_db: max_reduction,
+            mode_relative,
+            use_peak_filter,
+            use_wide_range,
+            trigger_hear,
+            filter_solo,
+            stereo_link,
+            stereo_mid_side,
         };
 
-        for s in 0..n {
-            let raw_l = input_data
-                .first()
-                .and_then(|c| c.get(s))
+        let sidechain_buffers = if sidechain_external && !aux.inputs.is_empty() {
+            Some(aux.inputs[0].as_slice_immutable())
+        } else {
+            None
+        };
+
+        let samples = buffer.samples();
+        let channels = buffer.as_slice();
+        if channels.len() < 2 {
+            return ProcessStatus::Normal;
+        }
+
+        let (left_slice, right_slice) = {
+            let (left, right) = channels.split_at_mut(1);
+            (&mut left[0], &mut right[0])
+        };
+
+        let mut peak_det = -120.0_f32;
+        let mut peak_red = 0.0_f32;
+
+        for sample_index in 0..samples {
+            let input_level_db = self.params.input_level.smoothed.next() as f64;
+            let input_pan = self.params.input_pan.smoothed.next() as f64;
+            let output_level_db = self.params.output_level.smoothed.next() as f64;
+            let output_pan = self.params.output_pan.smoothed.next() as f64;
+
+            let main_in_l = left_slice[sample_index] as f64;
+            let main_in_r = right_slice[sample_index] as f64;
+            let input_gain = db_to_lin(input_level_db);
+            let (input_gain_l, input_gain_r) = pan_gains(input_pan, input_gain);
+            let processed_in_l = main_in_l * input_gain_l;
+            let processed_in_r = main_in_r * input_gain_r;
+
+            let sc_in_l = sidechain_buffers
+                .and_then(|buffers| buffers.first())
+                .and_then(|channel| channel.get(sample_index))
                 .copied()
-                .map(|v| v as f64)
-                .unwrap_or(0.0);
-            let raw_r = input_data
-                .get(1)
-                .and_then(|c| c.get(s))
+                .map(f64::from)
+                .unwrap_or(processed_in_l);
+            let sc_in_r = sidechain_buffers
+                .and_then(|buffers| buffers.get(1))
+                .and_then(|channel| channel.get(sample_index))
                 .copied()
-                .map(|v| v as f64)
-                .unwrap_or(raw_l);
+                .map(f64::from)
+                .unwrap_or(processed_in_r);
 
-            let l = raw_l * in_gl;
-            let r = raw_r * in_gr;
+            let ProcessFrame {
+                wet_l,
+                wet_r,
+                dry_l,
+                dry_r,
+                detection_db,
+                reduction_db,
+            } = if os_factor > 1 {
+                let mut wet_l_acc = 0.0;
+                let mut wet_r_acc = 0.0;
+                let mut dry_l_acc = 0.0;
+                let mut dry_r_acc = 0.0;
+                let mut det_acc = -120.0_f64;
+                let mut red_acc = 0.0_f64;
 
-            let sc_l = if have_sc {
-                sc_data
-                    .first()
-                    .and_then(|c| c.get(s))
-                    .copied()
-                    .map(|v| v as f64)
-            } else {
-                None
-            };
-            let sc_r = if have_sc {
-                sc_data
-                    .get(1)
-                    .and_then(|c| c.get(s))
-                    .copied()
-                    .map(|v| v as f64)
-            } else {
-                None
-            };
+                for substep in 0..os_factor {
+                    let t = (substep as f64 + 1.0) / os_factor as f64;
+                    let interp_l = self.prev_main_l + (processed_in_l - self.prev_main_l) * t;
+                    let interp_r = self.prev_main_r + (processed_in_r - self.prev_main_r) * t;
+                    let interp_sc_l = self.prev_sc_l + (sc_in_l - self.prev_sc_l) * t;
+                    let interp_sc_r = self.prev_sc_r + (sc_in_r - self.prev_sc_r) * t;
 
-            if !zero_latency_mode && !bypass {
-                let _ = (
-                    sc_l,
-                    sc_r,
-                    os_factor,
-                    mode_relative,
-                    use_peak,
-                    use_wide,
-                    stereo_link,
-                    stereo_ms,
-                    lookahead_en,
-                    trigger_hear,
-                    filter_solo,
-                );
-            } else {
-                if bypass {
-                    let ol = l * out_gl;
-                    let or_ = r * out_gr;
-                    out_l[s] = ol;
-                    out_r[s] = or_;
-                    dry_l[s] = ol;
-                    dry_r[s] = or_;
-                    self.prev_in_l = l;
-                    self.prev_in_r = r;
-                    continue;
-                }
-                let (ol_proc, or_proc, det_db, red_db) = self.dsp.process_sample(
-                    l,
-                    r,
-                    sc_l,
-                    sc_r,
-                    threshold,
-                    max_reduction,
-                    mode_relative,
-                    use_peak,
-                    use_wide,
-                    stereo_link,
-                    stereo_ms,
-                    false,
-                    trigger_hear,
-                    filter_solo,
-                    false,
-                );
-                let ol = ol_proc * out_gl;
-                let or_ = or_proc * out_gr;
-                out_l[s] = ol;
-                out_r[s] = or_;
-                dry_l[s] = l * out_gl;
-                dry_r[s] = r * out_gr;
-                let df = det_db as f32;
-                let rf = red_db as f32;
-                if df > peak_det {
-                    peak_det = df;
-                }
-                if rf < peak_red {
-                    peak_red = rf;
-                }
-                self.prev_in_l = l;
-                self.prev_in_r = r;
-                continue;
-            }
-
-            } else {
-                None
-            };
-            let sc_r = if have_sc {
-                sc_data
-                    .get(1)
-                    .and_then(|c| c.get(s))
-                    .copied()
-                    .map(|v| v as f64)
-            } else {
-                None
-            };
-
-            let (mut ol, mut or_, det_db, red_db) = if bypass {
-                (l, r, -120.0_f64, 0.0_f64)
-            } else if os_factor > 1 {
-                // Linear interpolation upsampling → process → average
-                let mut acc_l = 0.0;
-                let mut acc_r = 0.0;
-                let mut last_d = -120.0_f64;
-                let mut last_r_db = 0.0_f64;
-                for k in 0..os_factor as usize {
-                    let t = k as f64 / os_factor as f64;
-                    let ul = self.prev_in_l + t * (l - self.prev_in_l);
-                    let ur = self.prev_in_r + t * (r - self.prev_in_r);
-                    let (o_l, o_r, d, rd) = self.os_dsp.process_sample(
-                        ul,
-                        ur,
-                        sc_l,
-                        sc_r,
-                        threshold,
-                        max_reduction,
-                        mode_relative,
-                        use_peak,
-                        use_wide,
-                        stereo_link,
-                        stereo_ms,
-                        lookahead_en,
-                        trigger_hear,
-                        filter_solo,
-                        false,
+                    let frame = self.os_dsp.process_frame(
+                        interp_l,
+                        interp_r,
+                        interp_sc_l,
+                        interp_sc_r,
+                        settings,
                     );
-                    acc_l += o_l;
-                    acc_r += o_r;
-                    last_d = d;
-                    last_r_db = rd;
+                    wet_l_acc += frame.wet_l;
+                    wet_r_acc += frame.wet_r;
+                    dry_l_acc += frame.dry_l;
+                    dry_r_acc += frame.dry_r;
+                    det_acc = det_acc.max(frame.detection_db);
+                    red_acc = red_acc.min(frame.reduction_db);
                 }
+
                 let inv = 1.0 / os_factor as f64;
-                (acc_l * inv, acc_r * inv, last_d, last_r_db)
+                ProcessFrame {
+                    wet_l: wet_l_acc * inv,
+                    wet_r: wet_r_acc * inv,
+                    dry_l: dry_l_acc * inv,
+                    dry_r: dry_r_acc * inv,
+                    detection_db: det_acc,
+                    reduction_db: red_acc,
+                }
             } else {
-                self.dsp.process_sample(
-                    l,
-                    r,
-                    sc_l,
-                    sc_r,
-                    threshold,
-                    max_reduction,
-                    mode_relative,
-                    use_peak,
-                    use_wide,
-                    stereo_link,
-                    stereo_ms,
-                    lookahead_en,
-                    trigger_hear,
-                    filter_solo,
-                    false,
-                )
+                self.dsp
+                    .process_frame(processed_in_l, processed_in_r, sc_in_l, sc_in_r, settings)
             };
 
-            let _ = (
-                sc_l,
-                sc_r,
-                os_factor,
-                mode_relative,
-                use_peak,
-                use_wide,
-                stereo_link,
-                stereo_ms,
-                lookahead_en,
-                trigger_hear,
-                filter_solo,
-            );
-            let ol = l * out_gl;
-            let or_ = r * out_gr;
-            out_l[s] = ol;
-            out_r[s] = or_;
-            dry_l[s] = ol;
-            dry_r[s] = or_;
+            let mix_target = if self.params.bypass.value() > 0.5 {
+                0.0
+            } else if trigger_hear || filter_solo {
+                1.0
+            } else {
+                self.params.mix.smoothed.next() as f64
+            };
+            let wet_mix = self.wet_mix.next(mix_target);
+            let dry_mix = 1.0 - wet_mix;
+            let mixed_l = wet_l * wet_mix + dry_l * dry_mix;
+            let mixed_r = wet_r * wet_mix + dry_r * dry_mix;
+
+            let output_gain = db_to_lin(output_level_db);
+            let (output_gain_l, output_gain_r) = pan_gains(output_pan, output_gain);
+            let out_l = mixed_l * output_gain_l;
+            let out_r = mixed_r * output_gain_r;
+
+            left_slice[sample_index] = out_l as f32;
+            right_slice[sample_index] = out_r as f32;
+            self.analyzer.push((out_l + out_r) * 0.5);
+
+            peak_det = peak_det.max(detection_db as f32);
+            peak_red = peak_red.min(reduction_db as f32);
+            self.prev_main_l = processed_in_l;
+            self.prev_main_r = processed_in_r;
+            self.prev_sc_l = sc_in_l;
+            self.prev_sc_r = sc_in_r;
         }
 
-        if !bypass && !zero_latency_mode {
-        if !bypass {
-            let (det_db, red_db) = self.spectral.process_stereo(
-                &mut out_l,
-                &mut out_r,
-                dsp::SpectralConfig {
-                    min_freq,
-                    max_freq,
-                    threshold_db: threshold,
-                    max_reduction_db: max_reduction,
-                    cut_width,
-                    cut_depth,
-                    cut_slope,
-                },
-            );
-            peak_det = det_db;
-            peak_red = red_db;
-        }
-
-        if mix < 1.0 {
-            let dry = 1.0 - mix;
-            for s in 0..n {
-                out_l[s] = out_l[s] * mix + dry_l[s] * dry;
-                out_r[s] = out_r[s] * mix + dry_r[s] * dry;
-            }
-        }
-
-        for s in 0..n {
-            self.analyzer.push((out_l[s] + out_r[s]) * 0.5);
-            let df = det_db as f32;
-            let rf = red_db as f32;
-            if df > peak_det {
-                peak_det = df;
-            }
-            if rf < peak_red {
-                peak_red = rf;
-            }
-        }
-
-        // ── Write output ──────────────────────────────────────────────────────
-        {
-            let out_slice = buffer.as_slice();
-            for (ch_idx, channel) in out_slice.iter_mut().enumerate() {
-                let src = if ch_idx == 0 { &out_l } else { &out_r };
-                for (s, smp) in channel.iter_mut().enumerate() {
-                    *smp = src.get(s).copied().unwrap_or(0.0) as f32;
-                }
-            }
-        }
-
-        // ── Update meters ─────────────────────────────────────────────────────
         self.meters
             .det_bits
             .store(f32_to_u32(peak_det), Ordering::Relaxed);
@@ -1077,14 +807,14 @@ impl Plugin for NebulaDeEsser {
             .red_bits
             .store(f32_to_u32(peak_red), Ordering::Relaxed);
 
-        let prev_det = u32_to_f32(self.meters.det_max_bits.load(Ordering::Relaxed));
-        if peak_det > prev_det {
+        let det_max = u32_to_f32(self.meters.det_max_bits.load(Ordering::Relaxed));
+        if peak_det > det_max {
             self.meters
                 .det_max_bits
                 .store(f32_to_u32(peak_det), Ordering::Relaxed);
         }
-        let prev_red = u32_to_f32(self.meters.red_max_bits.load(Ordering::Relaxed));
-        if peak_red < prev_red {
+        let red_max = u32_to_f32(self.meters.red_max_bits.load(Ordering::Relaxed));
+        if peak_red < red_max {
             self.meters
                 .red_max_bits
                 .store(f32_to_u32(peak_red), Ordering::Relaxed);
@@ -1094,26 +824,158 @@ impl Plugin for NebulaDeEsser {
     }
 }
 
-// Linear panning with constant-power approximation
-fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
-    let p = pan.clamp(-1.0, 1.0);
-    let pan_l = if p <= 0.0 { 1.0 } else { 1.0 - p };
-    let pan_r = if p >= 0.0 { 1.0 } else { 1.0 + p };
-    (gain * pan_l, gain * pan_r)
-}
-
 impl ClapPlugin for NebulaDeEsser {
     const CLAP_ID: &'static str = "audio.nebula.deesser";
     const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Hyper-optimized 64-bit CLAP de-esser v2.2 — alien synthwave GUI");
-    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://nebula.audio/manual");
-    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://nebula.audio/support");
+        Some("Spectral-style de-esser with split/wide processing, sidechain, and lookahead");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
+    const CLAP_SUPPORT_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::AudioEffect,
         ClapFeature::Stereo,
-        ClapFeature::Mono,
+        ClapFeature::Deesser,
+        ClapFeature::Filter,
         ClapFeature::Utility,
+        ClapFeature::Restoration,
+    ];
+}
+
+impl Vst3Plugin for NebulaDeEsser {
+    const VST3_CLASS_ID: [u8; 16] = *b"NebulaDeEssrVST3";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Fx,
+        Vst3SubCategory::Dynamics,
+        Vst3SubCategory::Filter,
+        Vst3SubCategory::Tools,
     ];
 }
 
 nih_export_clap!(NebulaDeEsser);
+nih_export_vst3!(NebulaDeEsser);
+
+fn apply_midi_mapping(
+    parameter_index: u8,
+    value: f32,
+    params: &Arc<NebulaParams>,
+    setter: &ParamSetter,
+) {
+    macro_rules! set_param {
+        ($param:expr, $value:expr) => {{
+            setter.begin_set_parameter(&$param);
+            setter.set_parameter(&$param, $value);
+            setter.end_set_parameter(&$param);
+        }};
+    }
+
+    match parameter_index {
+        MIDI_THRESHOLD => set_param!(params.threshold, -60.0 + value * 60.0),
+        MIDI_MAX_RED => set_param!(params.max_reduction, value * 40.0),
+        MIDI_STEREO_LINK => set_param!(params.stereo_link, value),
+        MIDI_INPUT_LEVEL => set_param!(params.input_level, -100.0 + value * 200.0),
+        MIDI_INPUT_PAN => set_param!(params.input_pan, value * 2.0 - 1.0),
+        MIDI_OUTPUT_LEVEL => set_param!(params.output_level, -100.0 + value * 200.0),
+        MIDI_OUTPUT_PAN => set_param!(params.output_pan, value * 2.0 - 1.0),
+        MIDI_MIN_FREQ => set_param!(params.min_freq, 1.0 + value * 23_999.0),
+        MIDI_MAX_FREQ => set_param!(params.max_freq, 1.0 + value * 23_999.0),
+        MIDI_LOOKAHEAD => set_param!(params.lookahead_ms, value * 20.0),
+        _ => {}
+    }
+}
+
+fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, setter: &ParamSetter) {
+    macro_rules! set_float {
+        ($field:expr, $param:expr) => {
+            if let Some(value) = $field {
+                setter.begin_set_parameter(&$param);
+                setter.set_parameter(&$param, value as f32);
+                setter.end_set_parameter(&$param);
+            }
+        };
+    }
+
+    macro_rules! set_bool {
+        ($field:expr, $param:expr) => {
+            if let Some(value) = $field {
+                setter.begin_set_parameter(&$param);
+                setter.set_parameter(&$param, if value { 1.0 } else { 0.0 });
+                setter.end_set_parameter(&$param);
+            }
+        };
+    }
+
+    set_float!(changes.threshold, params.threshold);
+    set_float!(changes.max_reduction, params.max_reduction);
+    set_float!(changes.min_freq, params.min_freq);
+    set_float!(changes.max_freq, params.max_freq);
+    set_bool!(changes.mode_relative, params.mode_relative);
+    set_bool!(changes.use_peak_filter, params.use_peak_filter);
+    set_bool!(changes.use_wide_range, params.use_wide_range);
+    set_bool!(changes.filter_solo, params.filter_solo);
+    set_bool!(changes.lookahead_enabled, params.lookahead_enabled);
+    set_float!(changes.lookahead_ms, params.lookahead_ms);
+    set_bool!(changes.trigger_hear, params.trigger_hear);
+    set_float!(changes.stereo_link, params.stereo_link);
+    set_bool!(changes.stereo_mid_side, params.stereo_mid_side);
+    set_bool!(changes.sidechain_external, params.sidechain_external);
+    set_bool!(changes.vocal_mode, params.vocal_mode);
+    set_float!(changes.input_level, params.input_level);
+    set_float!(changes.input_pan, params.input_pan);
+    set_float!(changes.output_level, params.output_level);
+    set_float!(changes.output_pan, params.output_pan);
+    set_bool!(changes.bypass, params.bypass);
+    set_float!(changes.cut_width, params.cut_width);
+    set_float!(changes.cut_depth, params.cut_depth);
+    set_float!(changes.cut_slope, params.cut_slope);
+    set_float!(changes.mix, params.mix);
+
+    if let Some(oversampling) = changes.oversampling {
+        setter.begin_set_parameter(&params.oversampling);
+        setter.set_parameter(&params.oversampling, oversampling as f32);
+        setter.end_set_parameter(&params.oversampling);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_dsp(
+    dsp: &mut DeEsserDsp,
+    min_freq: f64,
+    max_freq: f64,
+    use_peak_filter: bool,
+    cut_width: f64,
+    cut_depth: f64,
+    cut_slope: f64,
+    max_reduction: f64,
+    lookahead_ms: f64,
+    single_vocal: bool,
+) {
+    dsp.update_filters(
+        min_freq,
+        max_freq,
+        use_peak_filter,
+        cut_width,
+        cut_depth,
+        cut_slope,
+        max_reduction,
+    );
+    dsp.update_lookahead(lookahead_ms);
+    dsp.update_vocal_mode(single_vocal);
+}
+
+fn oversampling_factor(selection: u32) -> u32 {
+    match selection {
+        1 => 2,
+        2 => 4,
+        3 => 6,
+        4 => 8,
+        _ => 1,
+    }
+}
+
+fn lookahead_latency_samples(lookahead_ms: f64, sample_rate: f64) -> u32 {
+    ((lookahead_ms.max(0.0) * sample_rate) / 1000.0).round() as u32
+}
+
+fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
+    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
+    (gain * angle.cos(), gain * angle.sin())
+}
