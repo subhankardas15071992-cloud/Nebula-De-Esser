@@ -50,6 +50,15 @@ impl VowelClass {
     }
 }
 
+#[inline]
+fn default_formant_trackers() -> [Kalman1D; 3] {
+    [
+        Kalman1D::new(730.0, 0.004, 0.05),
+        Kalman1D::new(1090.0, 0.003, 0.04),
+        Kalman1D::new(2440.0, 0.005, 0.06),
+    ]
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Kalman1D {
     estimate: f64,
@@ -447,11 +456,7 @@ impl ChannelState {
             tkeo_env_long: EnvelopeFollower::new(2.5, 80.0, sample_rate),
             subspace_tracker: AdaptiveSubspaceTracker::new(),
             formant_filters: [BiquadState::default(); 3],
-            formant_trackers: [
-                Kalman1D::new(730.0, 0.004, 0.05),
-                Kalman1D::new(1090.0, 0.003, 0.04),
-                Kalman1D::new(2440.0, 0.005, 0.06),
-            ],
+            formant_trackers: default_formant_trackers(),
             vowel_probs: [0.2; 5],
             dominant_vowel: VowelClass::A,
         }
@@ -472,7 +477,9 @@ impl ChannelState {
         self.tkeo_env_short.reset();
         self.tkeo_env_mid.reset();
         self.tkeo_env_long.reset();
+        self.subspace_tracker = AdaptiveSubspaceTracker::new();
         self.formant_filters = [BiquadState::default(); 3];
+        self.formant_trackers = default_formant_trackers();
         self.vowel_probs = [0.2; 5];
         self.dominant_vowel = VowelClass::A;
     }
@@ -486,6 +493,7 @@ pub struct DeEsserDsp {
     split_lp: [BiquadCoeffs; 3],
     bell: [BiquadCoeffs; 2],
     formant_coeffs: [BiquadCoeffs; 3],
+    detection_center_hz: f64,
     full_cut_depth_db: f64,
     channels: [ChannelState; 2],
 }
@@ -502,6 +510,7 @@ impl DeEsserDsp {
             split_lp: [BiquadCoeffs::default(); 3],
             bell: [BiquadCoeffs::default(); 2],
             formant_coeffs: [BiquadCoeffs::default(); 3],
+            detection_center_hz: 6_900.0,
             full_cut_depth_db: 0.0,
             channels: [
                 ChannelState::new(sample_rate),
@@ -589,6 +598,7 @@ impl DeEsserDsp {
         self.detect_lp = Self::make_lp(max_freq, self.sample_rate);
         self.detect_peak = BiquadCoeffs::bandpass_peak(center_freq, detection_q, self.sample_rate);
         self.split_lp = Self::make_lp(center_freq, self.sample_rate);
+        self.detection_center_hz = center_freq;
 
         self.full_cut_depth_db = max_reduction_db.abs() * cut_depth.clamp(0.0, 1.0);
         let stage_1_depth = -(self.full_cut_depth_db * (0.65 + 0.2 * (1.0 - slope)));
@@ -644,8 +654,8 @@ impl DeEsserDsp {
         let subspace_r = self.subspace_metrics(sc_r, 1);
         let psycho_l = self.psychoacoustic_weight(sc_l, detected_l, 0);
         let psycho_r = self.psychoacoustic_weight(sc_r, detected_r, 1);
-        let formant_lock_l = self.formant_preservation_lock(sc_l, 0);
-        let formant_lock_r = self.formant_preservation_lock(sc_r, 1);
+        let formant_lock_l = self.formant_preservation_lock(sc_l, detected_l, 0);
+        let formant_lock_r = self.formant_preservation_lock(sc_r, detected_r, 1);
 
         let linked_detect = (detected_env_l + detected_env_r) * 0.5;
         let linked_full = (full_env_l + full_env_r) * 0.5;
@@ -665,18 +675,17 @@ impl DeEsserDsp {
             lin_to_db(detect_env_r)
         };
 
-        let reduction_target_l =
-            (reduction_amount(comparison_l, settings.threshold_db, max_reduction_db)
-                * subspace_l
-                * psycho_l
-                * formant_lock_l)
-                .clamp(0.0, 1.0);
-        let reduction_target_r =
-            (reduction_amount(comparison_r, settings.threshold_db, max_reduction_db)
-                * subspace_r
-                * psycho_r
-                * formant_lock_r)
-                .clamp(0.0, 1.0);
+        let base_target_l = reduction_amount(comparison_l, settings.threshold_db, max_reduction_db);
+        let base_target_r = reduction_amount(comparison_r, settings.threshold_db, max_reduction_db);
+
+        // Keep user controls responsive by treating the transparency stack as a shaping layer
+        // around the base control law instead of a hard attenuation cascade.
+        let transparency_l = transparency_shaping(subspace_l, psycho_l, formant_lock_l);
+        let transparency_r = transparency_shaping(subspace_r, psycho_r, formant_lock_r);
+        // Keep user controls as the dominant driver.
+        // The transparency layer gently nudges behavior instead of suppressing it.
+        let reduction_target_l = (base_target_l * (0.75 + 0.25 * transparency_l)).clamp(0.0, 1.0);
+        let reduction_target_r = (base_target_r * (0.75 + 0.25 * transparency_r)).clamp(0.0, 1.0);
 
         let amount_l = self.channels[0].reduction.process(reduction_target_l);
         let amount_r = self.channels[1].reduction.process(reduction_target_r);
@@ -783,7 +792,7 @@ impl DeEsserDsp {
     }
 
     #[inline]
-    fn formant_preservation_lock(&mut self, input: f64, channel_idx: usize) -> f64 {
+    fn formant_preservation_lock(&mut self, input: f64, detected: f64, channel_idx: usize) -> f64 {
         let channel = &mut self.channels[channel_idx];
         let mut energies = [0.0; 3];
         for (index, (coeffs, state)) in self
@@ -820,7 +829,17 @@ impl DeEsserDsp {
             channel.vowel_probs[idx] = channel.vowel_probs[idx] * 0.98 + goal * 0.02;
         }
 
-        (1.0 - 0.6 * lock_strength).clamp(0.4, 1.0)
+        let vowel_confidence = channel.vowel_probs[vowel.idx()].clamp(0.0, 1.0);
+        let protected_formant = target
+            .iter()
+            .map(|f| (self.detection_center_hz - *f).abs())
+            .fold(f64::MAX, f64::min);
+        let band_overlap = (1.0 - (protected_formant / 4500.0)).clamp(0.0, 1.0);
+        let sibilant_bias = (detected.abs() / (input.abs() + 1.0e-9)).clamp(0.0, 1.0);
+        let effective_lock =
+            lock_strength * vowel_confidence * band_overlap * (1.0 - 0.35 * sibilant_bias);
+
+        (1.0 - 0.55 * effective_lock).clamp(0.45, 1.0)
     }
 
     #[inline]
@@ -878,6 +897,14 @@ fn reduction_amount(detected_db: f64, threshold_db: f64, max_reduction_db: f64) 
     } else {
         (excess_db / max_reduction_db).clamp(0.0, 1.0)
     }
+}
+
+#[inline]
+fn transparency_shaping(subspace: f64, psycho: f64, formant_lock: f64) -> f64 {
+    let subspace_weight = 0.85 + 0.15 * subspace.clamp(0.0, 1.0);
+    let psycho_weight = 0.85 + 0.15 * psycho.clamp(0.0, 1.0);
+    let formant_weight = 0.85 + 0.15 * formant_lock.clamp(0.0, 1.0);
+    (subspace_weight * psycho_weight * formant_weight).clamp(0.65, 1.0)
 }
 
 #[inline]
@@ -960,5 +987,38 @@ mod tests {
         );
 
         assert!(frame.reduction_db > -0.1);
+    }
+
+    #[test]
+    fn threshold_control_changes_reduction_amount() {
+        let mut dsp = DeEsserDsp::new(48_000.0);
+        let settings_loose = ProcessSettings {
+            threshold_db: -35.0,
+            max_reduction_db: 12.0,
+            mode_relative: false,
+            ..ProcessSettings::default()
+        };
+        let settings_strict = ProcessSettings {
+            threshold_db: -6.0,
+            max_reduction_db: 12.0,
+            mode_relative: false,
+            ..ProcessSettings::default()
+        };
+
+        let mut loose_reduction = 0.0;
+        let mut strict_reduction = 0.0;
+        for _ in 0..256 {
+            loose_reduction = dsp
+                .process_frame(0.85, 0.85, 0.85, 0.85, settings_loose)
+                .reduction_db;
+        }
+        dsp.reset();
+        for _ in 0..256 {
+            strict_reduction = dsp
+                .process_frame(0.85, 0.85, 0.85, 0.85, settings_strict)
+                .reduction_db;
+        }
+
+        assert!(loose_reduction < strict_reduction - 0.5);
     }
 }
