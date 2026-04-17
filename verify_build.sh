@@ -9,6 +9,20 @@ echo "Nebula DeEsser Build Verification"
 echo "========================================="
 echo ""
 
+# Guard against accidentally committed patch/conflict markers that can break builds
+echo "0. Checking for unresolved merge/patch markers..."
+if rg -n --glob '*.rs' --glob '*.toml' --glob '*.md' \
+    '^(<<<<<<<|=======|>>>>>>>|@@ |diff --git|index [0-9a-f]{7,}\.\.[0-9a-f]{7,})' \
+    src tests xtask Cargo.toml README.md >/tmp/nebula_marker_check.txt; then
+    echo "✗ Found unresolved merge/patch markers:"
+    cat /tmp/nebula_marker_check.txt
+    exit 1
+else
+    echo "✓ No unresolved merge/patch markers found"
+fi
+
+echo ""
+
 # Check for required tools
 echo "Checking build environment..."
 if ! command -v cargo &> /dev/null; then
