@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.5.0 introduces the biggest DSP leap in Nebula De-Esser so far: the legacy spectral-compression path has been replaced with a transparent, speech-aware Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/5e364db7-b712-4768-9286-2773f9f35c46" />
+<img width="858" height="694" alt="Image" src="https://github.com/user-attachments/assets/3f5803c9-21ff-4591-8960-edc3983d3750" />
 
 ---
 
