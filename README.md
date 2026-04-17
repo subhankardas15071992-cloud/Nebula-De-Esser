@@ -9,9 +9,7 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.4.0 has additional stability fixes, and now features the Cut Slope knob to fine tune the slope of the notch.
-
-Please note, version 2.4.0 will be the last version to use spectral compression based algorithm, for upcoming version 2.5.0 Nebula De-Esser is undergoing a complete re-write to switch to even more transparent Orthogonal Subspace Projection algorithm using Teager-Kaiser Energy Operator.
+Version 2.5.0 introduces the biggest DSP leap in Nebula De-Esser so far: the legacy spectral-compression path has been replaced with a transparent, speech-aware Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis.
 
 <img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/5e364db7-b712-4768-9286-2773f9f35c46" />
 
@@ -35,6 +33,31 @@ If you find this open-source software helpful and would like to support its deve
 
 - **Stability updates** — further stability tuning to ensure lower CPU consumption.
 - **Cut Slope** — Lets the user fine tune the slope of the notch, continuosly varible from 0 dB/oct to 100 dB/oct for precise tuning.
+
+---
+
+## 🚀 **What's New in v2.5.0 — Orthogonal Subspace Era**
+
+### 🧠 **Brand-New Core Algorithm**
+
+Nebula De-Esser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
+
+- **Adaptive subspace tracking** with slow eigenvector adaptation for stable, non-jittery behavior
+- **Multi-resolution analysis** (short / medium / long windows) to respond to both transients and sustained consonants
+- **Orthogonal energy gating** that focuses reduction where energy diverges from the learned voiced subspace
+
+### 🎤 **Voice-Aware Transparency Stack**
+
+To keep vocals natural under heavy de-essing, v2.5.0 introduces layered speech-aware protection:
+
+- **Psychoacoustic harmonic weighting** de-emphasizes reduction pressure in voiced/harmonic regions
+- **Real-time vowel classification (A / E / I / O / U aware)** to keep vowel identity intact
+- **Kalman-smoothed formant tracking** for buttery-stable formant trajectories (F1/F2/F3)
+- **Formant preservation locking** that protects vowel peaks explicitly while still controlling harsh sibilance
+
+### 🎧 **Result**
+
+Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and more transparent de-essing across spoken word, sung leads, and stacked harmonies.
 
 ---
 
