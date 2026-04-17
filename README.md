@@ -258,7 +258,7 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 ## ⚠️ Cakewalk NXT / Cakewalk Sonar Not Supported
 
-**This plugin will not work in Cakewalk NXT or Cakewalk Sonar and N-Track Studio. This is a known, confirmed incompatibility.**
+**This plugin will not work in Cakewalk NXT and Cakewalk Sonar. This is a known, confirmed incompatibility.**
 
 Fix for the same is currently under progress, and most likely will be released in version 2.6.0.
 
