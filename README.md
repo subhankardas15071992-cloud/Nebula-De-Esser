@@ -61,6 +61,31 @@ Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and
 
 ---
 
+## 🚀 **What's New in v2.5.0 — Orthogonal Subspace Era**
+
+### 🧠 **Brand-New Core Algorithm**
+
+Nebula De-Esser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
+
+- **Adaptive subspace tracking** with slow eigenvector adaptation for stable, non-jittery behavior
+- **Multi-resolution analysis** (short / medium / long windows) to respond to both transients and sustained consonants
+- **Orthogonal energy gating** that focuses reduction where energy diverges from the learned voiced subspace
+
+### 🎤 **Voice-Aware Transparency Stack**
+
+To keep vocals natural under heavy de-essing, v2.5.0 introduces layered speech-aware protection:
+
+- **Psychoacoustic harmonic weighting** de-emphasizes reduction pressure in voiced/harmonic regions
+- **Real-time vowel classification (A / E / I / O / U aware)** to keep vowel identity intact
+- **Kalman-smoothed formant tracking** for buttery-stable formant trajectories (F1/F2/F3)
+- **Formant preservation locking** that protects vowel peaks explicitly while still controlling harsh sibilance
+
+### 🎧 **Result**
+
+Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and more transparent de-essing across spoken word, sung leads, and stacked harmonies.
+
+---
+
 ## ✨ **What's New in v2.3.0**
 
 ### 🎨 **Complete UI Redesign — Sci-Fi Dark Theme**
