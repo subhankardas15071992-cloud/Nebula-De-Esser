@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.5.0 introduces the biggest DSP leap in Nebula De-Esser so far: the legacy spectral-compression path has been replaced with a transparent, speech-aware Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/5e364db7-b712-4768-9286-2773f9f35c46" />
+<img width="858" height="694" alt="Image" src="https://github.com/user-attachments/assets/3f5803c9-21ff-4591-8960-edc3983d3750" />
 
 ---
 
@@ -24,6 +24,31 @@ If you find this open-source software helpful and would like to support its deve
     <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
   </a>
 </p>
+
+---
+
+## 🚀 **What's New in v2.5.0 — Orthogonal Subspace Era**
+
+### 🧠 **Brand-New Core Algorithm**
+
+Nebula De-Esser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
+
+- **Adaptive subspace tracking** with slow eigenvector adaptation for stable, non-jittery behavior
+- **Multi-resolution analysis** (short / medium / long windows) to respond to both transients and sustained consonants
+- **Orthogonal energy gating** that focuses reduction where energy diverges from the learned voiced subspace
+
+### 🎤 **Voice-Aware Transparency Stack**
+
+To keep vocals natural under heavy de-essing, v2.5.0 introduces layered speech-aware protection:
+
+- **Psychoacoustic harmonic weighting** de-emphasizes reduction pressure in voiced/harmonic regions
+- **Real-time vowel classification (A / E / I / O / U aware)** to keep vowel identity intact
+- **Kalman-smoothed formant tracking** for buttery-stable formant trajectories (F1/F2/F3)
+- **Formant preservation locking** that protects vowel peaks explicitly while still controlling harsh sibilance
+
+### 🎧 **Result**
+
+Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and more transparent de-essing across spoken word, sung leads, and stacked harmonies.
 
 ---
 
@@ -235,7 +260,7 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 **This plugin will not work in Cakewalk NXT or Cakewalk Sonar and N-Track Studio. This is a known, confirmed incompatibility.**
 
-Fix for the same is currently under progress, and most likely will be released in version 2.5.0.
+Fix for the same is currently under progress, and most likely will be released in version 2.6.0.
 
 ## ⚠️ N-Track Studio
 
