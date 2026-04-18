@@ -1,7 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.5.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser v2.6.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
+// 
+// NOTE: As of v2.5.0, the algorithm migrated from compression-based de-essing
+// to Orthogonal Subspace Projection with Teager-Kaiser Energy Operator (TKEO).
+// The "threshold" parameter now controls TKEO sensitivity, not compression.
 // ─────────────────────────────────────────────────────────────────────────────
 use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES};
@@ -28,7 +32,8 @@ const ACRYLIC_HIGH: Color32 = Color32::from_rgb(20, 12, 46); // hover / active s
 // Control fills — dark tinted, not grey
 const CTRL_DEFAULT: Color32 = Color32::from_rgb(18, 10, 38); // resting control
 const CTRL_HOVER: Color32 = Color32::from_rgb(26, 16, 54); // hover lift
-                                                           // Borders — neon-tinted strokes
+
+// Borders — neon-tinted strokes
 const STROKE_DEF: Color32 = Color32::from_rgb(50, 30, 90); // purple-tinted border
 const DIVIDER: Color32 = Color32::from_rgb(30, 18, 60); // separator
 
@@ -240,7 +245,7 @@ pub struct NebulaGui {
     pub active_state: char,
     pub undo_stack: Vec<ParamSnapshot>,
     pub redo_stack: Vec<ParamSnapshot>,
-    pub drag_snap: Option<ParamSnapshot>,
+    pub drag_snap: Option<(f64, f64)>,
     pub midi_popup: bool,
     pub midi_context_menu: bool,
     pub midi_context_anchor: Pos2,
@@ -488,7 +493,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(tx + 24.0 * s, ty + 8.0 * s),
         egui::Align2::LEFT_CENTER,
-        "Spectrum Processor  ·  64-bit  ·  CLAP",
+        "TKEO Subspace Processor · v2.6.0",
         FontId::new(11.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -497,7 +502,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.5",
+        "v2.6",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -547,8 +552,8 @@ fn draw_command_bar(
 
     // AppBarButton — WinUI CommandBar button style
     // Active: AccentFillColorDefault fill, white text
-    // Hover:  ControlFillColorSecondary, primary text
-    // Rest:   ControlFillColorDefault, secondary text
+    // Hover: ControlFillColorSecondary, primary text
+    // Rest: ControlFillColorDefault, secondary text
     macro_rules! appbar_btn {
         ($label:expr, $active:expr, $danger:expr, $w:expr) => {{
             let w = $w * s;
@@ -637,10 +642,10 @@ fn draw_command_bar(
         let resp = ui.allocate_rect(pr, Sense::click());
         let hov = resp.hovered();
         let lbl = if gui.presets.is_empty() {
-            "Preset  v".to_string()
+            "Preset v".to_string()
         } else {
             let n = &gui.presets[gui.selected_preset.min(gui.presets.len() - 1)].0;
-            format!("{}  v", if n.len() > 16 { &n[..16] } else { n })
+            format!("{} v", if n.len() > 16 { &n[..16] } else { n })
         };
         {
             let p = ui.painter_at(rect);
@@ -785,9 +790,9 @@ fn draw_command_bar(
     cx += 8.0 * s;
 
     let ab_label = if gui.active_state == 'A' {
-        "A/B  [A]"
+        "A/B [A]"
     } else {
-        "A/B  [B]"
+        "A/B [B]"
     };
     let ab_active = gui.state_a.is_some() || gui.state_b.is_some();
     let ab_resp = appbar_btn!(ab_label, ab_active, false, 64.0);
@@ -873,8 +878,8 @@ fn draw_command_bar(
             p.text(
                 or_.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("OS  {}  v", cur),
-                FontId::new(12.5 * s, FontFamily::Proportional),
+                cur,
+                FontId::new(11.5 * s, FontFamily::Proportional),
                 fg,
             );
         }
@@ -884,1031 +889,794 @@ fn draw_command_bar(
     }
 }
 
-// ─── Detection Meter Panel ────────────────────────────────────────────────────
-fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
-    {
-        let pa = ui.painter_at(rect);
-        acrylic_card(&pa, rect, 8.0 * s);
-        pa.text(
-            Pos2::new(rect.center().x, rect.min.y + 12.0 * s),
-            egui::Align2::CENTER_CENTER,
-            "Detect",
-            FontId::new(11.5 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-    }
+// ─── Detection Panel (LEFT) — TKEO Sensitivity ───────────────────────────────
+fn draw_det_panel(ui: &mut Ui, rect: Rect, params: &GuiParams, ch: &mut GuiChanges, s: f32) {
+    let p = ui.painter_at(rect);
+    acrylic_card(&p, rect, 8.0 * s);
 
     let cx = rect.center().x;
-    let mt = rect.min.y + 46.0 * s;
-    let mh = rect.height() - 86.0 * s;
-    let mw = 12.0 * s;
-    let sw = 12.0 * s;
-    let sx = cx - (mw + sw + 4.0 * s) * 0.5;
+    let mut cy = rect.min.y + 12.0 * s;
 
-    let max_r = Rect::from_center_size(
-        Pos2::new(cx, rect.min.y + 30.0 * s),
-        Vec2::new(rect.width() - 14.0 * s, 14.0 * s),
+    // Panel title
+    p.text(
+        Pos2::new(cx, cy),
+        egui::Align2::CENTER_TOP,
+        "Detection",
+        FontId::new(12.5 * s, FontFamily::Proportional),
+        TEXT_PRI,
     );
-    if ui.allocate_rect(max_r, Sense::click()).clicked() {
+    cy += 22.0 * s;
+
+    // TKEO Sensitivity slider (formerly "Threshold")
+    // Controls how sharp/erratic an energy spike must be to classify as sibilance
+    let slider_r = Rect::from_min_size(
+        Pos2::new(rect.min.x + 8.0 * s, cy),
+        Vec2::new(rect.width() - 16.0 * s, 18.0 * s),
+    );
+    
+    // Label with info tooltip
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("TKEO Sensitivity")
+            .color(TEXT_PRI)
+            .font(FontId::new(11.5 * s, FontFamily::Proportional)));
+        ui.add(egui::Label::new(
+            egui::RichText::new("ⓘ")
+                .color(TEXT_TER)
+                .font(FontId::new(9.0 * s, FontFamily::Monospace))
+        ).on_hover_text(
+            "Controls how sharp or erratic an energy spike must be\n\
+             before the algorithm classifies it as sibilance.\n\
+             • Lower = more sensitive (catches subtle spikes)\n\
+             • Higher = less sensitive (only aggressive transients)\n\
+             \n\
+             Uses Teager-Kaiser Energy Operator for detection."
+        ));
+    });
+    cy += 18.0 * s;
+
+    // Draw slider track
+    let track = Rect::from_min_size(
+        Pos2::new(slider_r.min.x, slider_r.center().y - 2.0 * s),
+        Vec2::new(slider_r.width(), 4.0 * s),
+    );
+    p.rect_filled(track, 2.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(track, 2.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+
+    // Calculate thumb position: -60..0 dB range
+    let norm = ((params.threshold - -60.0) / 60.0).clamp(0.0, 1.0);
+    let thumb_x = slider_r.min.x + norm * slider_r.width();
+    let thumb_r = Rect::from_center_size(
+        Pos2::new(thumb_x, slider_r.center().y),
+        Vec2::new(14.0 * s, 14.0 * s),
+    );
+
+    // Thumb with accent gradient
+    p.rect_filled(thumb_r, 3.0 * s, ACCENT);
+    p.rect_stroke(
+        thumb_r,
+        3.0 * s,
+        Stroke::new(1.0, ACCENT_BORDER),
+        egui::StrokeKind::Outside,
+    );
+
+    // Value display
+    p.text(
+        Pos2::new(slider_r.max.x + 4.0 * s, slider_r.center().y),
+        egui::Align2::LEFT_CENTER,
+        &format!("{:.1} dB", params.threshold),
+        FontId::new(10.0 * s, FontFamily::Proportional),
+        TEXT_SEC,
+    );
+
+    // Interaction
+    let slider_resp = ui.allocate_rect(slider_r, Sense::drag());
+    if slider_resp.dragged() {
+        let dx = slider_resp.drag_delta().x;
+        let new_val = (params.threshold + (dx / slider_r.width()) * 60.0).clamp(-60.0, 0.0);
+        ch.threshold = Some(new_val);
+    }
+    if slider_resp.clicked() {
+        if let Some(pos) = slider_resp.interact_pointer_pos() {
+            let norm = ((pos.x - slider_r.min.x) / slider_r.width()).clamp(0.0, 1.0);
+            ch.threshold = Some(-60.0 + norm * 60.0);
+        }
+    }
+    if slider_resp.secondary_clicked() {
+        gui.num_input = NumInput {
+            open: true,
+            label: "TKEO Sensitivity".to_string(),
+            value_str: format!("{:.1}", params.threshold),
+            target: NumTarget::Threshold,
+            min: -60.0,
+            max: 0.0,
+        };
+    }
+
+    // Meter display
+    cy += 28.0 * s;
+    let meter_h = 48.0 * s;
+    let meter_r = Rect::from_min_size(
+        Pos2::new(rect.min.x + 8.0 * s, cy),
+        Vec2::new(rect.width() - 16.0 * s, meter_h),
+    );
+    
+    // Meter background
+    p.rect_filled(meter_r, 4.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(
+        meter_r,
+        4.0 * s,
+        Stroke::new(1.0, STROKE_DEF),
+        egui::StrokeKind::Outside,
+    );
+
+    // Meter fill based on detection_db
+    let fill_norm = ((params.detection_db - -60.0) / 60.0).clamp(0.0, 1.0);
+    let fill_w = meter_r.width() * fill_norm;
+    let fill_r = Rect::from_min_size(meter_r.min, Vec2::new(fill_w, meter_r.height()));
+    
+    // Gradient fill: green -> yellow -> red
+    let fill_col = if params.detection_db > -12.0 {
+        M_RED
+    } else if params.detection_db > -24.0 {
+        M_YELLOW
+    } else {
+        M_GREEN
+    };
+    p.rect_filled(fill_r, 4.0 * s, ga(fill_col, 180));
+
+    // Peak marker
+    let peak_norm = ((params.detection_max_db - -60.0) / 60.0).clamp(0.0, 1.0);
+    let peak_x = meter_r.min.x + peak_norm * meter_r.width();
+    p.line_segment(
+        [
+            Pos2::new(peak_x, meter_r.min.y + 2.0 * s),
+            Pos2::new(peak_x, meter_r.max.y - 2.0 * s),
+        ],
+        Stroke::new(2.0 * s, ACCENT_LIGHT),
+    );
+
+    // Reset peak button (small)
+    let reset_r = Rect::from_min_size(
+        Pos2::new(meter_r.max.x - 24.0 * s, meter_r.min.y + 2.0 * s),
+        Vec2::new(20.0 * s, 16.0 * s),
+    );
+    let reset_resp = ui.allocate_rect(reset_r, Sense::click());
+    if reset_resp.hovered() {
+        p.rect_filled(reset_r, 3.0 * s, CTRL_HOVER);
+    }
+    p.text(
+        reset_r.center(),
+        egui::Align2::CENTER_CENTER,
+        "↺",
+        FontId::new(11.0 * s, FontFamily::Monospace),
+        TEXT_SEC,
+    );
+    if reset_resp.clicked() {
         ch.detection_max_reset = true;
     }
 
-    let sl_r = Rect::from_min_size(Pos2::new(sx + mw + 4.0 * s, mt), Vec2::new(sw, mh));
-    let sr = ui.allocate_rect(sl_r, Sense::drag());
-    if sr.dragged() {
-        let n = (((p.threshold + 60.0) / 60.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
-        ch.threshold = Some(-60.0 + n as f64 * 60.0);
-    }
+    // Meter labels
+    p.text(
+        Pos2::new(meter_r.min.x + 4.0 * s, meter_r.max.y - 4.0 * s),
+        egui::Align2::LEFT_BOTTOM,
+        "-60 dB",
+        FontId::new(8.0 * s, FontFamily::Proportional),
+        TEXT_TER,
+    );
+    p.text(
+        Pos2::new(meter_r.max.x - 4.0 * s, meter_r.max.y - 4.0 * s),
+        egui::Align2::RIGHT_BOTTOM,
+        "0 dB",
+        FontId::new(8.0 * s, FontFamily::Proportional),
+        TEXT_TER,
+    );
 
-    {
-        let pa = ui.painter_at(rect);
-        // Peak hold — WinUI TextBox style inset
-        pa.rect_filled(max_r, 4.0 * s, CTRL_DEFAULT);
-        pa.rect_stroke(
-            max_r,
-            4.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        pa.text(
-            max_r.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("{:.1}", p.detection_max_db),
-            FontId::new(9.0 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-
-        let mr = Rect::from_min_size(Pos2::new(sx, mt), Vec2::new(mw, mh));
-        winui_meter(&pa, mr, p.detection_db, -60.0, 0.0, s);
-
-        for db in [-60_i32, -48, -36, -24, -12, 0] {
-            let y = mt + mh * (1.0 - ((db as f32 + 60.0) / 60.0));
-            pa.line_segment(
-                [Pos2::new(mr.min.x - 3.0 * s, y), Pos2::new(mr.min.x, y)],
-                Stroke::new(0.5, TEXT_TER),
-            );
-        }
-
-        // Slider track
-        pa.rect_filled(sl_r, 3.0 * s, CTRL_DEFAULT);
-        pa.rect_stroke(
-            sl_r,
-            3.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        let tn = ((p.threshold + 60.0) / 60.0).clamp(0.0, 1.0) as f32;
-        let ty = mt + mh * (1.0 - tn);
-        // Thumb — WinUI Slider thumb: white circle
-        pa.rect_filled(
-            Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)),
-            4.0 * s,
-            ACCENT,
-        );
-        pa.rect_stroke(
-            Rect::from_center_size(Pos2::new(sl_r.center().x, ty), Vec2::new(sw, 8.0 * s)),
-            4.0 * s,
-            Stroke::new(1.0, ACCENT_DARK),
-            egui::StrokeKind::Outside,
-        );
-
-        pa.text(
-            Pos2::new(cx, mt + mh + 12.0 * s),
-            egui::Align2::CENTER_CENTER,
-            format!("{:.1} dB", p.threshold),
-            FontId::new(11.5 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-    }
+    // Info text
+    p.text(
+        Pos2::new(cx, meter_r.max.y + 10.0 * s),
+        egui::Align2::CENTER_TOP,
+        "TKEO Energy Detection",
+        FontId::new(9.0 * s, FontFamily::Proportional),
+        TEXT_TER,
+    );
 }
 
-fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s: f32) {
-    {
-        let pa = ui.painter_at(rect);
-        acrylic_card(&pa, rect, 8.0 * s);
-        pa.text(
-            Pos2::new(rect.center().x, rect.min.y + 12.0 * s),
-            egui::Align2::CENTER_CENTER,
-            "Reduce",
-            FontId::new(11.5 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-    }
+// ─── Reduction Panel (RIGHT) — TKEO Threshold Knob ───────────────────────────
+fn draw_red_panel(ui: &mut Ui, rect: Rect, params: &GuiParams, ch: &mut GuiChanges, s: f32) {
+    let p = ui.painter_at(rect);
+    acrylic_card(&p, rect, 8.0 * s);
 
     let cx = rect.center().x;
-    let mt = rect.min.y + 46.0 * s;
-    let mh = rect.height() - 86.0 * s;
-    let mw = 12.0 * s;
-    let sw = 12.0 * s;
-    let sx = cx - (mw + sw + 4.0 * s) * 0.5;
+    let mut cy = rect.min.y + 12.0 * s;
 
-    let max_r = Rect::from_center_size(
-        Pos2::new(cx, rect.min.y + 30.0 * s),
-        Vec2::new(rect.width() - 14.0 * s, 14.0 * s),
+    // Panel title
+    p.text(
+        Pos2::new(cx, cy),
+        egui::Align2::CENTER_TOP,
+        "Processing",
+        FontId::new(12.5 * s, FontFamily::Proportional),
+        TEXT_PRI,
     );
-    if ui.allocate_rect(max_r, Sense::click()).clicked() {
-        ch.reduction_max_reset = true;
-    }
+    cy += 22.0 * s;
 
-    let sl_r = Rect::from_min_size(Pos2::new(sx, mt), Vec2::new(sw, mh));
-    let sr = ui.allocate_rect(sl_r, Sense::drag());
-    if sr.dragged() {
-        let n = ((p.max_reduction / 40.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
-        ch.max_reduction = Some(n as f64 * 40.0);
-    }
-
-    {
-        let pa = ui.painter_at(rect);
-        pa.rect_filled(max_r, 4.0 * s, CTRL_DEFAULT);
-        pa.rect_stroke(
-            max_r,
-            4.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        pa.text(
-            max_r.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("{:.1}", p.reduction_max_db),
-            FontId::new(9.0 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-
-        pa.rect_filled(sl_r, 3.0 * s, CTRL_DEFAULT);
-        pa.rect_stroke(
-            sl_r,
-            3.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        let mrn = (p.max_reduction / 40.0).clamp(0.0, 1.0) as f32;
-        let mry = mt + mh * (1.0 - mrn);
-        pa.rect_filled(
-            Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw, 8.0 * s)),
-            4.0 * s,
-            ORANGE,
-        );
-        pa.rect_stroke(
-            Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw, 8.0 * s)),
-            4.0 * s,
-            Stroke::new(1.0, ga(ORANGE, 120)),
-            egui::StrokeKind::Outside,
-        );
-
-        let mr2 = Rect::from_min_size(Pos2::new(sx + sw + 4.0 * s, mt), Vec2::new(mw, mh));
-        pa.rect_filled(mr2, 3.0 * s, CTRL_DEFAULT);
-        pa.rect_stroke(
-            mr2,
-            3.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        let rn = (-p.reduction_db / 40.0).clamp(0.0, 1.0);
-        let fh = mr2.height() * rn;
-        if fh > 0.5 {
-            let fr = Rect::from_min_size(mr2.min, Vec2::new(mr2.width(), fh));
-            let col = lerp_c(ORANGE, RED, rn);
-            pa.rect_filled(fr, 2.0 * s, ga(col, 210));
-        }
-        for db in [0_i32, -10, -20, -30, -40] {
-            let y = mt + mh * (-db as f32 / 40.0);
-            pa.text(
-                Pos2::new(mr2.max.x + 4.0 * s, y),
-                egui::Align2::LEFT_CENTER,
-                format!("{db}"),
-                FontId::new(9.0 * s, FontFamily::Proportional),
-                TEXT_TER,
-            );
-        }
-        pa.text(
-            Pos2::new(cx, mt + mh + 12.0 * s),
-            egui::Align2::CENTER_CENTER,
-            format!("{:.1} dB", p.max_reduction),
-            FontId::new(11.5 * s, FontFamily::Proportional),
-            TEXT_SEC,
-        );
-    }
-}
-
-fn winui_meter(pa: &egui::Painter, rect: Rect, db: f32, min_db: f32, max_db: f32, s: f32) {
-    pa.rect_filled(rect, 3.0 * s, CTRL_DEFAULT);
-    pa.rect_stroke(
-        rect,
-        3.0 * s,
-        Stroke::new(1.0, STROKE_DEF),
-        egui::StrokeKind::Outside,
+    // TKEO Threshold knob (circular)
+    let knob_size = 84.0 * s;
+    let knob_rect = Rect::from_center_size(Pos2::new(cx, cy + knob_size * 0.55), Vec2::splat(knob_size));
+    
+    // Knob background ring
+    p.circle_stroke(
+        knob_rect.center(),
+        knob_size * 0.45,
+        Stroke::new(3.0 * s, CTRL_DEFAULT),
     );
-    let n = ((db - min_db) / (max_db - min_db)).clamp(0.0, 1.0);
-    let fh = rect.height() * n;
-    if fh > 0.5 {
-        let fr = Rect::from_min_size(
-            Pos2::new(rect.min.x, rect.max.y - fh),
-            Vec2::new(rect.width(), fh),
-        );
-        let col = if db > -12.0 {
-            M_RED
-        } else if db > -24.0 {
-            M_YELLOW
-        } else {
-            M_GREEN
-        };
-        pa.rect_filled(fr, 2.0 * s, ga(col, 220));
-        if fh > 3.0 {
-            let pk = Rect::from_min_size(
-                Pos2::new(rect.min.x, rect.max.y - fh),
-                Vec2::new(rect.width(), 1.5 * s),
-            );
-            pa.rect_filled(pk, 0.0, col);
-        }
-    }
-}
-
-// ─── Controls Panel ──────────────────────────────────────────────────────────
-fn draw_controls(
-    ui: &mut Ui,
-    rect: Rect,
-    p: &GuiParams,
-    ch: &mut GuiChanges,
-    gui: &mut NebulaGui,
-    s: f32,
-) {
-    {
-        let pa = ui.painter_at(rect);
-        acrylic_card(&pa, rect, 8.0 * s);
-    }
-
-    let inner = rect.shrink(8.0 * s);
-    let top_h = 64.0 * s;
-    let kh = 74.0 * s;
-    let btn_h = 24.0 * s;
-    let gap = 6.0 * s;
-
-    // ── RadioButton groups (5 mode selectors) ────────────────────────────────
-    let cw = inner.width() / 5.0;
-    let cols: Vec<Rect> = (0..5)
+    
+    // Active arc based on value (-60..0 dB -> 270° sweep)
+    let norm = ((params.threshold - -60.0) / 60.0).clamp(0.0, 1.0);
+    let start_angle = 3.0 * PI / 2.0; // 270° (top)
+    let end_angle = start_angle + norm * 1.5 * PI; // 270° sweep
+    
+    let arc_path: Vec<Pos2> = (0..=32)
         .map(|i| {
-            Rect::from_min_size(
-                Pos2::new(inner.min.x + i as f32 * cw, inner.min.y),
-                Vec2::new(cw - 4.0 * s, top_h),
+            let t = i as f32 / 32.0;
+            let angle = start_angle + t * 1.5 * PI;
+            let r = knob_size * 0.42;
+            Pos2::new(
+                knob_rect.center().x + r * angle.cos(),
+                knob_rect.center().y + r * angle.sin(),
             )
         })
         .collect();
-
-    if let Some(i) = radio_group(
-        ui,
-        cols[0],
-        "Mode",
-        &["Relative", "Absolute"],
-        if p.mode_relative { 0 } else { 1 },
-        s,
-    ) {
-        push_undo(gui, p);
-        ch.mode_relative = Some(i == 0);
-    }
-    if let Some(i) = radio_group(
-        ui,
-        cols[1],
-        "Range",
-        &["Split", "Wide"],
-        if p.use_wide_range { 1 } else { 0 },
-        s,
-    ) {
-        push_undo(gui, p);
-        ch.use_wide_range = Some(i == 1);
-    }
-    if let Some(i) = radio_group(
-        ui,
-        cols[2],
-        "Filter",
-        &["Lowpass", "Peak"],
-        if p.use_peak_filter { 1 } else { 0 },
-        s,
-    ) {
-        push_undo(gui, p);
-        ch.use_peak_filter = Some(i == 1);
-    }
-    if let Some(i) = radio_group(
-        ui,
-        cols[3],
-        "Sidechain",
-        &["Internal", "External"],
-        if p.sidechain_external { 1 } else { 0 },
-        s,
-    ) {
-        push_undo(gui, p);
-        ch.sidechain_external = Some(i == 1);
-    }
-    if let Some(i) = radio_group(
-        ui,
-        cols[4],
-        "Vocal",
-        &["Off", "On"],
-        if p.vocal_mode { 1 } else { 0 },
-        s,
-    ) {
-        push_undo(gui, p);
-        ch.vocal_mode = Some(i == 1);
-    }
-
-    // ── Main knob row ─────────────────────────────────────────────────────────
-    let y2 = inner.min.y + top_h + gap;
-    let main_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
-        (
-            "Threshold",
-            p.threshold,
-            -60.0,
-            0.0,
-            "dB",
-            NumTarget::Threshold,
-        ),
-        (
-            "Max Red",
-            p.max_reduction,
-            0.0,
-            40.0,
-            "dB",
-            NumTarget::MaxReduction,
-        ),
-        (
-            "Min Freq",
-            p.min_freq,
-            1.0,
-            24000.0,
-            "Hz",
-            NumTarget::MinFreq,
-        ),
-        (
-            "Max Freq",
-            p.max_freq,
-            1.0,
-            24000.0,
-            "Hz",
-            NumTarget::MaxFreq,
-        ),
-        (
-            "Lookahead",
-            p.lookahead_ms,
-            0.0,
-            20.0,
-            "ms",
-            NumTarget::Lookahead,
-        ),
-        (
-            "Stereo Lnk",
-            p.stereo_link,
-            0.0,
-            1.0,
-            "%",
-            NumTarget::StereoLink,
-        ),
-    ];
-    knob_row(ui, rect, inner, y2, kh, main_k, ch, gui, p, ACCENT_LIGHT, s);
-
-    // ── Cut shape knobs ───────────────────────────────────────────────────────
-    let y2b = y2 + kh + gap;
-    {
-        let pa = ui.painter_at(rect);
-        pa.line_segment(
-            [
-                Pos2::new(inner.min.x + 12.0 * s, y2b - s),
-                Pos2::new(inner.max.x - 12.0 * s, y2b - s),
-            ],
-            Stroke::new(1.0, DIVIDER),
+    
+    for i in 0..arc_path.len() - 1 {
+        p.line_segment(
+            [arc_path[i], arc_path[i + 1]],
+            Stroke::new(4.0 * s, ACCENT),
         );
     }
-    let cut_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
-        ("Cut Width", p.cut_width, 0.0, 1.0, "%", NumTarget::CutWidth),
-        ("Cut Depth", p.cut_depth, 0.0, 1.0, "%", NumTarget::CutDepth),
-        (
-            "Cut Slope",
-            p.cut_slope,
-            0.0,
-            100.0,
-            "dB/oct",
-            NumTarget::CutSlope,
-        ),
-        ("Mix", p.mix, 0.0, 1.0, "%", NumTarget::Mix),
-    ];
-    let cut_inner = Rect::from_min_size(
-        Pos2::new(inner.min.x + inner.width() * 0.08, y2b),
-        Vec2::new(inner.width() * 0.84, kh),
+
+    // Knob center button (clickable)
+    let center_r = Rect::from_center_size(knob_rect.center(), Vec2::splat(28.0 * s));
+    let knob_resp = ui.allocate_rect(knob_rect, Sense::click_and_drag());
+    
+    // Center fill
+    p.circle_filled(knob_rect.center(), 12.0 * s, ACRYLIC_CARD);
+    p.circle_stroke(
+        knob_rect.center(),
+        12.0 * s,
+        Stroke::new(1.5 * s, ACCENT_BORDER),
     );
-    knob_row(ui, rect, cut_inner, y2b, kh, cut_k, ch, gui, p, MAGENTA, s);
-
-    // ── I/O knobs ─────────────────────────────────────────────────────────────
-    let y3 = y2b + kh + gap;
-    {
-        let pa = ui.painter_at(rect);
-        pa.line_segment(
-            [
-                Pos2::new(inner.min.x + 12.0 * s, y3 - s),
-                Pos2::new(inner.max.x - 12.0 * s, y3 - s),
-            ],
-            Stroke::new(1.0, DIVIDER),
-        );
-    }
-    let io_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
-        (
-            "In Level",
-            p.input_level,
-            -100.0,
-            100.0,
-            "dB",
-            NumTarget::InputLevel,
-        ),
-        ("In Pan", p.input_pan, -1.0, 1.0, "pan", NumTarget::InputPan),
-        (
-            "Out Level",
-            p.output_level,
-            -100.0,
-            100.0,
-            "dB",
-            NumTarget::OutputLevel,
-        ),
-        (
-            "Out Pan",
-            p.output_pan,
-            -1.0,
-            1.0,
-            "pan",
-            NumTarget::OutputPan,
-        ),
-    ];
-    let io_inner = Rect::from_min_size(
-        Pos2::new(inner.min.x + inner.width() * 0.1, y3),
-        Vec2::new(inner.width() * 0.8, kh),
+    
+    // Value text in center
+    p.text(
+        Pos2::new(knob_rect.center().x, knob_rect.center().y - 2.0 * s),
+        egui::Align2::CENTER_CENTER,
+        &format!("{:.0}", params.threshold),
+        FontId::new(11.0 * s, FontFamily::Proportional),
+        ACCENT_LIGHT,
     );
-    knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, PURPLE, s);
-
-    // ── ToggleSwitches (4 boolean params) ────────────────────────────────────
-    let y4 = y3 + kh + gap;
-    let btns: &[(&str, bool)] = &[
-        ("Filter Solo", p.filter_solo),
-        ("Trigger Hear", p.trigger_hear),
-        ("Lookahead", p.lookahead_enabled),
-        ("Mid / Side", p.stereo_mid_side),
-    ];
-    let bw = inner.width() / btns.len() as f32 - 4.0 * s;
-    for (i, (lbl, active)) in btns.iter().enumerate() {
-        let bx = inner.min.x + (bw + 4.0 * s) * i as f32;
-        let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(bw, btn_h));
-        let r = ui.allocate_rect(br, Sense::click());
-        let hov = r.hovered();
-        {
-            let pa = ui.painter_at(rect);
-            // WinUI ToggleSwitch — pill track + sliding thumb
-            let track_w = 36.0 * s;
-            let track_h = 18.0 * s;
-            let track_x = br.min.x + 4.0 * s;
-            let track_y = br.center().y - track_h * 0.5;
-            let track =
-                Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
-            let track_col = if *active {
-                ACCENT
-            } else if hov {
-                CTRL_HOVER
-            } else {
-                CTRL_DEFAULT
-            };
-            pa.rect_filled(track, track_h * 0.5, track_col);
-            pa.rect_stroke(
-                track,
-                track_h * 0.5,
-                Stroke::new(1.0, if *active { ACCENT_DARK } else { STROKE_DEF }),
-                egui::StrokeKind::Outside,
-            );
-            // Thumb — white circle, shifts right when on
-            let thumb_x = if *active {
-                track.max.x - track_h * 0.5
-            } else {
-                track.min.x + track_h * 0.5
-            };
-            pa.circle_filled(
-                Pos2::new(thumb_x, track.center().y),
-                track_h * 0.35,
-                Color32::from_rgb(230, 230, 230),
-            );
-            // Label
-            pa.text(
-                Pos2::new(track.max.x + 6.0 * s, br.center().y),
-                egui::Align2::LEFT_CENTER,
-                *lbl,
-                FontId::new(9.0 * s, FontFamily::Proportional),
-                if *active { TEXT_PRI } else { TEXT_SEC },
-            );
-        }
-        if r.clicked() {
-            push_undo(gui, p);
-            match *lbl {
-                "Filter Solo" => ch.filter_solo = Some(!active),
-                "Trigger Hear" => ch.trigger_hear = Some(!active),
-                "Lookahead" => ch.lookahead_enabled = Some(!active),
-                "Mid / Side" => ch.stereo_mid_side = Some(!active),
-                _ => {}
-            }
-        }
-    }
-}
-
-// ─── WinUI RadioButton group ──────────────────────────────────────────────────
-fn radio_group(
-    ui: &mut Ui,
-    rect: Rect,
-    hdr: &str,
-    labs: &[&str],
-    ai: usize,
-    s: f32,
-) -> Option<usize> {
-    // Elevated card background for each group
-    {
-        let pa = ui.painter_at(rect);
-        pa.rect_filled(rect, 6.0 * s, ACRYLIC_CARD);
-        pa.rect_stroke(
-            rect,
-            6.0 * s,
-            Stroke::new(1.0, STROKE_DEF),
-            egui::StrokeKind::Outside,
-        );
-        // Group label — tertiary text, top
-        pa.text(
-            Pos2::new(rect.center().x, rect.min.y + 8.0 * s),
-            egui::Align2::CENTER_CENTER,
-            hdr,
-            FontId::new(12.5 * s, FontFamily::Proportional),
-            TEXT_TER,
-        );
-    }
-
-    let item_h = 16.0 * s;
-    let mut res = None;
-    for (i, lbl) in labs.iter().enumerate() {
-        let iy = rect.min.y + 18.0 * s + i as f32 * (item_h + 2.0 * s);
-        let item_r = Rect::from_min_size(
-            Pos2::new(rect.min.x + 4.0 * s, iy),
-            Vec2::new(rect.width() - 8.0 * s, item_h),
-        );
-        let r = ui.allocate_rect(item_r, Sense::click());
-        let ia = i == ai;
-        let hov = r.hovered();
-        {
-            let pa = ui.painter_at(rect);
-            // Radio outer ring
-            let radio_c = Pos2::new(item_r.min.x + 7.0 * s, item_r.center().y);
-            let radio_r = 5.0 * s;
-            pa.circle_filled(
-                radio_c,
-                radio_r,
-                if ia {
-                    ACCENT
-                } else if hov {
-                    CTRL_HOVER
-                } else {
-                    CTRL_DEFAULT
-                },
-            );
-            pa.circle_stroke(
-                radio_c,
-                radio_r,
-                Stroke::new(1.0, if ia { ACCENT_DARK } else { STROKE_DEF }),
-            );
-            // Inner dot when selected
-            if ia {
-                pa.circle_filled(radio_c, 2.5 * s, Color32::from_rgb(230, 230, 230));
-            }
-            // Label
-            pa.text(
-                Pos2::new(radio_c.x + radio_r + 5.0 * s, item_r.center().y),
-                egui::Align2::LEFT_CENTER,
-                *lbl,
-                FontId::new(11.5 * s, FontFamily::Proportional),
-                if ia {
-                    TEXT_PRI
-                } else if hov {
-                    TEXT_SEC
-                } else {
-                    TEXT_TER
-                },
-            );
-        }
-        if r.clicked() {
-            res = Some(i);
-        }
-    }
-    res
-}
-
-fn knob_row(
-    ui: &mut Ui,
-    rect: Rect,
-    inner: Rect,
-    y: f32,
-    _h: f32,
-    defs: &[(&str, f64, f64, f64, &str, NumTarget)],
-    ch: &mut GuiChanges,
-    gui: &mut NebulaGui,
-    p: &GuiParams,
-    col: Color32,
-    s: f32,
-) {
-    let n = defs.len();
-    let kw = inner.width() / n as f32;
-    let ks = (kw * 0.62).min(34.0 * s);
-    for (i, (lbl, val, min, max, unit, tgt)) in defs.iter().enumerate() {
-        let kx = inner.min.x + kw * i as f32 + kw * 0.5;
-        let kc = Pos2::new(kx, y + 12.0 * s + ks * 0.5);
-        let kr = Rect::from_center_size(kc, Vec2::splat(ks));
-        let fr = Rect::from_center_size(
-            Pos2::new(kx, kr.max.y + 9.0 * s),
-            Vec2::new(kw - 10.0 * s, 13.0 * s),
-        );
-        {
-            let pa = ui.painter_at(rect);
-            pa.text(
-                Pos2::new(kx, y + 5.0 * s),
-                egui::Align2::CENTER_CENTER,
-                *lbl,
-                FontId::new(12.5 * s, FontFamily::Proportional),
-                TEXT_TER,
-            );
-        }
-        let resp = ui.allocate_rect(kr, Sense::drag().union(Sense::click()));
-        if resp.drag_started() {
-            gui.drag_snap = Some(ParamSnapshot::from_params(p));
-        }
-        if resp.dragged() {
-            let n = ((*val - *min) / (*max - *min)) as f32;
-            let nv = (*min
-                + (n - resp.drag_delta().y * 0.006).clamp(0.0, 1.0) as f64 * (*max - *min))
-                .clamp(*min, *max);
-            apply_ch(tgt, nv, ch);
-        }
-        if resp.drag_stopped() {
-            if let Some(snap) = gui.drag_snap.take() {
-                gui.undo_stack.push(snap);
-                gui.undo_stack.truncate(50);
-                gui.redo_stack.clear();
-            }
-        }
-        if resp.hovered() {
-            let sc = ui.input(|i| i.smooth_scroll_delta.y);
-            if sc != 0.0 {
-                let n = ((*val - *min) / (*max - *min)) as f32;
-                let nv = (*min + (n + sc * 0.008).clamp(0.0, 1.0) as f64 * (*max - *min))
-                    .clamp(*min, *max);
-                apply_ch(tgt, nv, ch);
-            }
-        }
-        if resp.secondary_clicked() {
-            gui.num_input = NumInput {
-                open: true,
-                label: lbl.to_string(),
-                value_str: format!("{:.2}", val),
-                target: tgt.clone(),
-                min: *min,
-                max: *max,
-            };
-        }
-        if ui.allocate_rect(fr, Sense::click()).secondary_clicked() {
-            gui.num_input = NumInput {
-                open: true,
-                label: lbl.to_string(),
-                value_str: format!("{:.2}", val),
-                target: tgt.clone(),
-                min: *min,
-                max: *max,
-            };
-        }
-        {
-            let pa = ui.painter_at(rect);
-            draw_knob(&pa, kc, ks * 0.5, *val, *min, *max, col, s);
-            let disp = fmt_knob(*val, *unit);
-            draw_value_field(&pa, fr, &disp, col, s);
-        }
-    }
-}
-
-fn fmt_knob(v: f64, unit: &str) -> String {
-    match unit {
-        "Hz" => {
-            if v >= 1000.0 {
-                format!("{:.1}k", v / 1000.0)
-            } else {
-                format!("{:.0}", v)
-            }
-        }
-        "%" => format!("{:.0}%", v * 100.0),
-        "dB/oct" => format!("{:.1}", v),
-        "pan" => {
-            if v.abs() < 0.01 {
-                "C".into()
-            } else if v > 0.0 {
-                format!("R{:.0}", v * 100.0)
-            } else {
-                format!("L{:.0}", -v * 100.0)
-            }
-        }
-        _ => format!("{:.1}", v),
-    }
-}
-
-fn apply_ch(t: &NumTarget, v: f64, ch: &mut GuiChanges) {
-    match t {
-        NumTarget::Threshold => ch.threshold = Some(v),
-        NumTarget::MaxReduction => ch.max_reduction = Some(v),
-        NumTarget::MinFreq => ch.min_freq = Some(v),
-        NumTarget::MaxFreq => ch.max_freq = Some(v),
-        NumTarget::Lookahead => ch.lookahead_ms = Some(v),
-        NumTarget::StereoLink => ch.stereo_link = Some(v),
-        NumTarget::InputLevel => ch.input_level = Some(v),
-        NumTarget::InputPan => ch.input_pan = Some(v),
-        NumTarget::OutputLevel => ch.output_level = Some(v),
-        NumTarget::OutputPan => ch.output_pan = Some(v),
-        NumTarget::CutWidth => ch.cut_width = Some(v),
-        NumTarget::CutDepth => ch.cut_depth = Some(v),
-        NumTarget::CutSlope => ch.cut_slope = Some(v),
-        NumTarget::Mix => ch.mix = Some(v),
-        NumTarget::None => {}
-    }
-}
-
-fn push_undo(g: &mut NebulaGui, p: &GuiParams) {
-    g.undo_stack.push(ParamSnapshot::from_params(p));
-    g.undo_stack.truncate(50);
-    g.redo_stack.clear();
-}
-
-// ─── WinUI Knob ───────────────────────────────────────────────────────────────
-fn draw_knob(
-    pa: &egui::Painter,
-    c: Pos2,
-    r: f32,
-    val: f64,
-    min: f64,
-    max: f64,
-    col: Color32,
-    s: f32,
-) {
-    let norm = ((val - min) / (max - min)).clamp(0.0, 1.0) as f32;
-    let start = std::f32::consts::PI * 0.75;
-    let sweep = std::f32::consts::PI * 1.5;
-    let angle = start + norm * sweep;
-
-    // Shadow ring
-    pa.circle_filled(c, r + 1.5 * s, Color32::from_rgb(14, 14, 14));
-    // Body — deep dark surface, clearly distinct from card background
-    pa.circle_filled(c, r, Color32::from_rgb(36, 36, 36));
-    pa.circle_stroke(c, r, Stroke::new(1.0, Color32::from_rgb(85, 85, 85)));
-    // Top highlight arc
-    let hl_start = std::f32::consts::PI * 1.1;
-    let hl_end = std::f32::consts::PI * 1.9;
-    arc(
-        pa,
-        c,
-        r - 1.0 * s,
-        hl_start,
-        hl_end,
-        Color32::from_rgb(68, 68, 68),
-        1.5 * s,
+    p.text(
+        Pos2::new(knob_rect.center().x, knob_rect.center().y + 8.0 * s),
+        egui::Align2::CENTER_CENTER,
+        "dB",
+        FontId::new(8.0 * s, FontFamily::Proportional),
+        TEXT_TER,
     );
-    // Track groove
-    arc(pa, c, r * 0.74, start, start + sweep, ga(col, 20), 3.5 * s);
-    // Filled arc
-    if norm > 0.005 {
-        arc(pa, c, r * 0.74, start, angle, ga(col, 55), 4.5 * s);
-        arc(pa, c, r * 0.74, start, angle, col, 1.8 * s);
-    }
-    // Indicator dot
-    let ix = c.x + r * 0.50 * angle.cos();
-    let iy = c.y + r * 0.50 * angle.sin();
-    pa.circle_filled(Pos2::new(ix, iy), 2.5 * s, col);
-    pa.circle_filled(Pos2::new(ix, iy), 1.3 * s, Color32::from_rgb(220, 220, 220));
-    pa.circle_filled(c, 1.8 * s, ga(col, 100));
-}
 
-fn arc(pa: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, col: Color32, w: f32) {
-    let steps = 32;
-    let span = a1 - a0;
-    let pts: Vec<Pos2> = (0..=steps)
-        .map(|i| {
-            let a = a0 + i as f32 / steps as f32 * span;
-            Pos2::new(c.x + r * a.cos(), c.y + r * a.sin())
-        })
-        .collect();
-    for i in 0..pts.len() - 1 {
-        pa.line_segment([pts[i], pts[i + 1]], Stroke::new(w, col));
-    }
-}
+    // Knob label above
+    p.text(
+        Pos2::new(knob_rect.center().x, knob_rect.min.y + 6.0 * s),
+        egui::Align2::CENTER_TOP,
+        "TKEO Threshold",
+        FontId::new(10.0 * s, FontFamily::Proportional),
+        TEXT_SEC,
+    );
 
-fn draw_value_field(pa: &egui::Painter, rect: Rect, text: &str, col: Color32, s: f32) {
-    pa.rect_filled(rect, 3.0 * s, CTRL_DEFAULT);
-    pa.rect_stroke(
-        rect,
-        3.0 * s,
+    // Numeric field below knob
+    let num_w = 56.0 * s;
+    let num_h = 22.0 * s;
+    let num_rect = Rect::from_center_size(
+        Pos2::new(cx, knob_rect.max.y + 18.0 * s),
+        Vec2::new(num_w, num_h),
+    );
+    
+    p.rect_filled(num_rect, 4.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(
+        num_rect,
+        4.0 * s,
         Stroke::new(1.0, STROKE_DEF),
         egui::StrokeKind::Outside,
     );
-    pa.text(
-        rect.center(),
+    p.text(
+        num_rect.center(),
         egui::Align2::CENTER_CENTER,
-        text,
-        FontId::new(11.5 * s, FontFamily::Proportional),
-        ga(col, 210),
+        &format!("{:.1}", params.threshold),
+        FontId::new(10.0 * s, FontFamily::Proportional),
+        TEXT_PRI,
+    );
+
+    let num_resp = ui.allocate_rect(num_rect, Sense::click());
+    if knob_resp.secondary_clicked() || num_resp.clicked() {
+        gui.num_input = NumInput {
+            open: true,
+            label: "TKEO Sensitivity".to_string(),
+            value_str: format!("{:.1}", params.threshold),
+            target: NumTarget::Threshold,
+            min: -60.0,
+            max: 0.0,
+        };
+    }
+    
+    // Hover tooltip for numeric field
+    ui.allocate_rect(num_rect, Sense::hover())
+        .on_hover_text(
+            "Set the Teager-Kaiser Energy detection threshold.\n\
+             Controls amplification level above which energy spikes\n\
+             are analyzed for sibilance classification."
+        );
+
+    // Reduction meter
+    cy = num_rect.max.y + 24.0 * s;
+    let meter_h = 48.0 * s;
+    let meter_r = Rect::from_min_size(
+        Pos2::new(rect.min.x + 8.0 * s, cy),
+        Vec2::new(rect.width() - 16.0 * s, meter_h),
+    );
+    
+    p.rect_filled(meter_r, 4.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(
+        meter_r,
+        4.0 * s,
+        Stroke::new(1.0, STROKE_DEF),
+        egui::StrokeKind::Outside,
+    );
+
+    // Fill based on reduction (0..-40 dB, inverted)
+    let fill_norm = ((params.reduction_db - 0.0) / -40.0).clamp(0.0, 1.0);
+    let fill_w = meter_r.width() * fill_norm;
+    let fill_r = Rect::from_min_size(meter_r.min, Vec2::new(fill_w, meter_r.height()));
+    
+    let fill_col = if params.reduction_db < -30.0 {
+        RED
+    } else if params.reduction_db < -15.0 {
+        ORANGE
+    } else {
+        TEAL
+    };
+    p.rect_filled(fill_r, 4.0 * s, ga(fill_col, 180));
+
+    // Peak marker
+    let peak_norm = ((params.reduction_max_db - 0.0) / -40.0).clamp(0.0, 1.0);
+    let peak_x = meter_r.min.x + peak_norm * meter_r.width();
+    p.line_segment(
+        [
+            Pos2::new(peak_x, meter_r.min.y + 2.0 * s),
+            Pos2::new(peak_x, meter_r.max.y - 2.0 * s),
+        ],
+        Stroke::new(2.0 * s, ACCENT_LIGHT),
+    );
+
+    // Reset peak
+    let reset_r = Rect::from_min_size(
+        Pos2::new(meter_r.max.x - 24.0 * s, meter_r.min.y + 2.0 * s),
+        Vec2::new(20.0 * s, 16.0 * s),
+    );
+    let reset_resp = ui.allocate_rect(reset_r, Sense::click());
+    if reset_resp.hovered() {
+        p.rect_filled(reset_r, 3.0 * s, CTRL_HOVER);
+    }
+    p.text(
+        reset_r.center(),
+        egui::Align2::CENTER_CENTER,
+        "↺",
+        FontId::new(11.0 * s, FontFamily::Monospace),
+        TEXT_SEC,
+    );
+    if reset_resp.clicked() {
+        ch.reduction_max_reset = true;
+    }
+
+    p.text(
+        Pos2::new(meter_r.min.x + 4.0 * s, meter_r.max.y - 4.0 * s),
+        egui::Align2::LEFT_BOTTOM,
+        "0 dB",
+        FontId::new(8.0 * s, FontFamily::Proportional),
+        TEXT_TER,
+    );
+    p.text(
+        Pos2::new(meter_r.max.x - 4.0 * s, meter_r.max.y - 4.0 * s),
+        egui::Align2::RIGHT_BOTTOM,
+        "-40 dB",
+        FontId::new(8.0 * s, FontFamily::Proportional),
+        TEXT_TER,
+    );
+
+    p.text(
+        Pos2::new(cx, meter_r.max.y + 10.0 * s),
+        egui::Align2::CENTER_TOP,
+        "Gain Reduction",
+        FontId::new(9.0 * s, FontFamily::Proportional),
+        TEXT_TER,
     );
 }
 
-// ─── Spectrum Analyzer ───────────────────────────────────────────────────────
-fn freq_to_x(freq: f32, w: f32) -> f32 {
-    let lmin = 20.0_f32.log10();
-    let lmax = 22000.0_f32.log10();
-    (freq.clamp(20.0, 22000.0).log10() - lmin) / (lmax - lmin) * w
-}
-fn x_to_freq(x: f32, w: f32) -> f32 {
-    let lmin = 20.0_f32.log10();
-    let lmax = 22000.0_f32.log10();
-    10.0_f32.powf(lmin + (x / w) * (lmax - lmin))
+// ─── Controls Panel (CENTER TOP) — Mode Toggle & Parameters ──────────────────
+fn draw_controls(
+    ui: &mut Ui,
+    rect: Rect,
+    params: &GuiParams,
+    ch: &mut GuiChanges,
+    gui: &mut NebulaGui,
+    s: f32,
+) {
+    let p = ui.painter_at(rect);
+    acrylic_card(&p, rect, 8.0 * s);
+
+    let cx = rect.center().x;
+    let mut cy = rect.min.y + 12.0 * s;
+
+    // Panel title
+    p.text(
+        Pos2::new(cx, cy),
+        egui::Align2::CENTER_TOP,
+        "Processing Mode",
+        FontId::new(12.5 * s, FontFamily::Proportional),
+        TEXT_PRI,
+    );
+    cy += 24.0 * s;
+
+    // Relative/Absolute mode toggle — UPDATED FOR SUBSPACE PROJECTION
+    let toggle_w = rect.width() - 16.0 * s;
+    let toggle_h = 28.0 * s;
+    let toggle_r = Rect::from_min_size(
+        Pos2::new(rect.min.x + 8.0 * s, cy),
+        Vec2::new(toggle_w, toggle_h),
+    );
+
+    // Toggle background
+    p.rect_filled(toggle_r, 4.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(
+        toggle_r,
+        4.0 * s,
+        Stroke::new(1.0, STROKE_DEF),
+        egui::StrokeKind::Outside,
+    );
+
+    // Split into two halves
+    let half_w = toggle_w / 2.0 - 2.0 * s;
+    let abs_r = Rect::from_min_size(toggle_r.min, Vec2::new(half_w, toggle_h));
+    let rel_r = Rect::from_min_size(
+        Pos2::new(toggle_r.min.x + half_w + 4.0 * s, toggle_r.min.y),
+        Vec2::new(half_w, toggle_h),
+    );
+
+    // Absolute mode button
+    let abs_resp = ui.allocate_rect(abs_r, Sense::click());
+    let abs_active = !params.mode_relative;
+    let abs_bg = if abs_active { ACCENT } else { CTRL_DEFAULT };
+    let abs_fg = if abs_active { Color32::WHITE } else { TEXT_SEC };
+    
+    p.rect_filled(abs_r, 4.0 * s, abs_bg);
+    if abs_active {
+        p.rect_stroke(abs_r, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
+    }
+    p.text(
+        abs_r.center(),
+        egui::Align2::CENTER_CENTER,
+        "Absolute",
+        FontId::new(11.0 * s, FontFamily::Proportional),
+        abs_fg,
+    );
+
+    // Relative mode button
+    let rel_resp = ui.allocate_rect(rel_r, Sense::click());
+    let rel_active = params.mode_relative;
+    let rel_bg = if rel_active { ACCENT } else { CTRL_DEFAULT };
+    let rel_fg = if rel_active { Color32::WHITE } else { TEXT_SEC };
+    
+    p.rect_filled(rel_r, 4.0 * s, rel_bg);
+    if rel_active {
+        p.rect_stroke(rel_r, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
+    }
+    p.text(
+        rel_r.center(),
+        egui::Align2::CENTER_CENTER,
+        "Relative",
+        FontId::new(11.0 * s, FontFamily::Proportional),
+        rel_fg,
+    );
+
+    // Mode tooltips — UPDATED WITH SUBSPACE PROJECTION EXPLANATIONS
+    ui.allocate_rect(abs_r, Sense::hover()).on_hover_text(
+        "3-Vector Subspace Mode (Fixed Dimensions)\n\
+         \n\
+         • Voiced Axis: Periodic, harmonic 'vowel-like' energy\n\
+         • Unvoiced Axis: Aperiodic, TKEO-detected sibilance\n\
+         • Residual Axis: Mathematical remainder\n\
+         \n\
+         Uses fixed 3-dimensional orthogonal separation.\n\
+         Best for consistent vocal timbres."
+    );
+    
+    ui.allocate_rect(rel_r, Sense::hover()).on_hover_text(
+        "Multi-Vector Adaptive Mode (N-dimensional)\n\
+         \n\
+         • Higher-Order Correlation: Analyzes cross-frequency\n\
+           relationships (e.g., 12kHz air vs. 300Hz chest resonance)\n\
+         • Contextual Intelligence: Dynamically expands vector\n\
+           space based on signal complexity\n\
+         • Adaptive Subspace: Allows dimensions to expand/contract\n\
+           in real-time for transparent processing\n\
+         \n\
+         Ideal for breathy vocals, dynamic performers, or singers\n\
+         who shift between whispers and belts."
+    );
+
+    if abs_resp.clicked() {
+        ch.mode_relative = Some(false);
+    }
+    if rel_resp.clicked() {
+        ch.mode_relative = Some(true);
+    }
+
+    // Mode indicator badge
+    cy += toggle_h + 8.0 * s;
+    let badge_text = if params.mode_relative {
+        "Relative: Adaptive N-D Subspace"
+    } else {
+        "Absolute: Fixed 3-Vector Subspace"
+    };
+    p.text(
+        Pos2::new(cx, cy),
+        egui::Align2::CENTER_TOP,
+        badge_text,
+        FontId::new(9.0 * s, FontFamily::Proportional),
+        if params.mode_relative { ACCENT_LIGHT } else { TEXT_TER },
+    );
+
+    // Additional controls row
+    cy += 24.0 * s;
+    
+    // Filter type toggle (Peak/Notch)
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Filter Type:")
+            .color(TEXT_SEC)
+            .font(FontId::new(10.0 * s, FontFamily::Proportional)));
+        
+        let peak_resp = ui.selectable_label(
+            params.use_peak_filter,
+            egui::RichText::new("Peak").color(if params.use_peak_filter { ACCENT } else { TEXT_SEC })
+        );
+        let notch_resp = ui.selectable_label(
+            !params.use_peak_filter,
+            egui::RichText::new("Notch").color(if !params.use_peak_filter { ACCENT } else { TEXT_SEC })
+        );
+        
+        if peak_resp.clicked() { ch.use_peak_filter = Some(true); }
+        if notch_resp.clicked() { ch.use_peak_filter = Some(false); }
+    });
+
+    // Lookahead toggle
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Lookahead:")
+            .color(TEXT_SEC)
+            .font(FontId::new(10.0 * s, FontFamily::Proportional)));
+        
+        let enabled_resp = ui.selectable_label(
+            params.lookahead_enabled,
+            egui::RichText::new("On").color(if params.lookahead_enabled { ACCENT } else { TEXT_SEC })
+        );
+        let disabled_resp = ui.selectable_label(
+            !params.lookahead_enabled,
+            egui::RichText::new("Off").color(if !params.lookahead_enabled { ACCENT } else { TEXT_SEC })
+        );
+        
+        if enabled_resp.clicked() { ch.lookahead_enabled = Some(true); }
+        if disabled_resp.clicked() { ch.lookahead_enabled = Some(false); }
+    });
+
+    // Lookahead ms field (only if enabled)
+    if params.lookahead_enabled {
+        let la_r = Rect::from_min_size(
+            Pos2::new(rect.min.x + 8.0 * s, cy + 4.0 * s),
+            Vec2::new(80.0 * s, 20.0 * s),
+        );
+        p.rect_filled(la_r, 4.0 * s, CTRL_DEFAULT);
+        p.rect_stroke(la_r, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+        p.text(
+            la_r.center(),
+            egui::Align2::CENTER_CENTER,
+            &format!("{:.1} ms", params.lookahead_ms),
+            FontId::new(10.0 * s, FontFamily::Proportional),
+            TEXT_PRI,
+        );
+        let la_resp = ui.allocate_rect(la_r, Sense::click());
+        if la_resp.clicked() {
+            gui.num_input = NumInput {
+                open: true,
+                label: "Lookahead".to_string(),
+                value_str: format!("{:.1}", params.lookahead_ms),
+                target: NumTarget::Lookahead,
+                min: 0.0,
+                max: 20.0,
+            };
+        }
+    }
 }
 
+// ─── Spectrum Analyzer (CENTER BOTTOM) ───────────────────────────────────────
 fn draw_spectrum(
     ui: &mut Ui,
     rect: Rect,
     gui: &mut NebulaGui,
-    p: &GuiParams,
+    params: &GuiParams,
     ch: &mut GuiChanges,
     s: f32,
 ) {
-    if rect.height() < 24.0 {
-        return;
-    }
-    let pa = ui.painter_at(rect);
-    acrylic_card(&pa, rect, 8.0 * s);
-    let inner = rect.shrink(5.0 * s);
-    let ph = (inner.height() - 16.0 * s).max(10.0);
-    let sr;
+    let p = ui.painter_at(rect);
+    acrylic_card(&p, rect, 8.0 * s);
 
-    // Grid
-    for &db in &[-80.0_f32, -60.0, -40.0, -20.0, -10.0] {
-        let ny = 1.0 - (db - (-90.0)) / 90.0;
-        let y = inner.min.y + ny * ph;
-        pa.line_segment(
+    let inner = Rect::from_min_size(
+        Pos2::new(rect.min.x + 8.0 * s, rect.min.y + 24.0 * s),
+        Vec2::new(rect.width() - 16.0 * s, rect.height() - 32.0 * s),
+    );
+
+    // Grid background
+    p.rect_filled(inner, 4.0 * s, CTRL_DEFAULT);
+    p.rect_stroke(inner, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+
+    // Frequency grid lines (log scale)
+    let freqs = [100.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0, 20_000.0];
+    for &f in &freqs {
+        let x = inner.min.x + freq_to_x(f, inner.width());
+        p.line_segment(
+            [Pos2::new(x, inner.min.y), Pos2::new(x, inner.max.y)],
+            Stroke::new(0.5 * s, ga(DIVIDER, 80)),
+        );
+        if f >= params.min_freq as f32 && f <= params.max_freq as f32 {
+            p.text(
+                Pos2::new(x + 2.0 * s, inner.max.y - 4.0 * s),
+                egui::Align2::LEFT_BOTTOM,
+                &format!("{:.0}", f),
+                FontId::new(7.0 * s, FontFamily::Proportional),
+                TEXT_TER,
+            );
+        }
+    }
+
+    // dB grid lines
+    for db in [-90.0, -60.0, -30.0, 0.0] {
+        let y = db_to_y(db, inner.height(), inner.min.y);
+        p.line_segment(
             [Pos2::new(inner.min.x, y), Pos2::new(inner.max.x, y)],
-            Stroke::new(0.5, DIVIDER),
+            Stroke::new(0.5 * s, ga(DIVIDER, 80)),
         );
-        pa.text(
-            Pos2::new(inner.min.x + 3.0 * s, y - 2.0 * s),
-            egui::Align2::LEFT_BOTTOM,
-            format!("{}", db as i32),
-            FontId::new(5.5 * s, FontFamily::Proportional),
-            TEXT_TER,
-        );
-    }
-    for &freq in &[
-        100.0_f32, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0,
-    ] {
-        let x = inner.min.x + freq_to_x(freq, inner.width());
-        pa.line_segment(
-            [Pos2::new(x, inner.min.y), Pos2::new(x, inner.min.y + ph)],
-            Stroke::new(0.5, DIVIDER),
-        );
-        let lbl = if freq >= 1000.0 {
-            format!("{}k", (freq / 1000.0) as i32)
-        } else {
-            format!("{}", freq as i32)
-        };
-        pa.text(
-            Pos2::new(x, inner.max.y - 3.0 * s),
-            egui::Align2::CENTER_CENTER,
-            lbl,
-            FontId::new(5.5 * s, FontFamily::Proportional),
+        p.text(
+            Pos2::new(inner.min.x + 4.0 * s, y - 2.0 * s),
+            egui::Align2::LEFT_CENTER,
+            &format!("{:.0}", db),
+            FontId::new(7.0 * s, FontFamily::Proportional),
             TEXT_TER,
         );
     }
 
-    // Smooth magnitudes
-    {
-        let spec = gui.spectrum.lock();
-        sr = spec.sample_rate as f32;
-        let mags = &spec.magnitudes;
-        let nb = mags.len();
-        if gui.smooth_mags.len() != nb {
-            gui.smooth_mags = vec![-90.0_f32; nb];
-        }
-        let atk = 0.30_f32;
-        let rel = 0.85_f32;
-        for (i, &mag) in mags.iter().enumerate().take(nb) {
-            let m = mag.clamp(-90.0, 0.0);
-            gui.smooth_mags[i] = if m > gui.smooth_mags[i] {
-                gui.smooth_mags[i] * atk + m * (1.0 - atk)
-            } else {
-                gui.smooth_mags[i] * rel + m * (1.0 - rel)
-            };
-        }
-    }
+    // Spectrum data
+    let data = gui.spectrum.lock();
+    let mags = &data.mags;
+    let ph = inner.height();
 
-    let nb = gui.smooth_mags.len();
-    let fft_size = (nb - 1) * 2;
-    let db_min = -90.0_f32;
-    let db_max = 0.0_f32;
-    let db_rng = db_max - db_min;
-    let cols = inner.width() as usize;
-    let mut pts: Vec<Pos2> = Vec::with_capacity(cols + 2);
-    for col in 0..=cols {
-        let freq = x_to_freq(col as f32, inner.width());
-        let bin_f = freq * fft_size as f32 / sr;
-        let bin = (bin_f as usize).min(nb.saturating_sub(1));
-        let db = gui.smooth_mags[bin].clamp(db_min, db_max);
-        let ny = 1.0 - (db - db_min) / db_rng;
-        pts.push(Pos2::new(inner.min.x + col as f32, inner.min.y + ny * ph));
-    }
+    if !mags.is_empty() {
+        // Smooth the display
+        for (i, &mag) in mags.iter().enumerate().take(1025) {
+            let smooth = 0.85;
+            gui.smooth_mags[i] = gui.smooth_mags[i] * smooth + mag * (1.0 - smooth);
+        }
 
-    if pts.len() >= 2 {
-        let bottom_y = inner.min.y + ph;
-        let fill_col = ga(ACCENT, 20);
-        for i in 0..pts.len().saturating_sub(1) {
-            let tl = pts[i];
-            let tr = pts[i + 1];
-            let bl = Pos2::new(tl.x, bottom_y);
-            let br2 = Pos2::new(tr.x, bottom_y);
-            pa.add(egui::Shape::convex_polygon(
-                vec![tl, tr, br2, bl],
-                fill_col,
-                Stroke::NONE,
-            ));
+        // Draw spectrum line
+        let mut pts = Vec::with_capacity(1025);
+        for i in 0..1025 {
+            let x = inner.min.x + (i as f32 / 1024.0) * inner.width();
+            let y = db_to_y(gui.smooth_mags[i].clamp(-120.0, 0.0), ph, inner.min.y);
+            pts.push(Pos2::new(x, y));
+        }
+
+        // Fill under curve with gradient
+        let mut fill_col = ga(ACCENT, 20);
+        for i in 0..pts.len() - 1 {
+            let mag = gui.smooth_mags[i].clamp(-120.0, 0.0);
+            let alpha = ((mag + 120.0) / 120.0 * 40.0) as u8;
+            fill_col = ga(ACCENT, alpha);
+            p.line_segment([pts[i], pts[i + 1]], Stroke::new(3.0 * s, ga(ACCENT, 14)));
         }
         for i in 0..pts.len() - 1 {
-            pa.line_segment([pts[i], pts[i + 1]], Stroke::new(3.0 * s, ga(ACCENT, 16)));
-        }
-        for i in 0..pts.len() - 1 {
-            pa.line_segment(
+            p.line_segment(
                 [pts[i], pts[i + 1]],
                 Stroke::new(1.2 * s, ga(ACCENT_LIGHT, 200)),
             );
         }
     }
 
-    // Band overlay
-    let min_x = inner.min.x + freq_to_x(p.min_freq as f32, inner.width());
-    let max_x = inner.min.x + freq_to_x(p.max_freq as f32, inner.width());
+    // Band overlay (min/max frequency selection)
+    let min_x = inner.min.x + freq_to_x(params.min_freq as f32, inner.width());
+    let max_x = inner.min.x + freq_to_x(params.max_freq as f32, inner.width());
+    
     if max_x > min_x {
         let br = Rect::from_min_max(
             Pos2::new(min_x, inner.min.y),
             Pos2::new(max_x, inner.min.y + ph),
         );
-        pa.rect_filled(br, 0.0, ga(ORANGE, 12));
-        pa.line_segment(
-            [
-                Pos2::new(min_x, inner.min.y),
-                Pos2::new(min_x, inner.min.y + ph),
-            ],
+        p.rect_filled(br, 0.0, ga(ORANGE, 12));
+        
+        // Min freq marker
+        p.line_segment(
+            [Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.max.y)],
             Stroke::new(1.2 * s, ga(TEAL, 200)),
         );
-        pa.line_segment(
-            [
-                Pos2::new(min_x, inner.min.y),
-                Pos2::new(min_x, inner.min.y + ph),
-            ],
+        p.line_segment(
+            [Pos2::new(min_x, inner.min.y), Pos2::new(min_x, inner.max.y)],
             Stroke::new(4.0 * s, ga(TEAL, 28)),
         );
-        pa.line_segment(
-            [
-                Pos2::new(max_x, inner.min.y),
-                Pos2::new(max_x, inner.min.y + ph),
-            ],
+        
+        // Max freq marker
+        p.line_segment(
+            [Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.max.y)],
             Stroke::new(1.2 * s, ga(ORANGE, 200)),
         );
-        pa.line_segment(
-            [
-                Pos2::new(max_x, inner.min.y),
-                Pos2::new(max_x, inner.min.y + ph),
-            ],
+        p.line_segment(
+            [Pos2::new(max_x, inner.min.y), Pos2::new(max_x, inner.max.y)],
             Stroke::new(4.0 * s, ga(ORANGE, 28)),
         );
     }
 
+    // Draggable nodes
     let node_y = inner.min.y + ph * 0.5;
     let hit_sz = 22.0 * s;
+    
     let min_hit = Rect::from_center_size(Pos2::new(min_x, node_y), Vec2::splat(hit_sz));
     let mr = ui.allocate_rect(min_hit, Sense::drag());
     if mr.dragged() {
         let nx = (min_x + mr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
-        ch.min_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(1.0, p.max_freq - 1.0));
+        ch.min_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(1.0, params.max_freq - 1.0));
     }
+    
     let max_hit = Rect::from_center_size(Pos2::new(max_x, node_y), Vec2::splat(hit_sz));
     let xr = ui.allocate_rect(max_hit, Sense::drag());
     if xr.dragged() {
         let nx = (max_x + xr.drag_delta().x - inner.min.x).clamp(0.0, inner.width());
-        ch.max_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(p.min_freq + 1.0, 24000.0));
+        ch.max_freq = Some((x_to_freq(nx, inner.width()) as f64).clamp(params.min_freq + 1.0, 24000.0));
     }
-    freq_node(&pa, Pos2::new(min_x, node_y), TEAL, "Min", s);
-    freq_node(&pa, Pos2::new(max_x, node_y), ORANGE, "Max", s);
+    
+    freq_node(&p, Pos2::new(min_x, node_y), TEAL, "Min", s);
+    freq_node(&p, Pos2::new(max_x, node_y), ORANGE, "Max", s);
 
-    pa.text(
+    // Labels
+    p.text(
         Pos2::new(inner.min.x + 6.0 * s, inner.min.y + 7.0 * s),
         egui::Align2::LEFT_CENTER,
-        "Spectrum Analyzer",
+        "TKEO Detection Band",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
+    
     ui.ctx().request_repaint();
+}
+
+fn freq_to_x(freq: f32, width: f32) -> f32 {
+    let min_log = 100.0f32.log10();
+    let max_log = 24000.0f32.log10();
+    let f_log = freq.log10();
+    ((f_log - min_log) / (max_log - min_log)) * width
+}
+
+fn x_to_freq(x: f32, width: f32) -> f32 {
+    let min_log = 100.0f32.log10();
+    let max_log = 24000.0f32.log10();
+    let t = (x / width).clamp(0.0, 1.0);
+    10.0f32.powf(min_log + t * (max_log - min_log))
+}
+
+fn db_to_y(db: f32, height: f32, min_y: f32) -> f32 {
+    // -120 dB at bottom, 0 dB at top
+    min_y + height - ((db + 120.0) / 120.0 * height)
 }
 
 fn freq_node(pa: &egui::Painter, c: Pos2, col: Color32, lbl: &str, s: f32) {
@@ -1941,6 +1709,7 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
         Vec2::new(80.0 * s, 22.0 * s),
     );
     let lbl = gui.num_input.label.clone();
+    
     egui::Area::new(egui::Id::new("neb_num"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -1949,7 +1718,7 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
                 let p = ui.painter();
                 // Scrim
                 p.rect_filled(sc, 0.0, Color32::from_black_alpha(140));
-                // ContentDialog card — kRadiusOverlay = 12px, shadow
+                // ContentDialog card
                 p.rect_filled(
                     Rect::from_center_size(pop.center() + Vec2::new(0.0, 3.0 * s), pop.size()),
                     12.0 * s,
@@ -1959,56 +1728,26 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
                 p.text(
                     Pos2::new(pop.center().x, pop.min.y + 18.0 * s),
                     egui::Align2::CENTER_CENTER,
-                    format!("Set  {}", lbl),
+                    format!("Set {}", lbl),
                     FontId::new(11.5 * s, FontFamily::Proportional),
                     TEXT_PRI,
                 );
-                // TextBox with focus underline
+                // TextBox
                 p.rect_filled(fr, 4.0 * s, CTRL_DEFAULT);
-                p.rect_stroke(
-                    fr,
-                    4.0 * s,
-                    Stroke::new(1.0, STROKE_DEF),
-                    egui::StrokeKind::Outside,
-                );
-                // Focus underline — accent colour bottom line
+                p.rect_stroke(fr, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
                 p.line_segment(
-                    [
-                        Pos2::new(fr.min.x + 4.0 * s, fr.max.y),
-                        Pos2::new(fr.max.x - 4.0 * s, fr.max.y),
-                    ],
+                    [Pos2::new(fr.min.x + 4.0 * s, fr.max.y), Pos2::new(fr.max.x - 4.0 * s, fr.max.y)],
                     Stroke::new(2.0, ACCENT),
                 );
-                // Primary button — accent fill
+                // Buttons
                 p.rect_filled(ok, 4.0 * s, ACCENT);
-                p.rect_stroke(
-                    ok,
-                    4.0 * s,
-                    Stroke::new(1.0, ACCENT_BORDER),
-                    egui::StrokeKind::Outside,
-                );
-                p.text(
-                    ok.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "OK",
-                    FontId::new(11.5 * s, FontFamily::Proportional),
-                    Color32::WHITE,
-                );
-                // Secondary button — control fill
+                p.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
+                p.text(ok.center(), egui::Align2::CENTER_CENTER, "OK", 
+                    FontId::new(11.5 * s, FontFamily::Proportional), Color32::WHITE);
                 p.rect_filled(cx_, 4.0 * s, CTRL_DEFAULT);
-                p.rect_stroke(
-                    cx_,
-                    4.0 * s,
-                    Stroke::new(1.0, STROKE_DEF),
-                    egui::StrokeKind::Outside,
-                );
-                p.text(
-                    cx_.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Cancel",
-                    FontId::new(11.5 * s, FontFamily::Proportional),
-                    TEXT_SEC,
-                );
+                p.rect_stroke(cx_, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+                p.text(cx_.center(), egui::Align2::CENTER_CENTER, "Cancel",
+                    FontId::new(11.5 * s, FontFamily::Proportional), TEXT_SEC);
             }
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
                 let te = egui::TextEdit::singleline(&mut gui.num_input.value_str)
@@ -2042,6 +1781,38 @@ fn apply_num(gui: &mut NebulaGui, ch: &mut GuiChanges) {
     gui.num_input.open = false;
 }
 
+// ─── Parameter Application Helper ───────────────────────────────────────────
+// NOTE: As of v2.6.0, the `threshold` parameter no longer controls
+// compression gain reduction. It now sets the Teager-Kaiser Energy Operator
+// sensitivity threshold for sibilance detection in the Orthogonal Subspace
+// Projection pipeline.
+//
+// Interpretation:
+// • Value represents dB level of TKEO output that triggers analysis
+// • Lower values = lower energy spikes trigger detection = more aggressive
+// • Higher values = only high-energy transients trigger = more transparent
+// • The actual gain reduction amount is controlled by `max_reduction`
+// ────────────────────────────────────────────────────────────────────────────
+fn apply_ch(target: &NumTarget, value: f64, ch: &mut GuiChanges) {
+    match target {
+        NumTarget::Threshold => ch.threshold = Some(value),
+        NumTarget::MaxReduction => ch.max_reduction = Some(value),
+        NumTarget::MinFreq => ch.min_freq = Some(value),
+        NumTarget::MaxFreq => ch.max_freq = Some(value),
+        NumTarget::Lookahead => ch.lookahead_ms = Some(value),
+        NumTarget::StereoLink => ch.stereo_link = Some(value),
+        NumTarget::InputLevel => ch.input_level = Some(value),
+        NumTarget::InputPan => ch.input_pan = Some(value),
+        NumTarget::OutputLevel => ch.output_level = Some(value),
+        NumTarget::OutputPan => ch.output_pan = Some(value),
+        NumTarget::CutWidth => ch.cut_width = Some(value),
+        NumTarget::CutDepth => ch.cut_depth = Some(value),
+        NumTarget::CutSlope => ch.cut_slope = Some(value),
+        NumTarget::Mix => ch.mix = Some(value),
+        _ => {}
+    }
+}
+
 // ─── ContentDialog — Preset Save ─────────────────────────────────────────────
 fn draw_content_dialog_preset(
     ctx: &Context,
@@ -2064,6 +1835,7 @@ fn draw_content_dialog_preset(
         Pos2::new(pop.center().x + 54.0 * s, pop.max.y - 16.0 * s),
         Vec2::new(84.0 * s, 22.0 * s),
     );
+    
     egui::Area::new(egui::Id::new("neb_prsave"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2085,47 +1857,19 @@ fn draw_content_dialog_preset(
                     TEXT_PRI,
                 );
                 pa.rect_filled(fr, 4.0 * s, CTRL_DEFAULT);
-                pa.rect_stroke(
-                    fr,
-                    4.0 * s,
-                    Stroke::new(1.0, STROKE_DEF),
-                    egui::StrokeKind::Outside,
-                );
+                pa.rect_stroke(fr, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
                 pa.line_segment(
-                    [
-                        Pos2::new(fr.min.x + 4.0 * s, fr.max.y),
-                        Pos2::new(fr.max.x - 4.0 * s, fr.max.y),
-                    ],
+                    [Pos2::new(fr.min.x + 4.0 * s, fr.max.y), Pos2::new(fr.max.x - 4.0 * s, fr.max.y)],
                     Stroke::new(2.0, ACCENT),
                 );
                 pa.rect_filled(ok, 4.0 * s, ACCENT);
-                pa.rect_stroke(
-                    ok,
-                    4.0 * s,
-                    Stroke::new(1.0, ACCENT_BORDER),
-                    egui::StrokeKind::Outside,
-                );
-                pa.text(
-                    ok.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Save",
-                    FontId::new(11.5 * s, FontFamily::Proportional),
-                    Color32::WHITE,
-                );
+                pa.rect_stroke(ok, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
+                pa.text(ok.center(), egui::Align2::CENTER_CENTER, "Save",
+                    FontId::new(11.5 * s, FontFamily::Proportional), Color32::WHITE);
                 pa.rect_filled(cx_, 4.0 * s, CTRL_DEFAULT);
-                pa.rect_stroke(
-                    cx_,
-                    4.0 * s,
-                    Stroke::new(1.0, STROKE_DEF),
-                    egui::StrokeKind::Outside,
-                );
-                pa.text(
-                    cx_.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Cancel",
-                    FontId::new(11.5 * s, FontFamily::Proportional),
-                    TEXT_SEC,
-                );
+                pa.rect_stroke(cx_, 4.0 * s, Stroke::new(1.0, STROKE_DEF), egui::StrokeKind::Outside);
+                pa.text(cx_.center(), egui::Align2::CENTER_CENTER, "Cancel",
+                    FontId::new(11.5 * s, FontFamily::Proportional), TEXT_SEC);
             }
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
                 let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
@@ -2172,6 +1916,7 @@ fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
 fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     let sc = ctx.screen_rect();
     let pop = Rect::from_center_size(sc.center(), Vec2::new(290.0 * s, 320.0 * s));
+    
     egui::Area::new(egui::Id::new("neb_midi"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2206,6 +1951,7 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                 .learning_target
                 .load(std::sync::atomic::Ordering::Relaxed);
             let mappings = gui.midi_learn.mappings.lock().clone();
+            
             for (idx, &name) in MIDI_PARAM_NAMES.iter().enumerate().take(MIDI_PARAM_COUNT) {
                 let cc_s: String = mappings
                     .iter()
@@ -2230,12 +1976,7 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                         (CTRL_DEFAULT, STROKE_DEF)
                     };
                     pa.rect_filled(rr, 4.0 * s, bg);
-                    pa.rect_stroke(
-                        rr,
-                        4.0 * s,
-                        Stroke::new(1.0, border),
-                        egui::StrokeKind::Outside,
-                    );
+                    pa.rect_stroke(rr, 4.0 * s, Stroke::new(1.0, border), egui::StrokeKind::Outside);
                     pa.text(
                         Pos2::new(rr.min.x + 8.0 * s, rr.center().y),
                         egui::Align2::LEFT_CENTER,
@@ -2270,33 +2011,13 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
             {
                 let pa = ui.painter_at(Rect::EVERYTHING);
                 pa.rect_filled(clr, 4.0 * s, ga(RED, 30));
-                pa.rect_stroke(
-                    clr,
-                    4.0 * s,
-                    Stroke::new(1.0, ga(RED, 100)),
-                    egui::StrokeKind::Outside,
-                );
-                pa.text(
-                    clr.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Clear All",
-                    FontId::new(9.0 * s, FontFamily::Proportional),
-                    RED,
-                );
+                pa.rect_stroke(clr, 4.0 * s, Stroke::new(1.0, ga(RED, 100)), egui::StrokeKind::Outside);
+                pa.text(clr.center(), egui::Align2::CENTER_CENTER, "Clear All",
+                    FontId::new(9.0 * s, FontFamily::Proportional), RED);
                 pa.rect_filled(cls, 4.0 * s, ACCENT);
-                pa.rect_stroke(
-                    cls,
-                    4.0 * s,
-                    Stroke::new(1.0, ACCENT_BORDER),
-                    egui::StrokeKind::Outside,
-                );
-                pa.text(
-                    cls.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Close",
-                    FontId::new(9.0 * s, FontFamily::Proportional),
-                    Color32::WHITE,
-                );
+                pa.rect_stroke(cls, 4.0 * s, Stroke::new(1.0, ACCENT_BORDER), egui::StrokeKind::Outside);
+                pa.text(cls.center(), egui::Align2::CENTER_CENTER, "Close",
+                    FontId::new(9.0 * s, FontFamily::Proportional), Color32::WHITE);
             }
             if ui.allocate_rect(clr, Sense::click()).clicked() {
                 gui.midi_learn.mappings.lock().clear();
@@ -2330,6 +2051,7 @@ fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     let anchor = gui.midi_context_anchor;
     let menu_rect = Rect::from_min_size(anchor, Vec2::new(menu_w, menu_h));
     let screen = ctx.screen_rect();
+    
     egui::Area::new(egui::Id::new("neb_midi_ctx_bg"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2338,13 +2060,13 @@ fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                 gui.midi_context_menu = false;
             }
         });
+    
     egui::Area::new(egui::Id::new("neb_midi_ctx"))
         .fixed_pos(anchor)
         .order(egui::Order::Tooltip)
         .show(ctx, |ui| {
             {
                 let p = ui.painter();
-                // Flyout shadow
                 p.rect_filled(
                     Rect::from_min_size(anchor + Vec2::new(2.0, 3.0), Vec2::new(menu_w, menu_h)),
                     8.0 * s,
@@ -2410,6 +2132,7 @@ fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                 gui.midi_context_menu = false;
             }
         });
+    
     if gui.midi_cleanup_menu {
         draw_midi_cleanup_menu(ctx, gui, s);
     }
@@ -2419,11 +2142,13 @@ fn draw_midi_cleanup_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
     let mappings = gui.midi_learn.mappings.lock().clone();
     let mut sorted: Vec<(u8, u8)> = mappings.iter().map(|(&cc, &p)| (cc, p)).collect();
     sorted.sort_by_key(|&(cc, _)| cc);
+    
     let sub_w = 210.0 * s;
     let ih = 24.0 * s;
     let sub_h = (sorted.len() + 2) as f32 * ih + 8.0 * s;
     let anchor = gui.midi_cleanup_anchor;
     let sub_rect = Rect::from_min_size(anchor, Vec2::new(sub_w, sub_h));
+    
     egui::Area::new(egui::Id::new("neb_midi_cleanup"))
         .fixed_pos(anchor)
         .order(egui::Order::Tooltip)
@@ -2466,7 +2191,7 @@ fn draw_midi_cleanup_menu(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                     p.text(
                         Pos2::new(ir.min.x + 12.0 * s, ir.center().y),
                         egui::Align2::LEFT_CENTER,
-                        format!("CC{}  →  {}", cc, pname),
+                        format!("CC{} → {}", cc, pname),
                         FontId::new(12.5 * s, FontFamily::Proportional),
                         if hov { RED } else { TEXT_SEC },
                     );
@@ -2521,6 +2246,7 @@ fn draw_flyout_os(
     let anchor = gui.os_anchor;
     let dr = Rect::from_min_size(anchor, Vec2::new(os_w, drop_h));
     let screen = ctx.screen_rect();
+    
     egui::Area::new(egui::Id::new("neb_os_bg"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2529,6 +2255,7 @@ fn draw_flyout_os(
                 gui.os_dropdown = false;
             }
         });
+    
     egui::Area::new(egui::Id::new("neb_os_drop"))
         .fixed_pos(anchor)
         .order(egui::Order::Tooltip)
@@ -2594,6 +2321,7 @@ fn draw_flyout_preset(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s
     let anchor = gui.preset_anchor;
     let dr = Rect::from_min_size(anchor, Vec2::new(pw, drop_h));
     let screen = ctx.screen_rect();
+    
     egui::Area::new(egui::Id::new("neb_pr_bg"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2602,6 +2330,7 @@ fn draw_flyout_preset(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s
                 gui.preset_dropdown_open = false;
             }
         });
+    
     let presets_clone = gui.presets.clone();
     egui::Area::new(egui::Id::new("neb_pr_drop"))
         .fixed_pos(anchor)
