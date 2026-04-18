@@ -642,16 +642,40 @@ impl DeEsserDsp {
         let delayed_l = self.channels[0].audio_delay.process(audio_l);
         let delayed_r = self.channels[1].audio_delay.process(audio_r);
 
-        let detected_l = self.detect_signal(sc_l, 0, settings.use_peak_filter);
-        let detected_r = self.detect_signal(sc_r, 1, settings.use_peak_filter);
+        let band_detect_l = self.detect_signal(sc_l, 0, settings.use_peak_filter);
+        let band_detect_r = self.detect_signal(sc_r, 1, settings.use_peak_filter);
+        let detected_l = if settings.use_wide_range {
+            sc_l * 0.65 + band_detect_l * 0.35
+        } else {
+            band_detect_l
+        };
+        let detected_r = if settings.use_wide_range {
+            sc_r * 0.65 + band_detect_r * 0.35
+        } else {
+            band_detect_r
+        };
 
         let detected_env_l = self.channels[0].detect_env.process(detected_l);
         let detected_env_r = self.channels[1].detect_env.process(detected_r);
         let full_env_l = self.channels[0].full_env.process(sc_l);
         let full_env_r = self.channels[1].full_env.process(sc_r);
 
-        let subspace_l = self.subspace_metrics(sc_l, 0);
-        let subspace_r = self.subspace_metrics(sc_r, 1);
+        let subspace_l = self.subspace_metrics(
+            sc_l,
+            detected_env_l,
+            full_env_l,
+            settings.mode_relative,
+            settings.use_wide_range,
+            0,
+        );
+        let subspace_r = self.subspace_metrics(
+            sc_r,
+            detected_env_r,
+            full_env_r,
+            settings.mode_relative,
+            settings.use_wide_range,
+            1,
+        );
         let psycho_l = self.psychoacoustic_weight(sc_l, detected_l, 0);
         let psycho_r = self.psychoacoustic_weight(sc_r, detected_r, 1);
         let formant_lock_l = self.formant_preservation_lock(sc_l, detected_l, 0);
@@ -664,12 +688,21 @@ impl DeEsserDsp {
         let full_env_l = full_env_l * (1.0 - stereo_link) + linked_full * stereo_link;
         let full_env_r = full_env_r * (1.0 - stereo_link) + linked_full * stereo_link;
 
-        let comparison_l = if settings.mode_relative {
+        let comparison_l = if settings.use_wide_range {
+            // Wide = full-signal analysis. Decide using overall voice behavior.
+            let behavior_energy = full_env_l * (0.7 + 0.3 * subspace_l);
+            lin_to_db(behavior_energy)
+        } else if settings.mode_relative {
+            // Split = harsh-band analysis relative to full signal.
             lin_to_db(detect_env_l) - lin_to_db(full_env_l)
         } else {
+            // Split absolute = harsh-band absolute energy.
             lin_to_db(detect_env_l)
         };
-        let comparison_r = if settings.mode_relative {
+        let comparison_r = if settings.use_wide_range {
+            let behavior_energy = full_env_r * (0.7 + 0.3 * subspace_r);
+            lin_to_db(behavior_energy)
+        } else if settings.mode_relative {
             lin_to_db(detect_env_r) - lin_to_db(full_env_r)
         } else {
             lin_to_db(detect_env_r)
@@ -763,7 +796,15 @@ impl DeEsserDsp {
     }
 
     #[inline]
-    fn subspace_metrics(&mut self, input: f64, channel_idx: usize) -> f64 {
+    fn subspace_metrics(
+        &mut self,
+        input: f64,
+        detected_env: f64,
+        full_env: f64,
+        mode_relative: bool,
+        use_wide_range: bool,
+        channel_idx: usize,
+    ) -> f64 {
         let channel = &mut self.channels[channel_idx];
         let tkeo = teager_kaiser_energy(input, channel.prev_input_1, channel.prev_input_2);
         channel.prev_input_2 = channel.prev_input_1;
@@ -775,8 +816,34 @@ impl DeEsserDsp {
         let features = [f_short, f_mid, f_long];
         channel.subspace_tracker.update(features);
         let orth_ratio = channel.subspace_tracker.orthogonal_ratio(features);
+        let sum = (f_short + f_mid + f_long).max(1.0e-12);
 
-        (0.3 + 0.9 * orth_ratio).clamp(0.25, 1.0)
+        // Absolute mode = strict 3-vector decomposition:
+        // voiced axis (harmonic), unvoiced axis (sibilant), residual axis.
+        let voiced_axis = (f_long / sum).clamp(0.0, 1.0);
+        let unvoiced_axis = (f_short / sum).clamp(0.0, 1.0);
+        let residual_axis = (f_mid / sum).clamp(0.0, 1.0);
+        let strict_three_vector = (unvoiced_axis * 0.55 + residual_axis * 0.45)
+            * (0.55 + 0.45 * orth_ratio)
+            * (1.0 - 0.25 * voiced_axis);
+
+        if !mode_relative {
+            return strict_three_vector.clamp(0.2, 1.1);
+        }
+
+        // Relative mode = adaptive multi-vector behavior (beyond 3D when needed).
+        // The decision to expand weighting uses signal context + detector relation.
+        let detected_ratio = (detected_env / (full_env + 1.0e-9)).clamp(0.0, 4.0);
+        let flux = ((f_short - f_mid).abs() + (f_mid - f_long).abs()) / sum;
+        let multi_vector_enable = if use_wide_range {
+            (detected_ratio * 0.45 + flux * 1.6 + orth_ratio * 0.5).clamp(0.0, 1.0)
+        } else {
+            (detected_ratio * 0.55 + flux * 1.2 + orth_ratio * 0.6).clamp(0.0, 1.0)
+        };
+        let extended_vector_gain =
+            strict_three_vector + multi_vector_enable * (flux * 0.55 + orth_ratio * 0.45);
+
+        extended_vector_gain.clamp(0.25, 1.2)
     }
 
     #[inline]
@@ -1020,5 +1087,73 @@ mod tests {
         }
 
         assert!(loose_reduction < strict_reduction - 0.5);
+    }
+
+    #[test]
+    fn split_and_wide_modes_produce_different_reduction_behavior() {
+        let mut dsp = DeEsserDsp::new(48_000.0);
+        let split_settings = ProcessSettings {
+            threshold_db: -30.0,
+            max_reduction_db: 12.0,
+            mode_relative: false,
+            use_wide_range: false,
+            ..ProcessSettings::default()
+        };
+        let wide_settings = ProcessSettings {
+            threshold_db: -30.0,
+            max_reduction_db: 12.0,
+            mode_relative: false,
+            use_wide_range: true,
+            ..ProcessSettings::default()
+        };
+
+        let mut split_reduction = 0.0;
+        let mut wide_reduction = 0.0;
+        for _ in 0..256 {
+            split_reduction = dsp
+                .process_frame(0.7, 0.7, 0.7, 0.7, split_settings)
+                .reduction_db;
+        }
+        dsp.reset();
+        for _ in 0..256 {
+            wide_reduction = dsp
+                .process_frame(0.7, 0.7, 0.7, 0.7, wide_settings)
+                .reduction_db;
+        }
+
+        assert!((split_reduction - wide_reduction).abs() > 0.1);
+    }
+
+    #[test]
+    fn relative_mode_engages_adaptive_multi_vector_weighting() {
+        let mut dsp = DeEsserDsp::new(48_000.0);
+        let absolute = ProcessSettings {
+            threshold_db: -28.0,
+            max_reduction_db: 12.0,
+            mode_relative: false,
+            ..ProcessSettings::default()
+        };
+        let relative = ProcessSettings {
+            threshold_db: -28.0,
+            max_reduction_db: 12.0,
+            mode_relative: true,
+            ..ProcessSettings::default()
+        };
+
+        let mut abs_reduction = 0.0;
+        let mut rel_reduction = 0.0;
+        for _ in 0..256 {
+            abs_reduction = dsp
+                .process_frame(0.75, 0.75, 0.75, 0.75, absolute)
+                .reduction_db;
+        }
+        dsp.reset();
+        for _ in 0..256 {
+            rel_reduction = dsp
+                .process_frame(0.75, 0.75, 0.75, 0.75, relative)
+                .reduction_db;
+        }
+
+        assert!((abs_reduction - rel_reduction).abs() > 0.1);
     }
 }
