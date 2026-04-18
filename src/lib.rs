@@ -39,9 +39,8 @@ pub const MIDI_MAX_FREQ: u8 = 8;
 pub const MIDI_LOOKAHEAD: u8 = 9;
 pub const MIDI_PARAM_COUNT: usize = 10;
 
-// ─── CHANGED: "Threshold" → "TKEO Sensitivity" for v2.5.0 algorithm ───
 pub const MIDI_PARAM_NAMES: &[&str] = &[
-    "TKEO Sensitivity",
+    "Threshold",
     "Max Reduction",
     "Stereo Link",
     "Input Level",
@@ -185,14 +184,20 @@ impl Default for NebulaParams {
             threshold: FloatParam::new(
                 "Threshold",
                 -20.0,
-                FloatRange::Linear { min: -60.0, max: 0.0 },
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 0.0,
+                },
             )
             .with_unit(" dB")
             .with_step_size(0.1),
             max_reduction: FloatParam::new(
                 "Max Reduction",
                 12.0,
-                FloatRange::Linear { min: 0.0, max: 40.0 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 40.0,
+                },
             )
             .with_unit(" dB")
             .with_step_size(0.1),
@@ -210,7 +215,10 @@ impl Default for NebulaParams {
             lookahead_ms: FloatParam::new(
                 "Lookahead",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 20.0 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 20.0,
+                },
             )
             .with_unit(" ms")
             .with_step_size(0.1),
@@ -227,7 +235,10 @@ impl Default for NebulaParams {
             input_level: FloatParam::new(
                 "Input Level",
                 0.0,
-                FloatRange::Linear { min: -100.0, max: 100.0 },
+                FloatRange::Linear {
+                    min: -100.0,
+                    max: 100.0,
+                },
             )
             .with_unit(" dB")
             .with_step_size(0.1)
@@ -235,14 +246,20 @@ impl Default for NebulaParams {
             input_pan: FloatParam::new(
                 "Input Pan",
                 0.0,
-                FloatRange::Linear { min: -1.0, max: 1.0 },
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
             )
             .with_step_size(0.01)
             .with_smoother(SmoothingStyle::Linear(20.0)),
             output_level: FloatParam::new(
                 "Output Level",
                 0.0,
-                FloatRange::Linear { min: -100.0, max: 100.0 },
+                FloatRange::Linear {
+                    min: -100.0,
+                    max: 100.0,
+                },
             )
             .with_unit(" dB")
             .with_step_size(0.1)
@@ -250,7 +267,10 @@ impl Default for NebulaParams {
             output_pan: FloatParam::new(
                 "Output Pan",
                 0.0,
-                FloatRange::Linear { min: -1.0, max: 1.0 },
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
             )
             .with_step_size(0.01)
             .with_smoother(SmoothingStyle::Linear(20.0)),
@@ -271,7 +291,10 @@ impl Default for NebulaParams {
             cut_slope: FloatParam::new(
                 "Cut Slope",
                 50.0,
-                FloatRange::Linear { min: 0.0, max: 100.0 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 100.0,
+                },
             )
             .with_unit(" dB/oct")
             .with_step_size(0.1),
@@ -425,11 +448,11 @@ impl Plugin for NebulaDeEsser {
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    fn params(&self) -> Arc<NebulaParams> {
+    fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -511,7 +534,7 @@ impl Plugin for NebulaDeEsser {
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        context: &mut impl InitContext,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
@@ -545,7 +568,7 @@ impl Plugin for NebulaDeEsser {
         &mut self,
         buffer: &mut Buffer,
         aux: &mut AuxiliaryBuffers,
-        context: &mut impl ProcessContext,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
@@ -838,82 +861,86 @@ fn apply_midi_mapping(
 ) {
     macro_rules! set_param {
         ($param:expr, $value:expr) => {{
-            if ($param.value() - $value).abs() > 0.001 {
-                $param.set_value($value);
-                setter.set_parameter(&*$param);
-            }
+            setter.begin_set_parameter(&$param);
+            setter.set_parameter(&$param, $value);
+            setter.end_set_parameter(&$param);
         }};
     }
 
     match parameter_index {
-        MIDI_THRESHOLD => set_param!(params.threshold, value),
-        MIDI_MAX_RED => set_param!(params.max_reduction, value),
+        MIDI_THRESHOLD => set_param!(params.threshold, -60.0 + value * 60.0),
+        MIDI_MAX_RED => set_param!(params.max_reduction, value * 40.0),
         MIDI_STEREO_LINK => set_param!(params.stereo_link, value),
-        MIDI_INPUT_LEVEL => set_param!(params.input_level, value),
-        MIDI_INPUT_PAN => set_param!(params.input_pan, value),
-        MIDI_OUTPUT_LEVEL => set_param!(params.output_level, value),
-        MIDI_OUTPUT_PAN => set_param!(params.output_pan, value),
-        MIDI_MIN_FREQ => set_param!(params.min_freq, value),
-        MIDI_MAX_FREQ => set_param!(params.max_freq, value),
-        MIDI_LOOKAHEAD => set_param!(params.lookahead_ms, value),
+        MIDI_INPUT_LEVEL => set_param!(params.input_level, -100.0 + value * 200.0),
+        MIDI_INPUT_PAN => set_param!(params.input_pan, value * 2.0 - 1.0),
+        MIDI_OUTPUT_LEVEL => set_param!(params.output_level, -100.0 + value * 200.0),
+        MIDI_OUTPUT_PAN => set_param!(params.output_pan, value * 2.0 - 1.0),
+        MIDI_MIN_FREQ => set_param!(params.min_freq, 1.0 + value * 23_999.0),
+        MIDI_MAX_FREQ => set_param!(params.max_freq, 1.0 + value * 23_999.0),
+        MIDI_LOOKAHEAD => set_param!(params.lookahead_ms, value * 20.0),
         _ => {}
     }
 }
 
-fn apply_gui_changes(changes: &gui::GuiChanges, params: &NebulaParams, setter: &ParamSetter) {
-    macro_rules! set_if_some {
+fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, setter: &ParamSetter) {
+    macro_rules! set_float {
         ($field:expr, $param:expr) => {
-            if let Some(v) = $field {
-                if ($param.value() as f64 - v).abs() > 0.001 {
-                    $param.set_value(v as f32);
-                    setter.set_parameter(&*$param);
-                }
-            }
-        };
-        ($field:expr, $param:expr, bool) => {
-            if let Some(v) = $field {
-                let current = $param.value();
-                let target = if v { 1.0 } else { 0.0 };
-                if (current - target).abs() > 0.001 {
-                    $param.set_value(target);
-                    setter.set_parameter(&*$param);
-                }
+            if let Some(value) = $field {
+                setter.begin_set_parameter(&$param);
+                setter.set_parameter(&$param, value as f32);
+                setter.end_set_parameter(&$param);
             }
         };
     }
 
-    set_if_some!(changes.threshold, params.threshold);
-    set_if_some!(changes.max_reduction, params.max_reduction);
-    set_if_some!(changes.min_freq, params.min_freq);
-    set_if_some!(changes.max_freq, params.max_freq);
-    set_if_some!(changes.mode_relative, params.mode_relative, bool);
-    set_if_some!(changes.use_peak_filter, params.use_peak_filter, bool);
-    set_if_some!(changes.use_wide_range, params.use_wide_range, bool);
-    set_if_some!(changes.filter_solo, params.filter_solo, bool);
-    set_if_some!(changes.lookahead_enabled, params.lookahead_enabled, bool);
-    set_if_some!(changes.lookahead_ms, params.lookahead_ms);
-    set_if_some!(changes.trigger_hear, params.trigger_hear, bool);
-    set_if_some!(changes.stereo_link, params.stereo_link);
-    set_if_some!(changes.stereo_mid_side, params.stereo_mid_side, bool);
-    set_if_some!(changes.sidechain_external, params.sidechain_external, bool);
-    set_if_some!(changes.vocal_mode, params.vocal_mode, bool);
-    set_if_some!(changes.input_level, params.input_level);
-    set_if_some!(changes.input_pan, params.input_pan);
-    set_if_some!(changes.output_level, params.output_level);
-    set_if_some!(changes.output_pan, params.output_pan);
-    set_if_some!(changes.bypass, params.bypass, bool);
-    set_if_some!(changes.oversampling, params.oversampling);
-    set_if_some!(changes.cut_width, params.cut_width);
-    set_if_some!(changes.cut_depth, params.cut_depth);
-    set_if_some!(changes.cut_slope, params.cut_slope);
-    set_if_some!(changes.mix, params.mix);
+    macro_rules! set_bool {
+        ($field:expr, $param:expr) => {
+            if let Some(value) = $field {
+                setter.begin_set_parameter(&$param);
+                setter.set_parameter(&$param, if value { 1.0 } else { 0.0 });
+                setter.end_set_parameter(&$param);
+            }
+        };
+    }
+
+    set_float!(changes.threshold, params.threshold);
+    set_float!(changes.max_reduction, params.max_reduction);
+    set_float!(changes.min_freq, params.min_freq);
+    set_float!(changes.max_freq, params.max_freq);
+    set_bool!(changes.mode_relative, params.mode_relative);
+    set_bool!(changes.use_peak_filter, params.use_peak_filter);
+    set_bool!(changes.use_wide_range, params.use_wide_range);
+    set_bool!(changes.filter_solo, params.filter_solo);
+    set_bool!(changes.lookahead_enabled, params.lookahead_enabled);
+    set_float!(changes.lookahead_ms, params.lookahead_ms);
+    set_bool!(changes.trigger_hear, params.trigger_hear);
+    set_float!(changes.stereo_link, params.stereo_link);
+    set_bool!(changes.stereo_mid_side, params.stereo_mid_side);
+    set_bool!(changes.sidechain_external, params.sidechain_external);
+    set_bool!(changes.vocal_mode, params.vocal_mode);
+    set_float!(changes.input_level, params.input_level);
+    set_float!(changes.input_pan, params.input_pan);
+    set_float!(changes.output_level, params.output_level);
+    set_float!(changes.output_pan, params.output_pan);
+    set_bool!(changes.bypass, params.bypass);
+    set_float!(changes.cut_width, params.cut_width);
+    set_float!(changes.cut_depth, params.cut_depth);
+    set_float!(changes.cut_slope, params.cut_slope);
+    set_float!(changes.mix, params.mix);
+
+    if let Some(oversampling) = changes.oversampling {
+        setter.begin_set_parameter(&params.oversampling);
+        setter.set_parameter(&params.oversampling, oversampling as f32);
+        setter.end_set_parameter(&params.oversampling);
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_dsp(
     dsp: &mut DeEsserDsp,
     min_freq: f64,
     max_freq: f64,
-    use_peak: bool,
+    use_peak_filter: bool,
     cut_width: f64,
     cut_depth: f64,
     cut_slope: f64,
@@ -924,18 +951,18 @@ fn prepare_dsp(
     dsp.update_filters(
         min_freq,
         max_freq,
-        use_peak,
+        use_peak_filter,
         cut_width,
         cut_depth,
         cut_slope,
         max_reduction,
     );
     dsp.update_lookahead(lookahead_ms);
-    dsp.set_single_vocal(single_vocal);
+    dsp.update_vocal_mode(single_vocal);
 }
 
-fn oversampling_factor(os: u32) -> u32 {
-    match os {
+fn oversampling_factor(selection: u32) -> u32 {
+    match selection {
         1 => 2,
         2 => 4,
         3 => 6,
@@ -945,27 +972,10 @@ fn oversampling_factor(os: u32) -> u32 {
 }
 
 fn lookahead_latency_samples(lookahead_ms: f64, sample_rate: f64) -> u32 {
-    ((lookahead_ms * sample_rate) / 1000.0).round() as u32
-}
-
-fn db_to_lin(db: f64) -> f64 {
-    10.0_f64.powf(db / 20.0)
-}
-
-fn lin_to_db(lin: f64) -> f64 {
-    if lin <= 0.0 {
-        -120.0
-    } else {
-        20.0 * lin.log10()
-    }
+    ((lookahead_ms.max(0.0) * sample_rate) / 1000.0).round() as u32
 }
 
 fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
-    let pan_clamped = pan.clamp(-1.0, 1.0);
-    let (l, r) = if pan_clamped >= 0.0 {
-        (1.0, 1.0 - pan_clamped)
-    } else {
-        (1.0 + pan_clamped, 1.0)
-    };
-    (l * gain, r * gain)
+    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
+    (gain * angle.cos(), gain * angle.sin())
 }
