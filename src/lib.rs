@@ -40,7 +40,7 @@ pub const MIDI_LOOKAHEAD: u8 = 9;
 pub const MIDI_PARAM_COUNT: usize = 10;
 
 pub const MIDI_PARAM_NAMES: &[&str] = &[
-    "Threshold",
+    "TKEO Threshold",
     "Max Reduction",
     "Stereo Link",
     "Input Level",
@@ -182,15 +182,11 @@ impl Default for NebulaParams {
         Self {
             editor_state: EguiState::from_size(860, 640),
             threshold: FloatParam::new(
-                "Threshold",
-                -20.0,
-                FloatRange::Linear {
-                    min: -60.0,
-                    max: 0.0,
-                },
+                "TKEO Threshold",
+                0.52,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             )
-            .with_unit(" dB")
-            .with_step_size(0.1),
+            .with_step_size(0.01),
             max_reduction: FloatParam::new(
                 "Max Reduction",
                 12.0,
@@ -663,7 +659,7 @@ impl Plugin for NebulaDeEsser {
         }
 
         let settings = ProcessSettings {
-            threshold_db: threshold,
+            tkeo_threshold: threshold,
             max_reduction_db: max_reduction,
             mode_relative,
             use_peak_filter,
@@ -868,7 +864,7 @@ fn apply_midi_mapping(
     }
 
     match parameter_index {
-        MIDI_THRESHOLD => set_param!(params.threshold, -60.0 + value * 60.0),
+        MIDI_THRESHOLD => set_param!(params.threshold, value),
         MIDI_MAX_RED => set_param!(params.max_reduction, value * 40.0),
         MIDI_STEREO_LINK => set_param!(params.stereo_link, value),
         MIDI_INPUT_LEVEL => set_param!(params.input_level, -100.0 + value * 200.0),
