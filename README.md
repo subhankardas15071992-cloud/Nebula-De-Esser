@@ -31,16 +31,16 @@ If you find this open-source software helpful and would like to support its deve
 
 ### 🧠 **Full control optimization for the new DSP**
 
-- **Threshold knob and detection meter slider** they now control the Teager-Kaiser Energy Operator, basically how sharp or erratic an energy spike needs to be before the algorithm classifies it as sibilance rather than part of the vocal cord's natural vibration.
-- **Reprogrammed Absolute Mode** It learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. In absolute mode the de-esser uses 3-vector space to perform the separation:
+- **Threshold knob and detection meter slider:** They now control the Teager-Kaiser Energy Operator, basically how sharp or erratic an energy spike needs to be before the algorithm classifies it as sibilance rather than part of the vocal cord's natural vibration.
+- **Reprogrammed Absolute Mode:** It learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. In absolute mode the de-esser uses 3-vector space to perform the separation:
    - Voiced Axis (Harmonics): Where the periodic, "vowel-like" energy lives.
    - Unvoiced Axis (Sibilance): Where the aperiodic, TKEO-detected "noise" lives.
    - Residual/Error Axis: The "math dust" that doesn't fit either category.   
-- **Reprogrammed Relative Mode** Just like absolute mode it too learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. However, it switches the plugin to operate in Multi-Vector Space (N-dimensions) for more complex separation:
+- **Reprogrammed Relative Mode:** Just like absolute mode it too learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. However, it switches the plugin to operate in Multi-Vector Space (N-dimensions) for more complex separation:
    - Higher-Order Correlation: It’s not just looking at Harmonics vs. Noise. It starts looking at secondary relationships—like how the air at 12kHz specifically correlates with the chest resonance at 300Hz.
    - Contextual Intelligence: It decides which extra vectors to add based on the complexity of the signal. If you have a breathy singer with complex "stacking" textures, the math expands to map those unique characteristics so it doesn't accidentally categorize a "cool breath" as a "bad sibilant."
    - Subspace Contextuality: allows the subspace to expand and contract its dimensions in real-time, making it significantly more transparent for singers with a lot of dynamic "character" or those who shift between airy whispers and belts.
-- **Reprogrammed Split/Wide switching** it now controls the following parameters:
+- **Reprogrammed Split/Wide switching:** It now controls the following parameters:
    - **Split = Harsh-band analysis**
        - The detector focuses mostly on the sibilant region set by the frequency selector, and compares it to the whole signal to determine how it should be processed.
    - **Wide = Full-signal analysis**
