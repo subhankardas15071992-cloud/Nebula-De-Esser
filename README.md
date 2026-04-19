@@ -9,9 +9,9 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.5.0 introduces the biggest DSP leap in Nebula De-Esser so far: the legacy spectral-compression path has been replaced with a transparent, speech-aware Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis.
+Version 2.6.0 further tunes up the components to take full advantage of the new Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis based DSP architecture.
 
-<img width="864" height="701" alt="Image" src="https://github.com/user-attachments/assets/7b6e8455-90de-4a8b-90b8-12a53e44516c" />
+<img width="864" height="700" alt="Image" src="https://github.com/user-attachments/assets/b9b284cb-52c1-4fb7-9211-115498de2f65" />
 
 ---
 
@@ -24,6 +24,27 @@ If you find this open-source software helpful and would like to support its deve
     <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
   </a>
 </p>
+
+---
+
+## 🎛️**What's New in v2.6.0**
+
+### 🧠 **Full control optimization for the new DSP**
+
+- **Threshold knob and detection meter slider** they now control the Teager-Kaiser Energy Operator, basically how sharp or erratic an energy spike needs to be before the algorithm classifies it as sibilance rather than part of the vocal cord's natural vibration.
+- **Reprogrammed Absolute Mode** It learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. In absolute mode the de-esser uses 3-vector space to perform the separation:
+   - Voiced Axis (Harmonics): Where the periodic, "vowel-like" energy lives.
+   - Unvoiced Axis (Sibilance): Where the aperiodic, TKEO-detected "noise" lives.
+   - Residual/Error Axis: The "math dust" that doesn't fit either category.   
+- **Reprogrammed Relative Mode** Just like absolute mode it too learns the singer’s actual voice in real time, If a sound doesn't align with that "learned subspace" (like a sharp burst of air), the Orthogonal energy gating removes it. However, it switches the plugin to operate in Multi-Vector Space (N-dimensions) for more complex separation:
+   - Higher-Order Correlation: It’s not just looking at Harmonics vs. Noise. It starts looking at secondary relationships—like how the air at 12kHz specifically correlates with the chest resonance at 300Hz.
+   - Contextual Intelligence: It decides which extra vectors to add based on the complexity of the signal. If you have a breathy singer with complex "stacking" textures, the math expands to map those unique characteristics so it doesn't accidentally categorize a "cool breath" as a "bad sibilant."
+   - Subspace Contextuality: allows the subspace to expand and contract its dimensions in real-time, making it significantly more transparent for singers with a lot of dynamic "character" or those who shift between airy whispers and belts.
+- **Reprogrammed Split/Wide switching** it now controls the following parameters:
+   - **Split = Harsh-band analysis**
+       - The detector focuses mostly on the sibilant region set by the frequency selector, and compares it to the whole signal to determine how it should be processed.
+   - **Wide = Full-signal analysis**
+       - The detector looks at the entire signal, not just the selected region, it actively detects sibilance across the whole signal and processes the whole signal accordingly
 
 ---
 
@@ -58,31 +79,6 @@ Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and
 
 - **Stability updates** — further stability tuning to ensure lower CPU consumption.
 - **Cut Slope** — Lets the user fine tune the slope of the notch, continuosly varible from 0 dB/oct to 100 dB/oct for precise tuning.
-
----
-
-## 🚀 **What's New in v2.5.0 — Orthogonal Subspace Era**
-
-### 🧠 **Brand-New Core Algorithm**
-
-Nebula De-Esser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
-
-- **Adaptive subspace tracking** with slow eigenvector adaptation for stable, non-jittery behavior
-- **Multi-resolution analysis** (short / medium / long windows) to respond to both transients and sustained consonants
-- **Orthogonal energy gating** that focuses reduction where energy diverges from the learned voiced subspace
-
-### 🎤 **Voice-Aware Transparency Stack**
-
-To keep vocals natural under heavy de-essing, v2.5.0 introduces layered speech-aware protection:
-
-- **Psychoacoustic harmonic weighting** de-emphasizes reduction pressure in voiced/harmonic regions
-- **Real-time vowel classification (A / E / I / O / U aware)** to keep vowel identity intact
-- **Kalman-smoothed formant tracking** for buttery-stable formant trajectories (F1/F2/F3)
-- **Formant preservation locking** that protects vowel peaks explicitly while still controlling harsh sibilance
-
-### 🎧 **Result**
-
-Cleaner high-end control, less lisp risk, smoother behavior on dense vocals, and more transparent de-essing across spoken word, sung leads, and stacked harmonies.
 
 ---
 
@@ -260,7 +256,7 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 **This plugin will not work in Cakewalk NXT and Cakewalk Sonar. This is a known, confirmed incompatibility.**
 
-Fix for the same is currently under progress, and most likely will be released in version 2.6.0.
+Fix for the same is currently under progress, and most likely will be released in version 2.7.0.
 
 ## ⚠️ N-Track Studio
 
