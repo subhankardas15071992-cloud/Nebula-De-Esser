@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.5.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser v2.6.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -497,7 +497,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.5",
+        "v2.6",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -916,8 +916,8 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
     let sl_r = Rect::from_min_size(Pos2::new(sx + mw + 4.0 * s, mt), Vec2::new(sw, mh));
     let sr = ui.allocate_rect(sl_r, Sense::drag());
     if sr.dragged() {
-        let n = (((p.threshold + 60.0) / 60.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
-        ch.threshold = Some(-60.0 + n as f64 * 60.0);
+        let n = (p.threshold as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
+        ch.threshold = Some(n as f64);
     }
 
     {
@@ -957,7 +957,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             Stroke::new(1.0, STROKE_DEF),
             egui::StrokeKind::Outside,
         );
-        let tn = ((p.threshold + 60.0) / 60.0).clamp(0.0, 1.0) as f32;
+        let tn = p.threshold.clamp(0.0, 1.0) as f32;
         let ty = mt + mh * (1.0 - tn);
         // Thumb — WinUI Slider thumb: white circle
         pa.rect_filled(
@@ -975,7 +975,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
         pa.text(
             Pos2::new(cx, mt + mh + 12.0 * s),
             egui::Align2::CENTER_CENTER,
-            format!("{:.1} dB", p.threshold),
+            format!("TKEO {:.0}%", p.threshold * 100.0),
             FontId::new(11.5 * s, FontFamily::Proportional),
             TEXT_SEC,
         );
@@ -1216,9 +1216,9 @@ fn draw_controls(
         (
             "Threshold",
             p.threshold,
-            -60.0,
             0.0,
-            "dB",
+            1.0,
+            "%",
             NumTarget::Threshold,
         ),
         (
