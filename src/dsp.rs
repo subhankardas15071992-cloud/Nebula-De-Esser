@@ -88,21 +88,22 @@ impl Kalman1D {
 }
 
 #[derive(Clone, Debug)]
-struct AdaptiveSubspaceTracker {
-    eigenvector: [f64; 3],
+struct AdaptiveSubspaceTracker<const N: usize> {
+    eigenvector: [f64; N],
     update_rate: f64,
 }
 
-impl AdaptiveSubspaceTracker {
+impl<const N: usize> AdaptiveSubspaceTracker<N> {
     fn new() -> Self {
+        let fill = 1.0 / (N as f64).sqrt();
         Self {
-            eigenvector: [0.577_350_269_2; 3],
-            update_rate: 0.00035,
+            eigenvector: [fill; N],
+            update_rate: if N <= 3 { 0.00035 } else { 0.0002 },
         }
     }
 
     #[inline]
-    fn update(&mut self, features: [f64; 3]) {
+    fn update(&mut self, features: [f64; N]) {
         let norm = (features.iter().map(|v| v * v).sum::<f64>()).sqrt();
         if norm <= 1.0e-12 {
             return;
@@ -128,7 +129,7 @@ impl AdaptiveSubspaceTracker {
     }
 
     #[inline]
-    fn orthogonal_ratio(&self, features: [f64; 3]) -> f64 {
+    fn orthogonal_ratio(&self, features: [f64; N]) -> f64 {
         let norm_sq = features.iter().map(|v| v * v).sum::<f64>().max(1.0e-12);
         let projection = self
             .eigenvector
@@ -393,7 +394,7 @@ impl LookaheadDelay {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProcessSettings {
-    pub threshold_db: f64,
+    pub tkeo_threshold: f64,
     pub max_reduction_db: f64,
     pub mode_relative: bool,
     pub use_peak_filter: bool,
@@ -414,6 +415,14 @@ pub struct ProcessFrame {
     pub reduction_db: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct SubspaceMetrics {
+    sibilance: f64,
+    erraticity: f64,
+    novelty: f64,
+    expansion: f64,
+}
+
 #[derive(Clone, Debug)]
 struct ChannelState {
     detect_hp: [BiquadState; 3],
@@ -430,7 +439,8 @@ struct ChannelState {
     tkeo_env_short: EnvelopeFollower,
     tkeo_env_mid: EnvelopeFollower,
     tkeo_env_long: EnvelopeFollower,
-    subspace_tracker: AdaptiveSubspaceTracker,
+    absolute_subspace: AdaptiveSubspaceTracker<3>,
+    relative_subspace: AdaptiveSubspaceTracker<8>,
     formant_filters: [BiquadState; 3],
     formant_trackers: [Kalman1D; 3],
     vowel_probs: [f64; 5],
@@ -454,7 +464,8 @@ impl ChannelState {
             tkeo_env_short: EnvelopeFollower::new(0.25, 8.0, sample_rate),
             tkeo_env_mid: EnvelopeFollower::new(0.8, 25.0, sample_rate),
             tkeo_env_long: EnvelopeFollower::new(2.5, 80.0, sample_rate),
-            subspace_tracker: AdaptiveSubspaceTracker::new(),
+            absolute_subspace: AdaptiveSubspaceTracker::new(),
+            relative_subspace: AdaptiveSubspaceTracker::new(),
             formant_filters: [BiquadState::default(); 3],
             formant_trackers: default_formant_trackers(),
             vowel_probs: [0.2; 5],
@@ -477,7 +488,8 @@ impl ChannelState {
         self.tkeo_env_short.reset();
         self.tkeo_env_mid.reset();
         self.tkeo_env_long.reset();
-        self.subspace_tracker = AdaptiveSubspaceTracker::new();
+        self.absolute_subspace = AdaptiveSubspaceTracker::new();
+        self.relative_subspace = AdaptiveSubspaceTracker::new();
         self.formant_filters = [BiquadState::default(); 3];
         self.formant_trackers = default_formant_trackers();
         self.vowel_probs = [0.2; 5];
@@ -626,7 +638,6 @@ impl DeEsserDsp {
         settings: ProcessSettings,
     ) -> ProcessFrame {
         let stereo_link = settings.stereo_link.clamp(0.0, 1.0);
-        let max_reduction_db = settings.max_reduction_db.abs().max(1.0e-6);
 
         let (audio_l, audio_r) = if settings.stereo_mid_side {
             lr_to_ms(input_l, input_r)
@@ -688,33 +699,52 @@ impl DeEsserDsp {
         let full_env_l = full_env_l * (1.0 - stereo_link) + linked_full * stereo_link;
         let full_env_r = full_env_r * (1.0 - stereo_link) + linked_full * stereo_link;
 
-        let comparison_l = if settings.use_wide_range {
-            // Wide = full-signal analysis. Decide using overall voice behavior.
-            let behavior_energy = full_env_l * (0.7 + 0.3 * subspace_l);
-            lin_to_db(behavior_energy)
-        } else if settings.mode_relative {
-            // Split = harsh-band analysis relative to full signal.
-            lin_to_db(detect_env_l) - lin_to_db(full_env_l)
-        } else {
-            // Split absolute = harsh-band absolute energy.
-            lin_to_db(detect_env_l)
-        };
-        let comparison_r = if settings.use_wide_range {
-            let behavior_energy = full_env_r * (0.7 + 0.3 * subspace_r);
-            lin_to_db(behavior_energy)
-        } else if settings.mode_relative {
-            lin_to_db(detect_env_r) - lin_to_db(full_env_r)
-        } else {
-            lin_to_db(detect_env_r)
-        };
+        let linked_erraticity = (subspace_l.erraticity + subspace_r.erraticity) * 0.5;
+        let linked_sibilance = (subspace_l.sibilance + subspace_r.sibilance) * 0.5;
+        let linked_novelty = (subspace_l.novelty + subspace_r.novelty) * 0.5;
+        let linked_expansion = (subspace_l.expansion + subspace_r.expansion) * 0.5;
 
-        let base_target_l = reduction_amount(comparison_l, settings.threshold_db, max_reduction_db);
-        let base_target_r = reduction_amount(comparison_r, settings.threshold_db, max_reduction_db);
+        let erraticity_l =
+            subspace_l.erraticity * (1.0 - stereo_link) + linked_erraticity * stereo_link;
+        let erraticity_r =
+            subspace_r.erraticity * (1.0 - stereo_link) + linked_erraticity * stereo_link;
+        let sibilance_l =
+            subspace_l.sibilance * (1.0 - stereo_link) + linked_sibilance * stereo_link;
+        let sibilance_r =
+            subspace_r.sibilance * (1.0 - stereo_link) + linked_sibilance * stereo_link;
+        let novelty_l = subspace_l.novelty * (1.0 - stereo_link) + linked_novelty * stereo_link;
+        let novelty_r = subspace_r.novelty * (1.0 - stereo_link) + linked_novelty * stereo_link;
+        let expansion_l =
+            subspace_l.expansion * (1.0 - stereo_link) + linked_expansion * stereo_link;
+        let expansion_r =
+            subspace_r.expansion * (1.0 - stereo_link) + linked_expansion * stereo_link;
+
+        let support_l = detector_support(detect_env_l, full_env_l, settings.use_wide_range);
+        let support_r = detector_support(detect_env_r, full_env_r, settings.use_wide_range);
+        let focus_l = spectral_focus(
+            detect_env_l,
+            full_env_l,
+            settings.use_wide_range,
+            expansion_l,
+        );
+        let focus_r = spectral_focus(
+            detect_env_r,
+            full_env_r,
+            settings.use_wide_range,
+            expansion_r,
+        );
+        let gate_l = tkeo_threshold_gate(erraticity_l, settings.tkeo_threshold);
+        let gate_r = tkeo_threshold_gate(erraticity_r, settings.tkeo_threshold);
+        let severity_l = (sibilance_l * 0.74 + novelty_l * 0.26).clamp(0.0, 1.0);
+        let severity_r = (sibilance_r * 0.74 + novelty_r * 0.26).clamp(0.0, 1.0);
+
+        let base_target_l = (support_l * focus_l * gate_l * severity_l).clamp(0.0, 1.0);
+        let base_target_r = (support_r * focus_r * gate_r * severity_r).clamp(0.0, 1.0);
 
         // Keep user controls responsive by treating the transparency stack as a shaping layer
         // around the base control law instead of a hard attenuation cascade.
-        let transparency_l = transparency_shaping(subspace_l, psycho_l, formant_lock_l);
-        let transparency_r = transparency_shaping(subspace_r, psycho_r, formant_lock_r);
+        let transparency_l = transparency_shaping(severity_l, psycho_l, formant_lock_l);
+        let transparency_r = transparency_shaping(severity_r, psycho_r, formant_lock_r);
         // Keep user controls as the dominant driver.
         // The transparency layer gently nudges behavior instead of suppressing it.
         let reduction_target_l = (base_target_l * (0.75 + 0.25 * transparency_l)).clamp(0.0, 1.0);
@@ -804,7 +834,7 @@ impl DeEsserDsp {
         mode_relative: bool,
         use_wide_range: bool,
         channel_idx: usize,
-    ) -> f64 {
+    ) -> SubspaceMetrics {
         let channel = &mut self.channels[channel_idx];
         let tkeo = teager_kaiser_energy(input, channel.prev_input_1, channel.prev_input_2);
         channel.prev_input_2 = channel.prev_input_1;
@@ -814,8 +844,8 @@ impl DeEsserDsp {
         let f_mid = channel.tkeo_env_mid.process(tkeo);
         let f_long = channel.tkeo_env_long.process(tkeo);
         let features = [f_short, f_mid, f_long];
-        channel.subspace_tracker.update(features);
-        let orth_ratio = channel.subspace_tracker.orthogonal_ratio(features);
+        channel.absolute_subspace.update(features);
+        let orth_ratio = channel.absolute_subspace.orthogonal_ratio(features);
         let sum = (f_short + f_mid + f_long).max(1.0e-12);
 
         // Absolute mode = strict 3-vector decomposition:
@@ -823,27 +853,90 @@ impl DeEsserDsp {
         let voiced_axis = (f_long / sum).clamp(0.0, 1.0);
         let unvoiced_axis = (f_short / sum).clamp(0.0, 1.0);
         let residual_axis = (f_mid / sum).clamp(0.0, 1.0);
-        let strict_three_vector = (unvoiced_axis * 0.55 + residual_axis * 0.45)
-            * (0.55 + 0.45 * orth_ratio)
-            * (1.0 - 0.25 * voiced_axis);
+        let strict_three_vector = (unvoiced_axis * 0.58 + residual_axis * 0.42)
+            * (0.6 + 0.4 * orth_ratio)
+            * (1.0 - 0.28 * voiced_axis);
+        let spike_ratio = ((f_short + 1.0e-12) / (f_long + 1.0e-12)).clamp(0.0, 8.0);
+        let spike_contrast = smoothstep(1.05, if use_wide_range { 2.6 } else { 2.2 }, spike_ratio);
+        let transient_skew = ((f_short - f_mid).max(0.0) / sum).clamp(0.0, 1.0);
+        let absolute_erraticity =
+            (spike_contrast * 0.5 + transient_skew * 0.2 + residual_axis * 0.1 + orth_ratio * 0.2)
+                .clamp(0.0, 1.0);
+        let absolute_sibilance =
+            (strict_three_vector * (0.78 + 0.22 * spike_contrast)).clamp(0.0, 1.2);
 
         if !mode_relative {
-            return strict_three_vector.clamp(0.2, 1.1);
+            return SubspaceMetrics {
+                sibilance: absolute_sibilance,
+                erraticity: absolute_erraticity,
+                novelty: orth_ratio,
+                expansion: 0.0,
+            };
         }
 
         // Relative mode = adaptive multi-vector behavior (beyond 3D when needed).
-        // The decision to expand weighting uses signal context + detector relation.
+        // The feature space expands in real time as the signal becomes more complex.
         let detected_ratio = (detected_env / (full_env + 1.0e-9)).clamp(0.0, 4.0);
+        let detected_ratio_norm = smoothstep(
+            if use_wide_range { 0.15 } else { 0.08 },
+            if use_wide_range { 1.1 } else { 0.85 },
+            detected_ratio,
+        );
         let flux = ((f_short - f_mid).abs() + (f_mid - f_long).abs()) / sum;
-        let multi_vector_enable = if use_wide_range {
-            (detected_ratio * 0.45 + flux * 1.6 + orth_ratio * 0.5).clamp(0.0, 1.0)
-        } else {
-            (detected_ratio * 0.55 + flux * 1.2 + orth_ratio * 0.6).clamp(0.0, 1.0)
-        };
-        let extended_vector_gain =
-            strict_three_vector + multi_vector_enable * (flux * 0.55 + orth_ratio * 0.45);
+        let curvature = (f_short - 2.0 * f_mid + f_long).abs() / sum;
+        let correlation =
+            (detected_env.min(full_env) / (detected_env.max(full_env) + 1.0e-9)).clamp(0.0, 1.0);
+        let vowel_confidence = channel.vowel_probs[channel.dominant_vowel.idx()].clamp(0.0, 1.0);
+        let breath_texture =
+            ((1.0 - vowel_confidence) * correlation * (0.55 + 0.45 * flux)).clamp(0.0, 1.0);
+        let harmonic_guard = (voiced_axis * correlation).clamp(0.0, 1.0);
+        let complexity = (flux * 0.26
+            + curvature * 0.22
+            + orth_ratio * 0.18
+            + detected_ratio_norm * 0.18
+            + breath_texture * 0.16)
+            .clamp(0.0, 1.0);
 
-        extended_vector_gain.clamp(0.25, 1.2)
+        let gate_4 = smoothstep(0.10, 0.28, complexity);
+        let gate_5 = smoothstep(0.22, 0.40, complexity);
+        let gate_6 = smoothstep(0.34, 0.56, complexity);
+        let gate_7 = smoothstep(0.48, 0.72, complexity);
+        let gate_8 = smoothstep(0.62, 0.86, complexity);
+        let relative_features = [
+            unvoiced_axis,
+            residual_axis,
+            voiced_axis,
+            flux * gate_4,
+            curvature * gate_5,
+            detected_ratio_norm * gate_6,
+            correlation * gate_7,
+            breath_texture * gate_8,
+        ];
+        channel.relative_subspace.update(relative_features);
+        let orth_multi = channel
+            .relative_subspace
+            .orthogonal_ratio(relative_features);
+        let expansion = ((gate_4 + gate_5 + gate_6 + gate_7 + gate_8) / 5.0).clamp(0.0, 1.0);
+        let contextual_guard =
+            (harmonic_guard * (0.55 + 0.45 * breath_texture) * expansion).clamp(0.0, 1.0);
+        let relative_erraticity = (absolute_erraticity * (0.76 + 0.24 * orth_multi)
+            + flux * 0.14
+            + curvature * 0.12
+            + orth_multi * 0.18
+            - contextual_guard * 0.22)
+            .clamp(0.0, 1.0);
+        let relative_sibilance = ((absolute_sibilance
+            * (0.82 + 0.30 * orth_multi + 0.18 * expansion))
+            + flux * 0.16
+            + detected_ratio_norm * 0.10)
+            * (1.0 - 0.30 * contextual_guard);
+
+        SubspaceMetrics {
+            sibilance: relative_sibilance.clamp(0.0, 1.25),
+            erraticity: relative_erraticity,
+            novelty: (orth_ratio * 0.4 + orth_multi * 0.6).clamp(0.0, 1.0),
+            expansion,
+        }
     }
 
     #[inline]
@@ -953,17 +1046,43 @@ fn smoothing_coeff(time_ms: f64, sample_rate: f64) -> f64 {
 }
 
 #[inline]
-fn reduction_amount(detected_db: f64, threshold_db: f64, max_reduction_db: f64) -> f64 {
-    let excess_db = detected_db - threshold_db;
-    if excess_db <= -3.0 {
-        0.0
-    } else if excess_db < 3.0 {
-        let t = (excess_db + 3.0) / 6.0;
-        let eased = t * t * (3.0 - 2.0 * t);
-        eased * (excess_db.max(0.0) / max_reduction_db).clamp(0.0, 1.0)
-    } else {
-        (excess_db / max_reduction_db).clamp(0.0, 1.0)
+fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
+    if (edge1 - edge0).abs() < 1.0e-12 {
+        return if x >= edge1 { 1.0 } else { 0.0 };
     }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+#[inline]
+fn detector_support(detected_env: f64, full_env: f64, use_wide_range: bool) -> f64 {
+    let control_env = if use_wide_range {
+        full_env
+    } else {
+        detected_env * 0.75 + full_env * 0.25
+    };
+    smoothstep(-58.0, -18.0, lin_to_db(control_env))
+}
+
+#[inline]
+fn spectral_focus(detected_env: f64, full_env: f64, use_wide_range: bool, expansion: f64) -> f64 {
+    if use_wide_range {
+        return 1.0;
+    }
+
+    let ratio = (detected_env / (full_env + 1.0e-9)).clamp(0.0, 1.5);
+    (smoothstep(0.08, 0.72, ratio) * (0.92 + 0.08 * expansion)).clamp(0.0, 1.0)
+}
+
+#[inline]
+fn tkeo_threshold_gate(erraticity: f64, threshold: f64) -> f64 {
+    let threshold = threshold.clamp(0.0, 1.0);
+    let width = 0.09;
+    smoothstep(
+        (threshold - width).max(0.0),
+        (threshold + width).min(1.0),
+        erraticity,
+    )
 }
 
 #[inline]
@@ -1046,7 +1165,7 @@ mod tests {
             0.001,
             0.001,
             ProcessSettings {
-                threshold_db: -20.0,
+                tkeo_threshold: 0.95,
                 max_reduction_db: 12.0,
                 mode_relative: false,
                 ..ProcessSettings::default()
@@ -1060,13 +1179,13 @@ mod tests {
     fn threshold_control_changes_reduction_amount() {
         let mut dsp = DeEsserDsp::new(48_000.0);
         let settings_loose = ProcessSettings {
-            threshold_db: -35.0,
+            tkeo_threshold: 0.18,
             max_reduction_db: 12.0,
             mode_relative: false,
             ..ProcessSettings::default()
         };
         let settings_strict = ProcessSettings {
-            threshold_db: -6.0,
+            tkeo_threshold: 0.82,
             max_reduction_db: 12.0,
             mode_relative: false,
             ..ProcessSettings::default()
@@ -1086,21 +1205,21 @@ mod tests {
                 .reduction_db;
         }
 
-        assert!(loose_reduction < strict_reduction - 0.5);
+        assert!(loose_reduction < strict_reduction - 0.2);
     }
 
     #[test]
     fn split_and_wide_modes_produce_different_reduction_behavior() {
         let mut dsp = DeEsserDsp::new(48_000.0);
         let split_settings = ProcessSettings {
-            threshold_db: -30.0,
+            tkeo_threshold: 0.24,
             max_reduction_db: 12.0,
             mode_relative: false,
             use_wide_range: false,
             ..ProcessSettings::default()
         };
         let wide_settings = ProcessSettings {
-            threshold_db: -30.0,
+            tkeo_threshold: 0.24,
             max_reduction_db: 12.0,
             mode_relative: false,
             use_wide_range: true,
@@ -1128,13 +1247,13 @@ mod tests {
     fn relative_mode_engages_adaptive_multi_vector_weighting() {
         let mut dsp = DeEsserDsp::new(48_000.0);
         let absolute = ProcessSettings {
-            threshold_db: -28.0,
+            tkeo_threshold: 0.3,
             max_reduction_db: 12.0,
             mode_relative: false,
             ..ProcessSettings::default()
         };
         let relative = ProcessSettings {
-            threshold_db: -28.0,
+            tkeo_threshold: 0.3,
             max_reduction_db: 12.0,
             mode_relative: true,
             ..ProcessSettings::default()
