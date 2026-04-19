@@ -17,7 +17,7 @@ fn sample_rates_up_to_384khz_produce_finite_output() {
                 sample,
                 sample,
                 ProcessSettings {
-                    threshold_db: -28.0,
+                    tkeo_threshold: 0.26,
                     max_reduction_db: 16.0,
                     ..ProcessSettings::default()
                 },
@@ -47,7 +47,7 @@ fn common_host_buffer_sizes_are_stable() {
                 sample,
                 sample,
                 ProcessSettings {
-                    threshold_db: -30.0,
+                    tkeo_threshold: 0.24,
                     max_reduction_db: 12.0,
                     ..ProcessSettings::default()
                 },
@@ -79,7 +79,7 @@ fn external_sidechain_can_drive_gain_reduction() {
             main_sample,
             main_sample,
             ProcessSettings {
-                threshold_db: -28.0,
+                tkeo_threshold: 0.28,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -90,7 +90,7 @@ fn external_sidechain_can_drive_gain_reduction() {
             sidechain_sample,
             sidechain_sample,
             ProcessSettings {
-                threshold_db: -28.0,
+                tkeo_threshold: 0.28,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
