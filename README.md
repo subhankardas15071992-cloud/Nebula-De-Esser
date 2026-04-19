@@ -314,7 +314,7 @@ The bug is in Cakewalk NXT's VST3 hosting layer. A non-compliant host that does 
 
 **It is actually a documented non-compliance in Cakewalk's JUCE Wrapper, and let me list the list down the disastrous non-compliances in Cakewalk's JUCE wrapper that make it suitable for plugins that follow strict Steinberg VST3 standards:**
 
-**activateBus() Called While Plugin Is Active (Spec Violation)**
+**activateBus() Called While Plugin Is Active (Spec Violation)**:
 As per Steinberg's VST3 specification: IComponent::activateBus is called in the Setup Done state, the plug-in should be deactivated (setActive(true) not called).
 Cakewalk's behavior (confirmed by Noel Borthwick, Cakewalk's lead engineer):
 ```// What Cakewalk does (INCORRECT per spec):
@@ -328,7 +328,7 @@ component->setActive(true);     // Now enter processing state
 ```
 **Why this crashes nih-plug:** The nih_export_vst3! macro generates Steinberg compliant VST3 code that assumes activateBus is only called during initialization. When Cakewalk calls it mid-processing, internal state pointers may be null or partially initialized, causing the SIGSEGV at GetPluginFactory + 175883.
 
-**prepareToPlay() Called Before Final Bus Configuration**
+**prepareToPlay() Called Before Final Bus Configuration**:
 From the JUCE forum thread with Cakewalk's engineer
 ```// Cakewalk's call order:
 1. prepareToPlay()          ← Plugin queries channel count → gets 2
@@ -337,7 +337,7 @@ From the JUCE forum thread with Cakewalk's engineer
 ```
 **nih-plug expectation as per Steinberg's VST3 standards:** Buffer layout is finalized before process() is ever called. When Cakewalk changes bus configuration after initialization but before first process call, your plugin's internal buffer pointers become invalid.
 
-**"Flush" Parameter Calls Without Proper Guards**
+**"Flush" Parameter Calls Without Proper Guards**:
 As per Steinberg's VST3 spec, hosts may call process() with numSamples=0 and null buffers to flush parameters before setActive(true):
 ```// Spec-compliant flush call:
 ProcessData data = {
@@ -353,7 +353,7 @@ ProcessData data = {
 ```
 Cakewalk's JUCE wrapper makes these flush calls, but nih-plug's VST3 backend doesn't defensively check for null buffers in the macro-generated code path where the crash occurs.
 
-**Thread-Safety Assumptions Mismatch**
+**Thread-Safety Assumptions Mismatch**:
 nih-plug uses lock-free atomics and Rust's strict thread model. Cakewalk's audio engine has known thread-sync issues.
 When Cakewalk's host calls VST3 methods from unexpected threads (or with non-standard synchronization), Rust's safety guarantees trigger a panic → converted to SIGSEGV by the FFI layer.
 
