@@ -30,7 +30,7 @@ fn tone_reduction_db(freq_hz: f64, amplitude: f64, settings: ProcessSettings) ->
 #[test]
 fn high_band_tone_triggers_more_reduction_than_low_band_tone() {
     let settings = ProcessSettings {
-        threshold_db: -30.0,
+        tkeo_threshold: 0.24,
         max_reduction_db: 12.0,
         mode_relative: false,
         ..ProcessSettings::default()
@@ -54,7 +54,7 @@ fn zero_lookahead_has_zero_initial_delay() {
         1.0,
         1.0,
         ProcessSettings {
-            threshold_db: 0.0,
+            tkeo_threshold: 1.0,
             max_reduction_db: 12.0,
             ..ProcessSettings::default()
         },
@@ -78,7 +78,7 @@ fn lookahead_delay_matches_requested_latency() {
             0.0,
             0.0,
             ProcessSettings {
-                threshold_db: 0.0,
+                tkeo_threshold: 1.0,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -96,7 +96,7 @@ fn lookahead_delay_matches_requested_latency() {
         0.0,
         0.0,
         ProcessSettings {
-            threshold_db: 0.0,
+            tkeo_threshold: 1.0,
             max_reduction_db: 12.0,
             ..ProcessSettings::default()
         },
@@ -123,7 +123,7 @@ fn trigger_hear_outputs_detector_band_not_full_signal() {
             sample,
             sample,
             ProcessSettings {
-                threshold_db: -20.0,
+                tkeo_threshold: 0.3,
                 max_reduction_db: 12.0,
                 trigger_hear: true,
                 ..ProcessSettings::default()
