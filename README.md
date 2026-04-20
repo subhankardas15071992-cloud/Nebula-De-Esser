@@ -359,7 +359,7 @@ When Cakewalk's host calls VST3 methods from unexpected threads (or with non-sta
 
 **Long story in short nih-plug optimizes for spec-compliant hosts, while Cakewalk's JUCE-based VST3 wrapper takes shortcuts that break those assumptions.**
 
-So if you are a Cakewalk Sonar or NXT user, this plugin is not for you and it won't be fixed for your DAW in near future either. And it's not just about Cakwalk Sonar or NXT, any DAW that doesn't compliant with Steiberg's VST3 standards and doesn't use stable thread safety standards won't be supported by this plugin. It is not the plugins problem that the DAW in question has such a shoddy implementaions when it comes to plugin managment.
+So if you are a Cakewalk Sonar or NXT user, this plugin is not for you and it won't be fixed for your DAW in near future either. And it's not just about Cakwalk Sonar or NXT, any DAW that doesn't comply with Steiberg's VST3 standards and doesn't use stable thread safety standards won't be supported by this plugin. It is not the plugins problem that the DAW in question has such a shoddy implementaions when it comes to plugin managment.
 
 If you are a Cakwalk Sonar or NXT user and you still want a solution, well, switch to a different DAW to use this plugin, maybe go for Tracktion Waveform Free, it's free and its perfectly compliant with Steinberg's VST3 standards, or compile Ardour on your system, that way you can get Ardour for free too.
 
