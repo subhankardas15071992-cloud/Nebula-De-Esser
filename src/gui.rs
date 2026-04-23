@@ -448,7 +448,7 @@ pub fn draw(
     if gui.midi_context_menu {
         draw_context_menu_midi(ctx, gui, s);
     }
-    ch
+        ch
 }
 
 // ─── NavigationView Header (replaces title bar) ───────────────────────────────
@@ -897,8 +897,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             TEXT_SEC,
         );
     }
-
-    let cx = rect.center().x;
+        let cx = rect.center().x;
     let mt = rect.min.y + 46.0 * s;
     let mh = rect.height() - 86.0 * s;
     let mw = 12.0 * s;
@@ -1218,7 +1217,7 @@ fn draw_controls(
             "TKEO Sharp",
             p.threshold,
             0.0,
-            1.0,
+            100.0,
             "%",
             NumTarget::Threshold,
         ),
@@ -1348,7 +1347,7 @@ fn draw_controls(
         ("Trigger Hear", p.trigger_hear),
         ("Lookahead", p.lookahead_enabled),
         ("Mid / Side", p.stereo_mid_side),
-    ];
+            ];
     let bw = inner.width() / btns.len() as f32 - 4.0 * s;
     for (i, (lbl, active)) in btns.iter().enumerate() {
         let bx = inner.min.x + (bw + 4.0 * s) * i as f32;
@@ -1597,7 +1596,10 @@ fn fmt_knob(v: f64, unit: &str) -> String {
                 format!("{:.0}", v)
             }
         }
-        "%" => format!("{:.0}%", v * 100.0),
+        "%" => {
+            let pct = if v <= 1.0 { v * 100.0 } else { v };
+            format!("{pct:.0}%")
+        }
         "dB/oct" => format!("{:.1}", v),
         "pan" => {
             if v.abs() < 0.01 {
@@ -1795,7 +1797,7 @@ fn draw_spectrum(
         }
         let atk = 0.30_f32;
         let rel = 0.85_f32;
-        for (i, &mag) in mags.iter().enumerate().take(nb) {
+                for (i, &mag) in mags.iter().enumerate().take(nb) {
             let m = mag.clamp(-90.0, 0.0);
             gui.smooth_mags[i] = if m > gui.smooth_mags[i] {
                 gui.smooth_mags[i] * atk + m * (1.0 - atk)
@@ -2244,8 +2246,7 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                         FontId::new(9.0 * s, FontFamily::Proportional),
                         if isl { Color32::WHITE } else { TEXT_PRI },
                     );
-                    pa.text(
-                        Pos2::new(rr.max.x - 8.0 * s, rr.center().y),
+                    pa.text(                        Pos2::new(rr.max.x - 8.0 * s, rr.center().y),
                         egui::Align2::RIGHT_CENTER,
                         &cc_s,
                         FontId::new(9.0 * s, FontFamily::Proportional),
