@@ -1,5 +1,6 @@
+```rust
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.6.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser v2.7.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -497,7 +498,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.6",
+        "v2.7",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -916,8 +917,8 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
     let sl_r = Rect::from_min_size(Pos2::new(sx + mw + 4.0 * s, mt), Vec2::new(sw, mh));
     let sr = ui.allocate_rect(sl_r, Sense::drag());
     if sr.dragged() {
-        let n = (p.threshold as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
-        ch.threshold = Some(n as f64);
+        let n = ((p.threshold / 100.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
+        ch.threshold = Some(n as f64 * 100.0);
     }
 
     {
@@ -957,7 +958,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             Stroke::new(1.0, STROKE_DEF),
             egui::StrokeKind::Outside,
         );
-        let tn = p.threshold.clamp(0.0, 1.0) as f32;
+        let tn = (p.threshold / 100.0).clamp(0.0, 1.0) as f32;
         let ty = mt + mh * (1.0 - tn);
         // Thumb — WinUI Slider thumb: white circle
         pa.rect_filled(
@@ -975,7 +976,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
         pa.text(
             Pos2::new(cx, mt + mh + 12.0 * s),
             egui::Align2::CENTER_CENTER,
-            format!("TKEO {:.0}%", p.threshold * 100.0),
+            format!("{:.0}%", p.threshold),
             FontId::new(11.5 * s, FontFamily::Proportional),
             TEXT_SEC,
         );
@@ -989,7 +990,7 @@ fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
         pa.text(
             Pos2::new(rect.center().x, rect.min.y + 12.0 * s),
             egui::Align2::CENTER_CENTER,
-            "Reduce",
+            "Annihilation",
             FontId::new(11.5 * s, FontFamily::Proportional),
             TEXT_SEC,
         );
@@ -1013,8 +1014,9 @@ fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
     let sl_r = Rect::from_min_size(Pos2::new(sx, mt), Vec2::new(sw, mh));
     let sr = ui.allocate_rect(sl_r, Sense::drag());
     if sr.dragged() {
-        let n = ((p.max_reduction / 40.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
-        ch.max_reduction = Some(n as f64 * 40.0);
+        let n =
+            (((p.max_reduction + 100.0) / 100.0) as f32 - sr.drag_delta().y / mh).clamp(0.0, 1.0);
+        ch.max_reduction = Some(-100.0 + n as f64 * 100.0);
     }
 
     {
@@ -1041,7 +1043,7 @@ fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             Stroke::new(1.0, STROKE_DEF),
             egui::StrokeKind::Outside,
         );
-        let mrn = (p.max_reduction / 40.0).clamp(0.0, 1.0) as f32;
+        let mrn = ((p.max_reduction + 100.0) / 100.0).clamp(0.0, 1.0) as f32;
         let mry = mt + mh * (1.0 - mrn);
         pa.rect_filled(
             Rect::from_center_size(Pos2::new(sl_r.center().x, mry), Vec2::new(sw, 8.0 * s)),
@@ -1063,15 +1065,15 @@ fn draw_red_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             Stroke::new(1.0, STROKE_DEF),
             egui::StrokeKind::Outside,
         );
-        let rn = (-p.reduction_db / 40.0).clamp(0.0, 1.0);
+        let rn = (-p.reduction_db / 100.0).clamp(0.0, 1.0);
         let fh = mr2.height() * rn;
         if fh > 0.5 {
             let fr = Rect::from_min_size(mr2.min, Vec2::new(mr2.width(), fh));
             let col = lerp_c(ORANGE, RED, rn);
             pa.rect_filled(fr, 2.0 * s, ga(col, 210));
         }
-        for db in [0_i32, -10, -20, -30, -40] {
-            let y = mt + mh * (-db as f32 / 40.0);
+        for db in [0_i32, -20, -40, -60, -80, -100] {
+            let y = mt + mh * (-db as f32 / 100.0);
             pa.text(
                 Pos2::new(mr2.max.x + 4.0 * s, y),
                 egui::Align2::LEFT_CENTER,
@@ -1214,18 +1216,18 @@ fn draw_controls(
     let y2 = inner.min.y + top_h + gap;
     let main_k: &[(&str, f64, f64, f64, &str, NumTarget)] = &[
         (
-            "Threshold",
+            "TKEO Sharp",
             p.threshold,
             0.0,
-            1.0,
+            100.0,
             "%",
             NumTarget::Threshold,
         ),
         (
             "Max Red",
             p.max_reduction,
+            -100.0,
             0.0,
-            40.0,
             "dB",
             NumTarget::MaxReduction,
         ),
@@ -2657,3 +2659,4 @@ fn draw_flyout_preset(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s
             }
         });
 }
+```
