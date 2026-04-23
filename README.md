@@ -29,7 +29,7 @@ If you find this open-source software helpful and would like to support its deve
 
 ## 🎛️**What's New in v2.7.0**
 
-### 🧠 **Even control optimization for the new DSP**
+### 🧠 **Even more control optimization for the new DSP**
 - **Threshold knob now renamed to TKEO Sharp knob:** This represents the functionality of the knob better, and further DSP optimizations have been done for the controller.
 - **Reduction meter replaced by Annihilation meter:** Shows the The "Annihilation" Factor which shows the amount of signal energy that has been identified as "harsh" (sibilant) and projected out of the final audio.
   - Real-time Attenuation: Each time the meter moves, it indicates how many decibels of that specific "harshness subspace" are being removed from the original signal.
