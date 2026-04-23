@@ -9,9 +9,9 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.6.0 further tunes up the components to take full advantage of the new Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis based DSP architecture.
+Version 2.7.0 further tunes up the DSP and the control parameters to take full advantage of the new Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis based DSP architecture.
 
-<img width="864" height="700" alt="Image" src="https://github.com/user-attachments/assets/b9b284cb-52c1-4fb7-9211-115498de2f65" />
+<img width="864" height="698" alt="Image" src="https://github.com/user-attachments/assets/5135ca2c-2d63-428a-aa97-7bdb88611e14" />
 
 ---
 
@@ -24,6 +24,18 @@ If you find this open-source software helpful and would like to support its deve
     <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
   </a>
 </p>
+
+---
+
+## 🎛️**What's New in v2.7.0**
+
+### 🧠 **Even control optimization for the new DSP**
+- **Threshold knob now renamed to TKEO Sharp knob:** This represents the functionality of the knob better, and further DSP optimizations have been done for the controller.
+- **Reduction meter replaced by Annihilation meter:** Shows the The "Annihilation" Factor which shows the amount of signal energy that has been identified as "harsh" (sibilant) and projected out of the final audio.
+  - Real-time Attenuation: Each time the meter moves, it indicates how many decibels of that specific "harshness subspace" are being removed from the original signal.
+  - Dynamic Response: Because OSP doesn't use standard compression envelopes (attack/release), the meter is incredibly fast and precise. It should jump exactly when the sibilance occurs and return to zero instantly without the "slow crawl" seen in vintage-style meters.
+- **Reprogrammed Reduction knob and Reduction meter slider:** Sets the limit or "ceiling" for the Orthogonal Subspace Projection (OSP) engine. If you set the slider to its maximum, the plugin attempts to "annihilate" all signal components that match the harshness signature. By lowering this slider, you’re effectively telling the algorithm: "I know you found the harshness, but don't remove 100% of it." This is crucial for keeping a vocal sounding natural rather than "lispy" or "dead". Think of it as a mix knob for the subtraction. A setting of -3dB to -6dB is often the "sweet spot" where the sibilance is tamed but the articulation remains clear. Variable from 0 to down to -100dB
+- **Reprogrammed Vocal mode:** When vocal mode is on it sets Teager-Kaiser Energy Operator to operate in solo vocal sibilance detection mode, this mode is tailor made for highest accuracy so that utmost transparency can be achieved even on highly technical and complex vocals like the ones used by coloratura sopranos. This mode can differentiate between the natural harmonics of a coloratura soprano and the sibilance. This is tailor made for classical and orchestral producers, but other vocalists, like metal singers who often use falsettos can also take advantage of it. When switched off it sets the Teager-Kaiser Energy Operator to operate for regular sibilant detection, this is a versatile mode that lets the user use the plugin for processing not only vocals but also other sibilant sources like cymbals, etc. It can be also used for cleaning up vocals in old archived mixes that can no more be separated into separate vocals and instrumental tracks. 
 
 ---
 
