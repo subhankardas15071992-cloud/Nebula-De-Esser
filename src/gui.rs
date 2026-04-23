@@ -1218,7 +1218,7 @@ fn draw_controls(
             "TKEO Sharp",
             p.threshold,
             0.0,
-            100.0,
+            1.0,
             "%",
             NumTarget::Threshold,
         ),
