@@ -1,4 +1,3 @@
-```rust
 // ─────────────────────────────────────────────────────────────────────────────
 // Nebula DeEsser v2.7.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
@@ -2659,4 +2658,3 @@ fn draw_flyout_preset(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s
             }
         });
 }
-```
