@@ -488,7 +488,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(tx + 24.0 * s, ty + 8.0 * s),
         egui::Align2::LEFT_CENTER,
-        "Spectrum Processor  ·  64-bit  ·  CLAP",
+        "Sibilance Processor  ·  64-bit",
         FontId::new(11.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
