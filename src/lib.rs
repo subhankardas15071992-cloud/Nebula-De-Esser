@@ -332,8 +332,6 @@ impl Default for Meters {
     }
 }
 
-// In nih-plug this shared layout list is used by all exported plugin formats,
-// so both CLAP and VST3 advertise the same bus configurations.
 const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[
     AudioIOLayout {
         main_input_channels: NonZeroU32::new(2),
@@ -362,6 +360,26 @@ const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[
         },
     },
 ];
+
+// Windows VST3 hosts have been unstable with auxiliary sidechain buses in this
+// project, so keep the exported default there to plain stereo only.
+#[cfg(target_os = "windows")]
+const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
+    main_input_channels: NonZeroU32::new(2),
+    main_output_channels: NonZeroU32::new(2),
+    aux_input_ports: &[],
+    aux_output_ports: &[],
+    names: PortNames {
+        layout: Some("Stereo"),
+        main_input: Some("Input"),
+        main_output: Some("Output"),
+        aux_inputs: &[],
+        aux_outputs: &[],
+    },
+}];
+
+#[cfg(not(target_os = "windows"))]
+const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = SHARED_AUDIO_IO_LAYOUTS;
 
 struct WetMixSmoother {
     coeff: f64,
@@ -443,7 +461,7 @@ impl Plugin for NebulaDeEsser {
     const EMAIL: &'static str = "support@nebula.audio";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = SHARED_AUDIO_IO_LAYOUTS;
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = ACTIVE_AUDIO_IO_LAYOUTS;
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
@@ -986,7 +1004,7 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::SHARED_AUDIO_IO_LAYOUTS;
+    use super::{ACTIVE_AUDIO_IO_LAYOUTS, SHARED_AUDIO_IO_LAYOUTS};
 
     #[test]
     fn shared_layouts_include_stereo_and_stereo_sidechain() {
@@ -1011,5 +1029,23 @@ mod tests {
             stereo_sidechain.aux_input_ports[0].map(|c| c.get()),
             Some(2)
         );
+    }
+
+    #[test]
+    fn active_layouts_match_platform_stability_policy() {
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), 1);
+            assert!(ACTIVE_AUDIO_IO_LAYOUTS[0].aux_input_ports.is_empty());
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), SHARED_AUDIO_IO_LAYOUTS.len());
+            assert_eq!(
+                ACTIVE_AUDIO_IO_LAYOUTS[1].aux_input_ports[0].map(|c| c.get()),
+                Some(2)
+            );
+        }
     }
 }
