@@ -262,6 +262,8 @@ chmod +x build_mac.sh && ./build_mac.sh
 #         target\bundled\Nebula De-Esser.vst3
 ```
 
+> VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
+
 ---
 
 ## ⚠️ Cakewalk NXT / Cakewalk Sonar Not Supported
