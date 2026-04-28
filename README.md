@@ -9,7 +9,7 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.7.0 further tunes up the DSP and the control parameters to take full advantage of the new Orthogonal Subspace Projection engine powered by Teager-Kaiser Energy Operator analysis based DSP architecture.
+Version 2.8.0 brings in the most major stability update, the plugin is now perfectly stable on all Windows hosts, and first time for ever, it is now perfectly stable on Cakewalk Sonar and NXT too.
 
 <img width="862" height="667" alt="Image" src="https://github.com/user-attachments/assets/db112518-ecc4-4b05-83e6-ce70ab209290" />
 
@@ -24,6 +24,15 @@ If you find this open-source software helpful and would like to support its deve
     <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
   </a>
 </p>
+
+---
+
+## ✨ **What's New in v2.8.0**
+
+### 🔧🎛️ **Enhanced stability even on non Steinberg compliant hosts**
+
+- **Stability update for Windows** — The plugin is now perfectly stable on all 64-bit Windows hosts.
+- **Stability update for Cakewalk Sonar and NXT** - The plugin is now perfectly stable on Cakewalk Sonar and NXT
 
 ---
 
