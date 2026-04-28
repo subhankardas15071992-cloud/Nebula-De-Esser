@@ -332,21 +332,36 @@ impl Default for Meters {
     }
 }
 
-// In nih-plug this shared layout is used by all exported plugin formats, so
-// both CLAP and VST3 expose stereo main I/O plus an optional stereo sidechain.
-const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
-    main_input_channels: NonZeroU32::new(2),
-    main_output_channels: NonZeroU32::new(2),
-    aux_input_ports: &[new_nonzero_u32(2)],
-    aux_output_ports: &[],
-    names: PortNames {
-        layout: Some("Stereo (+ optional Sidechain)"),
-        main_input: Some("Input"),
-        main_output: Some("Output"),
-        aux_inputs: &["Sidechain"],
-        aux_outputs: &[],
+// In nih-plug this shared layout list is used by all exported plugin formats,
+// so both CLAP and VST3 advertise the same bus configurations.
+const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        aux_input_ports: &[],
+        aux_output_ports: &[],
+        names: PortNames {
+            layout: Some("Stereo"),
+            main_input: Some("Input"),
+            main_output: Some("Output"),
+            aux_inputs: &[],
+            aux_outputs: &[],
+        },
     },
-}];
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        aux_input_ports: &[new_nonzero_u32(2)],
+        aux_output_ports: &[],
+        names: PortNames {
+            layout: Some("Stereo + Sidechain"),
+            main_input: Some("Input"),
+            main_output: Some("Output"),
+            aux_inputs: &["Sidechain"],
+            aux_outputs: &[],
+        },
+    },
+];
 
 struct WetMixSmoother {
     coeff: f64,
@@ -974,6 +989,28 @@ mod tests {
     use super::SHARED_AUDIO_IO_LAYOUTS;
 
     #[test]
+    fn shared_layouts_include_stereo_and_stereo_sidechain() {
+        assert_eq!(SHARED_AUDIO_IO_LAYOUTS.len(), 2);
+
+        let stereo = &SHARED_AUDIO_IO_LAYOUTS[0];
+        assert_eq!(stereo.main_input_channels.map(|c| c.get()), Some(2));
+        assert_eq!(stereo.main_output_channels.map(|c| c.get()), Some(2));
+        assert!(stereo.aux_input_ports.is_empty());
+
+        let stereo_sidechain = &SHARED_AUDIO_IO_LAYOUTS[1];
+        assert_eq!(
+            stereo_sidechain.main_input_channels.map(|c| c.get()),
+            Some(2)
+        );
+        assert_eq!(
+            stereo_sidechain.main_output_channels.map(|c| c.get()),
+            Some(2)
+        );
+        assert_eq!(stereo_sidechain.aux_input_ports.len(), 1);
+        assert_eq!(
+            stereo_sidechain.aux_input_ports[0].map(|c| c.get()),
+            Some(2)
+        );
     fn shared_layout_has_optional_stereo_sidechain() {
         let layout = &SHARED_AUDIO_IO_LAYOUTS[0];
         assert_eq!(layout.main_input_channels.map(|c| c.get()), Some(2));
