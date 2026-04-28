@@ -1011,11 +1011,5 @@ mod tests {
             stereo_sidechain.aux_input_ports[0].map(|c| c.get()),
             Some(2)
         );
-    fn shared_layout_has_optional_stereo_sidechain() {
-        let layout = &SHARED_AUDIO_IO_LAYOUTS[0];
-        assert_eq!(layout.main_input_channels.map(|c| c.get()), Some(2));
-        assert_eq!(layout.main_output_channels.map(|c| c.get()), Some(2));
-        assert_eq!(layout.aux_input_ports.len(), 1);
-        assert_eq!(layout.aux_input_ports[0].map(|c| c.get()), Some(2));
     }
 }
