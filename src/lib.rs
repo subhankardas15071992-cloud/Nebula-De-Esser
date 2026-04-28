@@ -332,6 +332,22 @@ impl Default for Meters {
     }
 }
 
+// In nih-plug this shared layout is used by all exported plugin formats, so
+// both CLAP and VST3 expose stereo main I/O plus an optional stereo sidechain.
+const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
+    main_input_channels: NonZeroU32::new(2),
+    main_output_channels: NonZeroU32::new(2),
+    aux_input_ports: &[new_nonzero_u32(2)],
+    aux_output_ports: &[],
+    names: PortNames {
+        layout: Some("Stereo (+ optional Sidechain)"),
+        main_input: Some("Input"),
+        main_output: Some("Output"),
+        aux_inputs: &["Sidechain"],
+        aux_outputs: &[],
+    },
+}];
+
 struct WetMixSmoother {
     coeff: f64,
     current: f64,
@@ -412,19 +428,7 @@ impl Plugin for NebulaDeEsser {
     const EMAIL: &'static str = "support@nebula.audio";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: NonZeroU32::new(2),
-        main_output_channels: NonZeroU32::new(2),
-        aux_input_ports: &[new_nonzero_u32(2)],
-        aux_output_ports: &[],
-        names: PortNames {
-            layout: Some("Stereo (+ optional Sidechain)"),
-            main_input: Some("Input"),
-            main_output: Some("Output"),
-            aux_inputs: &["Sidechain"],
-            aux_outputs: &[],
-        },
-    }];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = SHARED_AUDIO_IO_LAYOUTS;
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
@@ -963,4 +967,18 @@ fn lookahead_latency_samples(lookahead_ms: f64, sample_rate: f64) -> u32 {
 fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
     let angle = (pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
     (gain * angle.cos(), gain * angle.sin())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SHARED_AUDIO_IO_LAYOUTS;
+
+    #[test]
+    fn shared_layout_has_optional_stereo_sidechain() {
+        let layout = &SHARED_AUDIO_IO_LAYOUTS[0];
+        assert_eq!(layout.main_input_channels.map(|c| c.get()), Some(2));
+        assert_eq!(layout.main_output_channels.map(|c| c.get()), Some(2));
+        assert_eq!(layout.aux_input_ports.len(), 1);
+        assert_eq!(layout.aux_input_ports[0].map(|c| c.get()), Some(2));
+    }
 }
