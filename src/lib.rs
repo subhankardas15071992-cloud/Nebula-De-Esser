@@ -412,34 +412,19 @@ impl Plugin for NebulaDeEsser {
     const EMAIL: &'static str = "support@nebula.audio";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(2),
-            main_output_channels: NonZeroU32::new(2),
-            aux_input_ports: &[new_nonzero_u32(2)],
-            aux_output_ports: &[],
-            names: PortNames {
-                layout: Some("Stereo + Sidechain"),
-                main_input: Some("Input"),
-                main_output: Some("Output"),
-                aux_inputs: &["Sidechain"],
-                aux_outputs: &[],
-            },
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        aux_input_ports: &[new_nonzero_u32(2)],
+        aux_output_ports: &[],
+        names: PortNames {
+            layout: Some("Stereo (+ optional Sidechain)"),
+            main_input: Some("Input"),
+            main_output: Some("Output"),
+            aux_inputs: &["Sidechain"],
+            aux_outputs: &[],
         },
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(2),
-            main_output_channels: NonZeroU32::new(2),
-            aux_input_ports: &[],
-            aux_output_ports: &[],
-            names: PortNames {
-                layout: Some("Stereo"),
-                main_input: Some("Input"),
-                main_output: Some("Output"),
-                aux_inputs: &[],
-                aux_outputs: &[],
-            },
-        },
-    ];
+    }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
