@@ -11,7 +11,7 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.8.0 brings in the most major stability update, the plugin is now perfectly stable on Cakewalk NXT running on macOS. 
 
-<img width="862" height="667" alt="Image" src="https://github.com/user-attachments/assets/db112518-ecc4-4b05-83e6-ce70ab209290" />
+<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/99787e50-64c8-4114-8dc8-ed497d3edf3e" />
 
 ---
 
