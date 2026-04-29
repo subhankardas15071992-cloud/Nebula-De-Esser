@@ -13,9 +13,10 @@ members = ["xtask"]
 resolver = "2"
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-egui = "0.29"
+# Pinned to a known Windows-stable commit
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "a7d4e1f", default-features = false, features = ["vst3"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "a7d4e1f" }
+egui = "0.28"
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
@@ -35,7 +36,3 @@ panic = "abort"
 [target.'cfg(windows)'.profile.dev]
 panic = "abort"
 overflow-checks = false
-
-[profile.release.build-override]
-opt-level = 3
-codegen-units = 1
