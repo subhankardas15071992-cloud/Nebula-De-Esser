@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
-use nih_plug_egui::{create_egui_editor, egui::Context, EguiState};
+use nih_plug_egui::{create_egui_editor, EguiState}; // Use the egui re-exported by nih_plug_egui to avoid version mismatches use nih_plug_egui::egui;
 use parking_lot::Mutex;
 
 pub mod analyzer;
@@ -273,37 +273,23 @@ impl Plugin for NebulaDeEsser {
     }
 
     // ✅ FIXED: GUI fully restored. Removed premature is_ready check that blocked EGUI on Windows.
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        // Cakewalk crashes if egui initializes during scan.
-        // We defer heavy initialization until the host actually opens the window.
+        fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        // Cakewalk calls editor() during scan before initialize() runs.
+        // Return None temporarily to avoid egui init in headless scanner.
         #[cfg(target_os = "windows")]
-        {
-            if !self.is_ready.load(Ordering::Acquire) {
-                return None; // Let host show generic editor temporarily
-            }
+        if !self.is_ready.load(Ordering::Acquire) {
+            return None;
         }
 
-        // Wrap in catch_unwind to prevent any egui panic from crashing the host
+        // Wrap in catch_unwind so any egui panic doesn't crash the DAW
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let params = self.params.clone();
             let meters = self.meters.clone();
             let spectrum = self.analyzer.get_shared();
             let midi_learn = self.midi_learn.clone();
 
-            // Explicitly configure fonts to avoid Windows system font crashes
-            let mut egui_state = self.params.editor_state.clone();
-            egui_state.set_fonts(egui::FontDefinitions {
-                font_data: std::collections::BTreeMap::from([(
-                    "my_font".to_string(),
-                    egui::FontData::from_static(include_bytes!(
-                        "../fonts/roboto_regular.ttf" // You can embed any .ttf or use default
-                    )),
-                )]),
-                families: std::collections::BTreeMap::from([
-                    (egui::FontFamily::Proportional, vec!["my_font".to_string()]),
-                    (egui::FontFamily::Monospace, vec!["my_font".to_string()]),
-                ]),
-            });
+            // Use the existing editor_state — no font overrides needed
+            let egui_state = self.params.editor_state.clone();
 
             create_egui_editor(
                 egui_state,
@@ -314,9 +300,9 @@ impl Plugin for NebulaDeEsser {
                     if midi_learn.midi_enabled.load(Ordering::Relaxed) {
                         for cc in 0..128 {
                             if !midi_learn.cc_dirty[cc].swap(false, Ordering::AcqRel) { continue; }
-                            let Some(parameter_index) = midi_learn.binding_for_cc(cc) else { continue; };
-                            let value = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
-                            apply_midi_mapping(parameter_index, value, &params, setter);
+                            let Some(pidx) = midi_learn.binding_for_cc(cc) else { continue; };
+                            let val = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
+                            apply_midi_mapping(pidx, val, &params, setter);
                         }
                     }
 
@@ -357,7 +343,8 @@ impl Plugin for NebulaDeEsser {
                         cut_slope: params.cut_slope.value() as f64,
                     };
 
-                    let changes = draw(ctx, &egui_state, gui_state, &gui_params);
+                    // Use the correct draw signature from your gui.rs
+                    let changes = draw(ctx, &params.editor_state, gui_state, &gui_params);
                     apply_gui_changes(&changes, &params, setter);
                     midi_learn.sync_atomic_from_mutex();
                     if changes.detection_max_reset { meters.reset_det.store(1, Ordering::Release); }
