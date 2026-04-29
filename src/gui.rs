@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES};
-use nih_plug_egui::egui::{
+use nih_plug_egui::egui;{
     self, Color32, Context, FontFamily, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
 };
 use nih_plug_egui::resizable_window::ResizableWindow;
@@ -346,9 +346,9 @@ pub struct GuiChanges {
 
 // ─── Main Draw ────────────────────────────────────────────────────────────────
 pub fn draw(
-    ctx: &Context,
-    egui_state: &EguiState,
-    gui: &mut NebulaGui,
+    ctx: &egui::Context,
+    editor_state: &EguiState,
+    state: &mut NebulaGui,
     params: &GuiParams,
 ) -> GuiChanges {
     gui.time += ctx.input(|i| i.unstable_dt) as f64;
