@@ -541,7 +541,7 @@ impl DeEsserDsp {
     }
 
     pub fn update_vocal_mode(&mut self, single_vocal: bool) {
-        let (attack_ms, hold_ms, release_ms) = if single_vocal {
+        let (attack_ms, _hold_ms, release_ms) = if single_vocal {
             (0.15, 6.0, 65.0)
         } else {
             (0.35, 10.0, 95.0)
