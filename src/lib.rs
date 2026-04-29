@@ -7,15 +7,10 @@ use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui::Context, EguiState};
 use parking_lot::Mutex;
 
-// Add this after your existing imports, before any struct definitions:
-
 /// Ensures proper 8-byte alignment for Windows x64 FFI safety
 #[cfg(target_os = "windows")]
 #[repr(C, align(8))]
 struct WindowsFfiGuard;
-
-// Your existing MidiLearnShared struct is already fine as-is since it doesn't
-// cross FFI boundaries directly. The critical alignment is handled by nih-plug.
 
 pub mod analyzer;
 pub mod dsp;
@@ -886,7 +881,6 @@ nih_export_clap!(NebulaDeEsser);
 nih_export_vst3!(NebulaDeEsser);
 
 // Windows DllMain guard for extra initialization safety
-// Only enable if you experience crashes during plugin load
 #[cfg(all(target_os = "windows", feature = "vst3"))]
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
