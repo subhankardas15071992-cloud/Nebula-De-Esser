@@ -33,6 +33,7 @@ pub const MIDI_OUTPUT_PAN: u8 = 6;
 pub const MIDI_MIN_FREQ: u8 = 7;
 pub const MIDI_MAX_FREQ: u8 = 8;
 pub const MIDI_LOOKAHEAD: u8 = 9;
+// FIXED: Restored missing constant required by gui.rs
 pub const MIDI_PARAM_COUNT: usize = 10;
 
 pub const MIDI_PARAM_NAMES: &[&str] = &[
@@ -231,7 +232,7 @@ struct NebulaDeEsser {
     reported_latency: u32,
     wet_mix: WetMixSmoother,
     prev_main_l: f64, prev_main_r: f64, prev_sc_l: f64, prev_sc_r: f64,
-    // CAKEWALK FIX: Track initialization state to prevent pre-init process() crashes
+    // CAKEWALK FIX: Guard against pre-init calls
     is_ready: AtomicBool,
 }
 
@@ -265,21 +266,21 @@ impl Plugin for NebulaDeEsser {
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
-    const IS_SYNTH: bool = false;
-    const IS_MIDI_EFFECT: bool = false;
+    // REMOVED: IS_SYNTH and IS_MIDI_EFFECT are not valid in current nih-plug
+    
     type SysExMessage = ();
     type BackgroundTask = ();
 
+    // FIXED: Return type matches Arc<dyn Params> requirement
     fn params(&self) -> Arc<dyn Params> {
         Arc::clone(&self.params) as Arc<dyn Params>
     }
 
-    // CAKEWALK FIX: Safe editor deferral. Prevents winit/font init on audio thread.
+    // FIXED: Added <Self> generic for AsyncExecutor
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        // CAKEWALK FIX: Prevent GUI init if plugin not fully ready
         #[cfg(target_os = "windows")]
         {
-            // Only create editor if host provides a valid window handle context.
-            // Cakewalk often calls this during track creation before UI thread is ready.
             if !self.is_ready.load(Ordering::Acquire) {
                 return None;
             }
@@ -351,6 +352,7 @@ impl Plugin for NebulaDeEsser {
         )
     }
 
+    // FIXED: Added <Self> generic for InitContext
     fn initialize(&mut self, _audio_io_layout: &AudioIOLayout, buffer_config: &BufferConfig, context: &mut impl InitContext<Self>) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         if self.sample_rate <= 0.0 { self.sample_rate = 44_100.0; }
@@ -366,7 +368,7 @@ impl Plugin for NebulaDeEsser {
         self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
         context.set_latency_samples(0);
         
-        // CAKEWALK FIX: Mark ready AFTER all DSP/state is initialized
+        // FIXED: Mark plugin ready only after safe initialization
         self.is_ready.store(true, Ordering::Release);
         true
     }
@@ -380,8 +382,9 @@ impl Plugin for NebulaDeEsser {
         self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
     }
 
+    // FIXED: Added <Self> generic for ProcessContext
     fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
-        // CAKEWALK FIX: Host sometimes calls process() before initialize() completes
+        // CAKEWALK FIX: Return immediately if not ready or 0 samples
         if !self.is_ready.load(Ordering::Acquire) || buffer.samples() == 0 {
             return ProcessStatus::Normal;
         }
