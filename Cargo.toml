@@ -15,7 +15,7 @@ resolver = "2"
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-egui = "0.29"
+# ✅ REMOVED standalone egui dependency - use nih_plug_egui::egui instead
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
