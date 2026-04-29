@@ -416,6 +416,7 @@ impl WetMixSmoother {
 }
 
 struct NebulaDeEsser {
+    is_ready: std::sync::atomic::AtomicBool,
     params: Arc<NebulaParams>,
     sample_rate: f64,
     dsp: DeEsserDsp,
@@ -450,6 +451,7 @@ impl Default for NebulaDeEsser {
             prev_main_r: 0.0,
             prev_sc_l: 0.0,
             prev_sc_r: 0.0,
+            is_ready: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -572,6 +574,7 @@ impl Plugin for NebulaDeEsser {
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
         context.set_latency_samples(0);
+        self.is_ready.store(true, std::sync::atomic::Ordering::Release);
         true
     }
 
@@ -592,6 +595,9 @@ impl Plugin for NebulaDeEsser {
         aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        if !self.is_ready.load(Ordering::Acquire) || buffer.samples() == 0 {
+            return ProcessStatus::Normal;
+        }
         while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
                 if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
