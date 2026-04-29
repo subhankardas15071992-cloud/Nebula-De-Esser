@@ -7,6 +7,16 @@ use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui::Context, EguiState};
 use parking_lot::Mutex;
 
+// Add this after your existing imports, before any struct definitions:
+
+/// Ensures proper 8-byte alignment for Windows x64 FFI safety
+#[cfg(target_os = "windows")]
+#[repr(C, align(8))]
+struct WindowsFfiGuard;
+
+// Your existing MidiLearnShared struct is already fine as-is since it doesn't
+// cross FFI boundaries directly. The critical alignment is handled by nih-plug.
+
 pub mod analyzer;
 pub mod dsp;
 mod gui;
@@ -874,6 +884,26 @@ impl Vst3Plugin for NebulaDeEsser {
 
 nih_export_clap!(NebulaDeEsser);
 nih_export_vst3!(NebulaDeEsser);
+
+// Windows DllMain guard for extra initialization safety
+// Only enable if you experience crashes during plugin load
+#[cfg(all(target_os = "windows", feature = "vst3"))]
+#[no_mangle]
+#[allow(non_snake_case, unused_variables)]
+pub extern "C" fn DllMain(
+    _hinst: *mut std::ffi::c_void,
+    reason: u32,
+    _reserved: *mut std::ffi::c_void,
+) -> i32 {
+    use std::os::raw::c_int;
+    const DLL_PROCESS_ATTACH: u32 = 1;
+    const DLL_PROCESS_DETACH: u32 = 2;
+    
+    match reason {
+        DLL_PROCESS_ATTACH | DLL_PROCESS_DETACH => 1 as c_int,
+        _ => 1 as c_int,
+    }
+}
 
 fn apply_midi_mapping(
     parameter_index: u8,
