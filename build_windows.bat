@@ -43,7 +43,7 @@ if %ERRORLEVEL% neq 0 (
 echo [*] Building release binary (64-bit, LTO, max opt)...
 set RUSTFLAGS=-C target-cpu=x86-64-v2 -C opt-level=3 -C lto=fat -C codegen-units=1
 
-cargo build --release
+cargo build --release --target x86_64-pc-windows-msvc
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Build failed! See output above.
     pause & exit /b 1
