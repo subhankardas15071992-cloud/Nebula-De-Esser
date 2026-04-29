@@ -7,11 +7,6 @@ use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui::Context, EguiState};
 use parking_lot::Mutex;
 
-/// Ensures proper 8-byte alignment for Windows x64 FFI safety
-#[cfg(target_os = "windows")]
-#[repr(C, align(8))]
-struct WindowsFfiGuard;
-
 pub mod analyzer;
 pub mod dsp;
 mod gui;
@@ -19,6 +14,11 @@ mod gui;
 use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, DeEsserDsp, ProcessFrame, ProcessSettings};
 use gui::{draw, GuiParams, NebulaGui};
+
+/// Ensures proper 8-byte alignment for Windows x64 FFI safety
+#[cfg(target_os = "windows")]
+#[repr(C, align(8))]
+struct WindowsFfiGuard;
 
 const UNMAPPED_CC: i32 = -1;
 
