@@ -33,7 +33,6 @@ pub const MIDI_OUTPUT_PAN: u8 = 6;
 pub const MIDI_MIN_FREQ: u8 = 7;
 pub const MIDI_MAX_FREQ: u8 = 8;
 pub const MIDI_LOOKAHEAD: u8 = 9;
-// FIX 1: Restore missing constant
 pub const MIDI_PARAM_COUNT: usize = 10;
 
 pub const MIDI_PARAM_NAMES: &[&str] = &[
@@ -232,6 +231,8 @@ struct NebulaDeEsser {
     reported_latency: u32,
     wet_mix: WetMixSmoother,
     prev_main_l: f64, prev_main_r: f64, prev_sc_l: f64, prev_sc_r: f64,
+    // CAKEWALK FIX: Track initialization state to prevent pre-init process() crashes
+    is_ready: AtomicBool,
 }
 
 impl Default for NebulaDeEsser {
@@ -249,6 +250,7 @@ impl Default for NebulaDeEsser {
             reported_latency: 0,
             wet_mix: WetMixSmoother::new(sr),
             prev_main_l: 0.0, prev_main_r: 0.0, prev_sc_l: 0.0, prev_sc_r: 0.0,
+            is_ready: AtomicBool::new(false),
         }
     }
 }
@@ -263,16 +265,26 @@ impl Plugin for NebulaDeEsser {
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
+    const IS_SYNTH: bool = false;
+    const IS_MIDI_EFFECT: bool = false;
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    // FIX 2: Return `Arc<dyn Params>` to match new nih-plug trait
     fn params(&self) -> Arc<dyn Params> {
         Arc::clone(&self.params) as Arc<dyn Params>
     }
 
-    // FIX 3: Add `<Self>` generic to AsyncExecutor & InitContext/ProcessContext
+    // CAKEWALK FIX: Safe editor deferral. Prevents winit/font init on audio thread.
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        #[cfg(target_os = "windows")]
+        {
+            // Only create editor if host provides a valid window handle context.
+            // Cakewalk often calls this during track creation before UI thread is ready.
+            if !self.is_ready.load(Ordering::Acquire) {
+                return None;
+            }
+        }
+
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -353,6 +365,9 @@ impl Plugin for NebulaDeEsser {
         self.prev_main_l = 0.0; self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
         context.set_latency_samples(0);
+        
+        // CAKEWALK FIX: Mark ready AFTER all DSP/state is initialized
+        self.is_ready.store(true, Ordering::Release);
         true
     }
 
@@ -366,7 +381,10 @@ impl Plugin for NebulaDeEsser {
     }
 
     fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
-        if buffer.samples() == 0 { return ProcessStatus::Normal; }
+        // CAKEWALK FIX: Host sometimes calls process() before initialize() completes
+        if !self.is_ready.load(Ordering::Acquire) || buffer.samples() == 0 {
+            return ProcessStatus::Normal;
+        }
 
         while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
