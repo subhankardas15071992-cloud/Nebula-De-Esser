@@ -15,7 +15,7 @@ resolver = "2"
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-egui = "0.28"
+egui = "0.29"
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
@@ -30,8 +30,7 @@ codegen-units = 1
 strip = "symbols"
 overflow-checks = false
 debug-assertions = false
-panic = "abort"
 
-[target.'cfg(windows)'.profile.dev]
-panic = "abort"
-overflow-checks = false
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
