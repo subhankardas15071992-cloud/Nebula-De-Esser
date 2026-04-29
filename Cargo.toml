@@ -13,9 +13,9 @@ members = ["xtask"]
 resolver = "2"
 
 [dependencies]
-# Pinned to a known Windows-stable commit
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "a7d4e1f", default-features = false, features = ["vst3"] }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "a7d4e1f" }
+# Track main branch (nih-plug has no framework releases)
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 egui = "0.28"
 parking_lot = "0.12"
 rustfft = "6.2"
@@ -31,7 +31,7 @@ codegen-units = 1
 strip = "symbols"
 overflow-checks = false
 debug-assertions = false
-panic = "abort"
+panic = "abort"  # ← CRITICAL: Prevents FFI unwinding crashes on Windows
 
 [target.'cfg(windows)'.profile.dev]
 panic = "abort"
