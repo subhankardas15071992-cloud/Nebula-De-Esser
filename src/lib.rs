@@ -33,6 +33,8 @@ pub const MIDI_OUTPUT_PAN: u8 = 6;
 pub const MIDI_MIN_FREQ: u8 = 7;
 pub const MIDI_MAX_FREQ: u8 = 8;
 pub const MIDI_LOOKAHEAD: u8 = 9;
+// FIX 1: Restore missing constant
+pub const MIDI_PARAM_COUNT: usize = 10;
 
 pub const MIDI_PARAM_NAMES: &[&str] = &[
     "TKEO Sharpness", "Max Reduction", "Stereo Link", "Input Level",
@@ -185,7 +187,6 @@ impl Default for Meters {
     }
 }
 
-// CAKEWALK FIX: Lock to Stereo-only during scan/initialization
 const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
     main_input_channels: NonZeroU32::new(2),
     main_output_channels: NonZeroU32::new(2),
@@ -265,10 +266,13 @@ impl Plugin for NebulaDeEsser {
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    fn params(&self) -> Arc<NebulaParams> { self.params.clone() }
+    // FIX 2: Return `Arc<dyn Params>` to match new nih-plug trait
+    fn params(&self) -> Arc<dyn Params> {
+        Arc::clone(&self.params) as Arc<dyn Params>
+    }
 
-    // CAKEWALK-SAFE EDITOR: Defers heavy egui/winit init until host provides valid window
-    fn editor(&mut self, _async_executor: AsyncExecutor) -> Option<Box<dyn Editor>> {
+    // FIX 3: Add `<Self>` generic to AsyncExecutor & InitContext/ProcessContext
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
         let meters = self.meters.clone();
         let spectrum = self.analyzer.get_shared();
@@ -280,7 +284,6 @@ impl Plugin for NebulaDeEsser {
             |_ctx: &Context, _state: &mut NebulaGui| {},
             move |ctx: &Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
                 midi_learn.sync_mutex_from_atomic_if_needed();
-
                 if midi_learn.midi_enabled.load(Ordering::Relaxed) {
                     for cc in 0..128 {
                         if !midi_learn.cc_dirty[cc].swap(false, Ordering::AcqRel) { continue; }
@@ -330,18 +333,13 @@ impl Plugin for NebulaDeEsser {
                 let changes = draw(ctx, &params.editor_state, gui_state, &gui_params);
                 apply_gui_changes(&changes, &params, setter);
                 midi_learn.sync_atomic_from_mutex();
-
-                if changes.detection_max_reset {
-                    meters.reset_det.store(1, Ordering::Release);
-                }
-                if changes.reduction_max_reset {
-                    meters.reset_red.store(1, Ordering::Release);
-                }
+                if changes.detection_max_reset { meters.reset_det.store(1, Ordering::Release); }
+                if changes.reduction_max_reset { meters.reset_red.store(1, Ordering::Release); }
             },
         )
     }
 
-    fn initialize(&mut self, _audio_io_layout: &AudioIOLayout, buffer_config: &BufferConfig, context: &mut impl InitContext) -> bool {
+    fn initialize(&mut self, _audio_io_layout: &AudioIOLayout, buffer_config: &BufferConfig, context: &mut impl InitContext<Self>) -> bool {
         self.sample_rate = buffer_config.sample_rate as f64;
         if self.sample_rate <= 0.0 { self.sample_rate = 44_100.0; }
         self.dsp = DeEsserDsp::new(self.sample_rate);
@@ -367,8 +365,7 @@ impl Plugin for NebulaDeEsser {
         self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
     }
 
-    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext) -> ProcessStatus {
-        // CAKEWALK FIX: Scanner sometimes sends 0-sample blocks
+    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
         if buffer.samples() == 0 { return ProcessStatus::Normal; }
 
         while let Some(event) = context.next_event() {
@@ -443,19 +440,8 @@ impl Plugin for NebulaDeEsser {
             let processed_in_l = main_in_l * ig_l;
             let processed_in_r = main_in_r * ig_r;
 
-            // CAKEWALK FIX: Safe sidechain access with bounds checking
-            let sc_in_l = sidechain_buffers
-                .and_then(|b| b.first())
-                .and_then(|c| c.get(i))
-                .copied()
-                .map(f64::from)
-                .unwrap_or(processed_in_l);
-            let sc_in_r = sidechain_buffers
-                .and_then(|b| b.get(1))
-                .and_then(|c| c.get(i))
-                .copied()
-                .map(f64::from)
-                .unwrap_or(processed_in_r);
+            let sc_in_l = sidechain_buffers.and_then(|b| b.first()).and_then(|c| c.get(i)).copied().map(f64::from).unwrap_or(processed_in_l);
+            let sc_in_r = sidechain_buffers.and_then(|b| b.get(1)).and_then(|c| c.get(i)).copied().map(f64::from).unwrap_or(processed_in_r);
 
             let ProcessFrame { wet_l, wet_r, dry_l, dry_r, detection_db, reduction_db } = if os_factor > 1 {
                 let mut wl = 0.0; let mut wr = 0.0; let mut dl = 0.0; let mut dr = 0.0;
