@@ -23,7 +23,6 @@ serde = { version = "1.0", features = ["derive"] }
 [dev-dependencies]
 rand = "0.8"
 
-# Single [profile.release] section - no duplicates
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -33,7 +32,6 @@ overflow-checks = false
 debug-assertions = false
 panic = "abort"
 
-# Windows-specific dev profile (separate table, not a duplicate)
 [target.'cfg(windows)'.profile.dev]
 panic = "abort"
 overflow-checks = false
