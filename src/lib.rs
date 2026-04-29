@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, EguiState};
-use nih_plug_egui::egui;  // ← Use the re-exported egui to avoid version mismatches
+use nih_plug_egui::egui;
 use parking_lot::Mutex;
 
 pub mod analyzer;
