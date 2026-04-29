@@ -3,7 +3,21 @@
 # "no such command: `xtask`".
 #
 # `run --package xtask --` compiles and runs the xtask/ crate in this
-# workspace, forwarding all trailing arguments to it.  The nih_plug_xtask
+# workspace, forwarding all trailing arguments to it. The nih_plug_xtask
 # library then interprets those arguments (bundle, bundle-universal, …).
 [alias]
 xtask = "run --package xtask --"
+
+# Windows-specific linker flags for VST3 stability
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-cpu=x86-64-v2",
+    "-C", "link-arg=/STACK:8388608",
+    "-C", "link-arg=/NODEFAULTLIB:libcmtd.lib",
+]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = [
+    "-C", "target-cpu=x86-64-v2",
+    "-C", "link-arg=-Wl,--stack,8388608",
+]
