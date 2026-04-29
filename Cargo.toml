@@ -13,20 +13,17 @@ members = ["xtask"]
 resolver = "2"
 
 [dependencies]
-# Track main branch (nih-plug has no framework releases)
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-egui = "0.28"  # Match the version nih-plug-egui expects
+egui = "0.28"
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
 
-[profile.release]
-panic = "abort"  # ← Critical for Windows VST3/CLAP stability
-
 [dev-dependencies]
 rand = "0.8"
 
+# Single [profile.release] section - no duplicates
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -34,8 +31,9 @@ codegen-units = 1
 strip = "symbols"
 overflow-checks = false
 debug-assertions = false
-panic = "abort"  # ← CRITICAL: Prevents FFI unwinding crashes on Windows
+panic = "abort"
 
+# Windows-specific dev profile (separate table, not a duplicate)
 [target.'cfg(windows)'.profile.dev]
 panic = "abort"
 overflow-checks = false
