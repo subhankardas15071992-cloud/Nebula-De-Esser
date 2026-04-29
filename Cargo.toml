@@ -16,10 +16,13 @@ resolver = "2"
 # Track main branch (nih-plug has no framework releases)
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["vst3"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-egui = "0.28"
+egui = "0.28"  # Match the version nih-plug-egui expects
 parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
+
+[profile.release]
+panic = "abort"  # ← Critical for Windows VST3/CLAP stability
 
 [dev-dependencies]
 rand = "0.8"
