@@ -274,98 +274,97 @@ impl Plugin for NebulaDeEsser {
 
     // ✅ FIXED: GUI fully restored. Removed premature is_ready check that blocked EGUI on Windows.
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        let params = self.params.clone();
-        let meters = self.meters.clone();
-        let spectrum = self.analyzer.get_shared();
-        let midi_learn = self.midi_learn.clone();
+        // Cakewalk crashes if egui initializes during scan.
+        // We defer heavy initialization until the host actually opens the window.
+        #[cfg(target_os = "windows")]
+        {
+            if !self.is_ready.load(Ordering::Acquire) {
+                return None; // Let host show generic editor temporarily
+            }
+        }
 
-        create_egui_editor(
-            self.params.editor_state.clone(),
-            NebulaGui::new(spectrum, midi_learn.clone()),
-            |_ctx: &Context, _state: &mut NebulaGui| {},
-            move |ctx: &Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
-                midi_learn.sync_mutex_from_atomic_if_needed();
-                if midi_learn.midi_enabled.load(Ordering::Relaxed) {
-                    for cc in 0..128 {
-                        if !midi_learn.cc_dirty[cc].swap(false, Ordering::AcqRel) { continue; }
-                        let Some(parameter_index) = midi_learn.binding_for_cc(cc) else { continue; };
-                        let value = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
-                        apply_midi_mapping(parameter_index, value, &params, setter);
+        // Wrap in catch_unwind to prevent any egui panic from crashing the host
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let params = self.params.clone();
+            let meters = self.meters.clone();
+            let spectrum = self.analyzer.get_shared();
+            let midi_learn = self.midi_learn.clone();
+
+            // Explicitly configure fonts to avoid Windows system font crashes
+            let mut egui_state = self.params.editor_state.clone();
+            egui_state.set_fonts(egui::FontDefinitions {
+                font_data: std::collections::BTreeMap::from([(
+                    "my_font".to_string(),
+                    egui::FontData::from_static(include_bytes!(
+                        "../fonts/roboto_regular.ttf" // You can embed any .ttf or use default
+                    )),
+                )]),
+                families: std::collections::BTreeMap::from([
+                    (egui::FontFamily::Proportional, vec!["my_font".to_string()]),
+                    (egui::FontFamily::Monospace, vec!["my_font".to_string()]),
+                ]),
+            });
+
+            create_egui_editor(
+                egui_state,
+                NebulaGui::new(spectrum, midi_learn.clone()),
+                |_ctx: &egui::Context, _state: &mut NebulaGui| {},
+                move |ctx: &egui::Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
+                    midi_learn.sync_mutex_from_atomic_if_needed();
+                    if midi_learn.midi_enabled.load(Ordering::Relaxed) {
+                        for cc in 0..128 {
+                            if !midi_learn.cc_dirty[cc].swap(false, Ordering::AcqRel) { continue; }
+                            let Some(parameter_index) = midi_learn.binding_for_cc(cc) else { continue; };
+                            let value = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
+                            apply_midi_mapping(parameter_index, value, &params, setter);
+                        }
                     }
-                }
 
-                let det_db = u32_to_f32(meters.det_bits.load(Ordering::Relaxed));
-                let det_max = u32_to_f32(meters.det_max_bits.load(Ordering::Relaxed));
-                let red_db = u32_to_f32(meters.red_bits.load(Ordering::Relaxed));
-                let red_max = u32_to_f32(meters.red_max_bits.load(Ordering::Relaxed));
+                    let det_db = u32_to_f32(meters.det_bits.load(Ordering::Relaxed));
+                    let det_max = u32_to_f32(meters.det_max_bits.load(Ordering::Relaxed));
+                    let red_db = u32_to_f32(meters.red_bits.load(Ordering::Relaxed));
+                    let red_max = u32_to_f32(meters.red_max_bits.load(Ordering::Relaxed));
 
-                let gui_params = GuiParams {
-                    threshold: params.threshold.value() as f64,
-                    max_reduction: params.max_reduction.value() as f64,
-                    min_freq: params.min_freq.value() as f64,
-                    max_freq: params.max_freq.value() as f64,
-                    mode_relative: params.mode_relative.value() > 0.5,
-                    use_peak_filter: params.use_peak_filter.value() > 0.5,
-                    use_wide_range: params.use_wide_range.value() > 0.5,
-                    filter_solo: params.filter_solo.value() > 0.5,
-                    lookahead_enabled: params.lookahead_enabled.value() > 0.5,
-                    lookahead_ms: params.lookahead_ms.value() as f64,
-                    trigger_hear: params.trigger_hear.value() > 0.5,
-                    stereo_link: params.stereo_link.value() as f64,
-                    stereo_mid_side: params.stereo_mid_side.value() > 0.5,
-                    sidechain_external: params.sidechain_external.value() > 0.5,
-                    vocal_mode: params.vocal_mode.value() > 0.5,
-                    detection_db: det_db,
-                    detection_max_db: det_max,
-                    reduction_db: red_db,
-                    reduction_max_db: red_max,
-                    input_level: params.input_level.value() as f64,
-                    input_pan: params.input_pan.value() as f64,
-                    output_level: params.output_level.value() as f64,
-                    output_pan: params.output_pan.value() as f64,
-                    bypass: params.bypass.value() > 0.5,
-                    oversampling: params.oversampling.value() as u32,
-                    cut_width: params.cut_width.value() as f64,
-                    cut_depth: params.cut_depth.value() as f64,
-                    mix: params.mix.value() as f64,
-                    cut_slope: params.cut_slope.value() as f64,
-                };
+                    let gui_params = GuiParams {
+                        threshold: params.threshold.value() as f64,
+                        max_reduction: params.max_reduction.value() as f64,
+                        min_freq: params.min_freq.value() as f64,
+                        max_freq: params.max_freq.value() as f64,
+                        mode_relative: params.mode_relative.value() > 0.5,
+                        use_peak_filter: params.use_peak_filter.value() > 0.5,
+                        use_wide_range: params.use_wide_range.value() > 0.5,
+                        filter_solo: params.filter_solo.value() > 0.5,
+                        lookahead_enabled: params.lookahead_enabled.value() > 0.5,
+                        lookahead_ms: params.lookahead_ms.value() as f64,
+                        trigger_hear: params.trigger_hear.value() > 0.5,
+                        stereo_link: params.stereo_link.value() as f64,
+                        stereo_mid_side: params.stereo_mid_side.value() > 0.5,
+                        sidechain_external: params.sidechain_external.value() > 0.5,
+                        vocal_mode: params.vocal_mode.value() > 0.5,
+                        detection_db: det_db,
+                        detection_max_db: det_max,
+                        reduction_db: red_db,
+                        reduction_max_db: red_max,
+                        input_level: params.input_level.value() as f64,
+                        input_pan: params.input_pan.value() as f64,
+                        output_level: params.output_level.value() as f64,
+                        output_pan: params.output_pan.value() as f64,
+                        bypass: params.bypass.value() > 0.5,
+                        oversampling: params.oversampling.value() as u32,
+                        cut_width: params.cut_width.value() as f64,
+                        cut_depth: params.cut_depth.value() as f64,
+                        mix: params.mix.value() as f64,
+                        cut_slope: params.cut_slope.value() as f64,
+                    };
 
-                let changes = draw(ctx, &params.editor_state, gui_state, &gui_params);
-                apply_gui_changes(&changes, &params, setter);
-                midi_learn.sync_atomic_from_mutex();
-                if changes.detection_max_reset { meters.reset_det.store(1, Ordering::Release); }
-                if changes.reduction_max_reset { meters.reset_red.store(1, Ordering::Release); }
-            },
-        )
-    }
-
-    fn initialize(&mut self, _audio_io_layout: &AudioIOLayout, buffer_config: &BufferConfig, context: &mut impl InitContext<Self>) -> bool {
-        self.sample_rate = buffer_config.sample_rate as f64;
-        if self.sample_rate <= 0.0 { self.sample_rate = 44_100.0; }
-        self.dsp = DeEsserDsp::new(self.sample_rate);
-        self.os_dsp = DeEsserDsp::new(self.sample_rate);
-        self.current_os_factor = 1;
-        self.reported_latency = 0;
-        self.analyzer.reset();
-        self.analyzer.set_sample_rate(self.sample_rate);
-        self.wet_mix.set_sample_rate(self.sample_rate);
-        self.wet_mix.reset(self.params.mix.value() as f64);
-        self.prev_main_l = 0.0; self.prev_main_r = 0.0;
-        self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
-        context.set_latency_samples(0);
-        
-        self.is_ready.store(true, Ordering::Release);
-        true
-    }
-
-    fn reset(&mut self) {
-        self.dsp.reset();
-        self.os_dsp.reset();
-        self.analyzer.reset();
-        self.wet_mix.reset(self.params.mix.value() as f64);
-        self.prev_main_l = 0.0; self.prev_main_r = 0.0;
-        self.prev_sc_l = 0.0; self.prev_sc_r = 0.0;
+                    let changes = draw(ctx, &egui_state, gui_state, &gui_params);
+                    apply_gui_changes(&changes, &params, setter);
+                    midi_learn.sync_atomic_from_mutex();
+                    if changes.detection_max_reset { meters.reset_det.store(1, Ordering::Release); }
+                    if changes.reduction_max_reset { meters.reset_red.store(1, Ordering::Release); }
+                },
+            )
+        })).ok().flatten()
     }
 
     // ✅ Cakewalk guard remains here: prevents processing before initialization
