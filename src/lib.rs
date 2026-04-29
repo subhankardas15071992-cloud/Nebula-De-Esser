@@ -476,12 +476,9 @@ impl Plugin for NebulaDeEsser {
     }
 
     // ✅ FIXED: Windows-safe editor with catch_unwind and defer guard
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        // Defer GUI creation on Windows until after initialize() completes
-        #[cfg(target_os = "windows")]
-        if !self.is_ready.load(Ordering::Acquire) {
-            return None;
-        }
+        fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        // ✅ REMOVED: The Windows defer guard was preventing GUI from loading
+        // The catch_unwind + panic=abort + process() guard are sufficient for stability
 
         // Wrap in catch_unwind to prevent any panic from crashing the host (fixes 0xc0000409)
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
