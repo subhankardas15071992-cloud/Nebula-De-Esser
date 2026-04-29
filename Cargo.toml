@@ -20,6 +20,9 @@ parking_lot = "0.12"
 rustfft = "6.2"
 serde = { version = "1.0", features = ["derive"] }
 
+# Optional: Add winapi for DllMain guard (only if you use the DllMain fix below)
+# winapi = { version = "0.3", features = ["winnt"], optional = true }
+
 [dev-dependencies]
 rand = "0.8"
 
@@ -30,6 +33,12 @@ codegen-units = 1
 strip = "symbols"
 overflow-checks = false
 debug-assertions = false
+panic = "abort"  # ← CRITICAL: Prevent unwinding crashes on Windows
+
+# Windows-specific dev profile to avoid debug-mode alignment issues
+[target.'cfg(windows)'.profile.dev]
+panic = "abort"
+overflow-checks = false
 
 [profile.release.build-override]
 opt-level = 3
