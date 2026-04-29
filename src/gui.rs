@@ -7,7 +7,6 @@ use crate::analyzer::SpectrumData;
 use crate::{MidiLearnShared, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES};
 use nih_plug_egui::egui;
     self, Color32, Context, FontFamily, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
-};
 use nih_plug_egui::resizable_window::ResizableWindow;
 use nih_plug_egui::EguiState;
 use parking_lot::Mutex;
