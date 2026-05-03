@@ -4,6 +4,7 @@ version = "2.4.0"
 edition = "2021"
 authors = ["Nebula Audio"]
 description = "Nebula DeEsser - Rust de-esser plugin for CLAP and VST3"
+license = "AGPL-3.0-or-later"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
