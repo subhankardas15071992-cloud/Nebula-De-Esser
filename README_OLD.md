@@ -120,23 +120,24 @@ MIDI-learnable parameters: Threshold, Max Reduction, Stereo Link, Input Level, I
 
 ### Prerequisites
 - Rust stable toolchain (`rustup.rs`)
-- `cargo-nih-plug` bundler — auto-installed by build scripts
+- `cargo-nih-plug` bundler — required for manual bundling
 - **Linux**: GCC or Clang, `libjack-jackd2-dev`
 - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
 - **Windows**: MSVC (Visual Studio 2022 Build Tools) or GNU toolchain; 64-bit OS required
 
 ### Linux — 64-bit x86_64 (JACK / ALSA / PipeWire)
 ```bash
-chmod +x build_linux.sh
-./build_linux.sh
+cargo build --release
+cargo run --release --package xtask -- bundle nebula-desser --release
 # Output: target/bundled/nebula_desser.clap
 # Install: mkdir -p ~/.clap && cp target/bundled/nebula_desser.clap ~/.clap/
 ```
 
 ### macOS — Universal Binary (Apple Silicon + Intel)
 ```bash
-chmod +x build_mac.sh
-./build_mac.sh
+cargo build --release --target aarch64-apple-darwin
+cargo build --release --target x86_64-apple-darwin
+cargo run --release --package xtask -- bundle nebula-desser --release
 # Output: target/bundled/Nebula DeEsser.clap  (arm64 + x86_64)
 # Install: cp -r "target/bundled/Nebula DeEsser.clap" ~/Library/Audio/Plug-Ins/CLAP/
 ```
@@ -144,10 +145,11 @@ chmod +x build_mac.sh
 ### Windows — 64-bit (ASIO / WASAPI / WaveRT)
 ```powershell
 # PowerShell (recommended — includes optional auto-install):
-.\build_windows.ps1
+cargo build --release
+cargo run --release --package xtask -- bundle nebula-desser --release
 
 # Or Command Prompt:
-build_windows.bat
+cargo build --release && cargo run --release --package xtask -- bundle nebula-desser --release
 # Output: target\bundled\nebula_desser.clap
 # Install: copy to %COMMONPROGRAMFILES%\CLAP\
 ```

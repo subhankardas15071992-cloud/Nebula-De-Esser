@@ -235,27 +235,25 @@ The plugin window is freely resizable. The entire UI scales proportionally. Mini
 
 ---
 
-## 🏗️ **Build Instructions**
+## 🏗️ **Build Instructions (Pure Manual Code Build)**
+
+Build directly with Cargo and the `xtask` bundle command (no helper scripts).
 
 #### **Linux (x86_64)**
 ```bash
-chmod +x build_linux.sh && ./build_linux.sh
+cargo build --release
+cargo run --release --package xtask -- bundle nebula-desser --release
 # Output: target/bundled/Nebula De-Esser.clap
 #         target/bundled/Nebula De-Esser.vst3
 ```
 
-#### **macOS (Universal Binary)**
+#### **macOS (Universal Binary: arm64 + x86_64)**
 ```bash
-chmod +x build_mac.sh && ./build_mac.sh
-# Output: target/bundled/Nebula De-Esser.clap  (arm64 + x86_64)
-#         target/bundled/Nebula De-Esser.vst3  (arm64 + x86_64)
-```
-
-#### **Windows (x86_64)**
-```powershell
-.\build_windows.ps1
-# Output: target\bundled\Nebula De-Esser.clap
-#         target\bundled\Nebula De-Esser.vst3
+cargo build --release --target aarch64-apple-darwin
+cargo build --release --target x86_64-apple-darwin
+cargo run --release --package xtask -- bundle nebula-desser --release
+# Output: target/bundled/Nebula De-Esser.clap
+#         target/bundled/Nebula De-Esser.vst3
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -312,9 +310,6 @@ Nebula-De-Esser/
 ├── .github/
 │   └── workflows/build.yml
 ├── bundler.toml
-├── build_linux.sh
-├── build_mac.sh
-├── build_windows.ps1
 └── Cargo.toml
 ```
 
