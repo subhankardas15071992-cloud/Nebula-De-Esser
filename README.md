@@ -15,18 +15,6 @@ Version 2.8.0 brings in the most major stability update, the plugin is now perfe
 
 ---
 
-# 💰 Support the Project
-
-If you find this open-source software helpful and would like to support its development, you can buy this plugin on Gumroad:
-
-<p align="left">
-  <a href="https://subhankar42.gumroad.com/l/adounr">
-    <img src="https://img.shields.io/badge/Buy_on-Gumroad-FF4D4D?style=for-the-badge&logo=gumroad&logoColor=white" alt="Buy on Gumroad">
-  </a>
-</p>
-
----
-
 ## ✨ **What's New in v2.8.0**
 
 ### 🔧🎛️ **Enhanced stability even on non Steinberg compliant hosts**
@@ -272,6 +260,23 @@ chmod +x build_mac.sh && ./build_mac.sh
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
 
+---
+Pre-built CLAP and VST3 binaries can be bought from Gumroad:
+https://subhankar42.gumroad.com/l/adounr
+
+Note:
+For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
+
+Note:
+The zip files contain both CLAP and VST3 plugins.
+
+Note for macOS users:
+macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
+
+To fix this problem after unzipping run the following command:
+```xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]```
+
+After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
 ---
 
 ## ⚠️ Microsoft Windows Not Supported
