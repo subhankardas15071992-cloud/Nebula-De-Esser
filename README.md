@@ -316,9 +316,7 @@ Nebula-De-Esser/
 
 ## 📄 **License**
 
-MIT License — free to use, modify, and distribute.
-
-The VST3 plugin format is also MIT licensed. Steinberg re-licensed the VST3 SDK under the MIT License, meaning VST3 plugins carry the same permissive terms as this project with no additional obligations.
+GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modify, and distribute under copyleft terms.
 
 ---
 
