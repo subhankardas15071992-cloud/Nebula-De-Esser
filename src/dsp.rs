@@ -1,4 +1,14 @@
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
+use std::sync::Arc;
+
+use rustfft::{num_complex::Complex, Fft, FftPlanner};
+
+const SPECTRAL_OSP_FFT_SIZE: usize = 512;
+const SPECTRAL_OSP_HOP: usize = 128;
+const SPECTRAL_OSP_BINS: usize = SPECTRAL_OSP_FFT_SIZE / 2 + 1;
+const SPECTRAL_OSP_BASIS: usize = 3;
+const SPECTRAL_OSP_COV_SIZE: usize = SPECTRAL_OSP_BINS * SPECTRAL_OSP_BINS;
+const SPECTRAL_OSP_POWER_ITERS: usize = 2;
 
 #[inline]
 pub fn db_to_lin(db: f64) -> f64 {
@@ -148,6 +158,459 @@ impl AdaptiveSubspaceTracker {
 struct SubspaceMetrics {
     confidence: f64,
     orthogonal_ratio: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SpectralTrainingGate {
+    voiced_confidence: f64,
+    sibilant_confidence: f64,
+    flatness: f64,
+    flux: f64,
+    centroid: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BasisMode {
+    Odd,
+    Even,
+    Both,
+}
+
+impl Default for BasisMode {
+    fn default() -> Self {
+        Self::Both
+    }
+}
+
+impl BasisMode {
+    pub fn from_selection(selection: u32) -> Self {
+        match selection {
+            0 => Self::Odd,
+            1 => Self::Even,
+            _ => Self::Both,
+        }
+    }
+
+    #[inline]
+    fn should_learn(self, frame_index: usize) -> bool {
+        match self {
+            Self::Odd => frame_index % 2 == 1,
+            Self::Even => frame_index % 2 == 0,
+            Self::Both => true,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SpectralOspChannel {
+    input_ring: Vec<f64>,
+    wet_ring: Vec<f64>,
+    dry_ring: Vec<f64>,
+    norm_ring: Vec<f64>,
+    window: Vec<f64>,
+    frame: Vec<Complex<f64>>,
+    analysis_magnitudes: Vec<f64>,
+    spectral_vector: Vec<f64>,
+    prev_spectral_vector: Vec<f64>,
+    basis: Vec<Vec<f64>>,
+    basis_work: Vec<Vec<f64>>,
+    covariance: Vec<f64>,
+    write_pos: usize,
+    hop_counter: usize,
+    filled: usize,
+    basis_frame_counter: usize,
+    fft: Arc<dyn Fft<f64>>,
+    ifft: Arc<dyn Fft<f64>>,
+}
+
+impl SpectralOspChannel {
+    fn new() -> Self {
+        let mut planner = FftPlanner::<f64>::new();
+        Self {
+            input_ring: vec![0.0; SPECTRAL_OSP_FFT_SIZE],
+            wet_ring: vec![0.0; SPECTRAL_OSP_FFT_SIZE],
+            dry_ring: vec![0.0; SPECTRAL_OSP_FFT_SIZE],
+            norm_ring: vec![0.0; SPECTRAL_OSP_FFT_SIZE],
+            window: sqrt_hann_window(SPECTRAL_OSP_FFT_SIZE),
+            frame: vec![Complex::new(0.0, 0.0); SPECTRAL_OSP_FFT_SIZE],
+            analysis_magnitudes: vec![0.0; SPECTRAL_OSP_BINS],
+            spectral_vector: vec![0.0; SPECTRAL_OSP_BINS],
+            prev_spectral_vector: vec![0.0; SPECTRAL_OSP_BINS],
+            basis: vec![vec![0.0; SPECTRAL_OSP_BINS]; SPECTRAL_OSP_BASIS],
+            basis_work: vec![vec![0.0; SPECTRAL_OSP_BINS]; SPECTRAL_OSP_BASIS],
+            covariance: vec![0.0; SPECTRAL_OSP_COV_SIZE],
+            write_pos: 0,
+            hop_counter: 0,
+            filled: 0,
+            basis_frame_counter: 0,
+            fft: planner.plan_fft_forward(SPECTRAL_OSP_FFT_SIZE),
+            ifft: planner.plan_fft_inverse(SPECTRAL_OSP_FFT_SIZE),
+        }
+    }
+
+    fn latency_samples(&self) -> usize {
+        SPECTRAL_OSP_FFT_SIZE
+    }
+
+    fn reset(&mut self) {
+        self.input_ring.fill(0.0);
+        self.wet_ring.fill(0.0);
+        self.dry_ring.fill(0.0);
+        self.norm_ring.fill(0.0);
+        self.frame.fill(Complex::new(0.0, 0.0));
+        self.analysis_magnitudes.fill(0.0);
+        self.spectral_vector.fill(0.0);
+        self.prev_spectral_vector.fill(0.0);
+        for basis in &mut self.basis {
+            basis.fill(0.0);
+        }
+        for basis in &mut self.basis_work {
+            basis.fill(0.0);
+        }
+        self.covariance.fill(0.0);
+        self.write_pos = 0;
+        self.hop_counter = 0;
+        self.filled = 0;
+        self.basis_frame_counter = 0;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process(
+        &mut self,
+        input: f64,
+        amount: f64,
+        min_freq_hz: f64,
+        max_freq_hz: f64,
+        max_reduction_db: f64,
+        cut_width: f64,
+        cut_slope: f64,
+        basis_mode: BasisMode,
+        sample_rate: f64,
+    ) -> (f64, f64) {
+        let norm = self.norm_ring[self.write_pos].max(1.0e-9);
+        let wet = self.wet_ring[self.write_pos] / norm;
+        let dry = self.dry_ring[self.write_pos] / norm;
+        self.wet_ring[self.write_pos] = 0.0;
+        self.dry_ring[self.write_pos] = 0.0;
+        self.norm_ring[self.write_pos] = 0.0;
+
+        self.input_ring[self.write_pos] = input;
+        self.write_pos = (self.write_pos + 1) % SPECTRAL_OSP_FFT_SIZE;
+        self.filled = (self.filled + 1).min(SPECTRAL_OSP_FFT_SIZE);
+        self.hop_counter += 1;
+
+        if self.filled >= SPECTRAL_OSP_FFT_SIZE && self.hop_counter >= SPECTRAL_OSP_HOP {
+            self.hop_counter = 0;
+            self.compute_frame(
+                amount,
+                min_freq_hz,
+                max_freq_hz,
+                max_reduction_db,
+                cut_width,
+                cut_slope,
+                basis_mode,
+                sample_rate,
+            );
+        }
+
+        (wet, dry)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_frame(
+        &mut self,
+        amount: f64,
+        min_freq_hz: f64,
+        max_freq_hz: f64,
+        max_reduction_db: f64,
+        cut_width: f64,
+        cut_slope: f64,
+        basis_mode: BasisMode,
+        sample_rate: f64,
+    ) {
+        for idx in 0..SPECTRAL_OSP_FFT_SIZE {
+            let ring_idx = (self.write_pos + idx) % SPECTRAL_OSP_FFT_SIZE;
+            self.frame[idx] = Complex::new(self.input_ring[ring_idx] * self.window[idx], 0.0);
+        }
+
+        self.fft.process(&mut self.frame);
+
+        let nyquist = sample_rate * 0.5;
+        let min_freq = min_freq_hz.clamp(20.0, nyquist.max(20.0));
+        let max_freq = max_freq_hz.clamp(min_freq + 1.0, nyquist.max(min_freq + 1.0));
+        let bin_min = ((min_freq * SPECTRAL_OSP_FFT_SIZE as f64 / sample_rate).floor() as usize)
+            .clamp(1, SPECTRAL_OSP_BINS - 1);
+        let bin_max = ((max_freq * SPECTRAL_OSP_FFT_SIZE as f64 / sample_rate).ceil() as usize)
+            .clamp(bin_min, SPECTRAL_OSP_BINS - 1);
+
+        self.analysis_magnitudes.fill(0.0);
+        self.spectral_vector.fill(0.0);
+        let mut band_energy = 0.0;
+        for bin in bin_min..=bin_max {
+            let mag = self.frame[bin].norm();
+            self.analysis_magnitudes[bin] = mag;
+            band_energy += mag * mag;
+        }
+        band_energy = band_energy.sqrt().max(1.0e-12);
+        for bin in bin_min..=bin_max {
+            self.spectral_vector[bin] = self.analysis_magnitudes[bin] / band_energy;
+        }
+
+        let amount = amount.clamp(0.0, 1.0);
+        let training_gate = self.training_gate(amount, bin_min, bin_max);
+        let diagnostic_veto = (1.0
+            - 0.10 * training_gate.sibilant_confidence
+            - 0.04 * training_gate.flatness
+            - 0.04 * training_gate.flux
+            - 0.02 * training_gate.centroid)
+            .clamp(0.75, 1.0);
+        let learn_rate = if basis_mode.should_learn(self.basis_frame_counter) {
+            0.0035 * training_gate.voiced_confidence * diagnostic_veto
+        } else {
+            0.0
+        };
+        self.basis_frame_counter = self.basis_frame_counter.wrapping_add(1);
+        if learn_rate > 1.0e-6 {
+            self.update_covariance_basis(learn_rate, bin_min, bin_max);
+        }
+        self.prev_spectral_vector
+            .copy_from_slice(&self.spectral_vector);
+
+        let mut projection_coeffs = [0.0; SPECTRAL_OSP_BASIS];
+        for (basis_idx, basis) in self.basis.iter().enumerate() {
+            projection_coeffs[basis_idx] = dot(basis, &self.spectral_vector);
+        }
+
+        let floor_gain = db_to_lin(-max_reduction_db.abs());
+        let center_bin = (bin_min + bin_max) as f64 * 0.5;
+        let half_width = ((bin_max - bin_min).max(1) as f64) * 0.5;
+        let surgical_focus = cut_width.clamp(0.0, 1.0);
+        let edge_power = 1.0 + (cut_slope / 100.0).clamp(0.0, 1.0) * 3.0;
+
+        for bin in bin_min..=bin_max {
+            let mut projection = 0.0;
+            for basis_idx in 0..SPECTRAL_OSP_BASIS {
+                projection += projection_coeffs[basis_idx] * self.basis[basis_idx][bin];
+            }
+            let residual = (self.spectral_vector[bin] - projection).abs();
+            let orthogonal_ratio =
+                (residual / (self.spectral_vector[bin].abs() + 1.0e-9)).clamp(0.0, 1.0);
+            let distance = ((bin as f64 - center_bin).abs() / half_width).clamp(0.0, 1.0);
+            let broad_taper = (1.0 - distance.powf(edge_power)).clamp(0.0, 1.0);
+            let narrow_taper = (1.0 - distance.powf(0.55 + edge_power)).clamp(0.0, 1.0);
+            let taper = broad_taper * (1.0 - surgical_focus) + narrow_taper * surgical_focus;
+            let removal = amount * orthogonal_ratio * taper;
+            let gain = (1.0 - removal * (1.0 - floor_gain)).clamp(floor_gain, 1.0);
+            self.frame[bin] *= gain;
+            let mirror = SPECTRAL_OSP_FFT_SIZE - bin;
+            if mirror < SPECTRAL_OSP_FFT_SIZE && mirror != bin {
+                self.frame[mirror] *= gain;
+            }
+        }
+
+        self.ifft.process(&mut self.frame);
+        let inv_fft = 1.0 / SPECTRAL_OSP_FFT_SIZE as f64;
+        for idx in 0..SPECTRAL_OSP_FFT_SIZE {
+            let ring_idx = (self.write_pos + idx) % SPECTRAL_OSP_FFT_SIZE;
+            let window = self.window[idx];
+            let input = self.input_ring[ring_idx];
+            self.wet_ring[ring_idx] += self.frame[idx].re * inv_fft * window;
+            self.dry_ring[ring_idx] += input * window * window;
+            self.norm_ring[ring_idx] += window * window;
+        }
+    }
+
+    fn update_covariance_basis(&mut self, learn_rate: f64, bin_min: usize, bin_max: usize) {
+        if self.spectral_vector.iter().all(|v| v.abs() < 1.0e-12) {
+            return;
+        }
+
+        let alpha = learn_rate.clamp(0.0, 0.05);
+        let decay = 1.0 - alpha;
+        for value in &mut self.covariance {
+            *value *= decay;
+        }
+
+        for row in bin_min..=bin_max {
+            let row_feature = self.spectral_vector[row];
+            if row_feature.abs() <= 1.0e-12 {
+                continue;
+            }
+            let row_offset = row * SPECTRAL_OSP_BINS;
+            for col in bin_min..=bin_max {
+                self.covariance[row_offset + col] +=
+                    alpha * row_feature * self.spectral_vector[col];
+            }
+        }
+
+        self.seed_missing_basis_vectors(bin_min, bin_max);
+
+        for _ in 0..SPECTRAL_OSP_POWER_ITERS {
+            for basis_idx in 0..SPECTRAL_OSP_BASIS {
+                self.basis_work[basis_idx].fill(0.0);
+                for row in bin_min..=bin_max {
+                    let row_offset = row * SPECTRAL_OSP_BINS;
+                    self.basis_work[basis_idx][row] = dot(
+                        &self.covariance[row_offset + bin_min..=row_offset + bin_max],
+                        &self.basis[basis_idx][bin_min..=bin_max],
+                    );
+                }
+            }
+
+            orthonormalize(&mut self.basis_work);
+            for basis_idx in 0..SPECTRAL_OSP_BASIS {
+                self.basis[basis_idx].copy_from_slice(&self.basis_work[basis_idx]);
+            }
+        }
+    }
+
+    fn seed_missing_basis_vectors(&mut self, bin_min: usize, bin_max: usize) {
+        if self.basis.iter().all(|basis| dot(basis, basis) > 1.0e-9) {
+            return;
+        }
+
+        let center = (bin_min + bin_max) as f64 * 0.5;
+        let half_width = ((bin_max - bin_min).max(1) as f64) * 0.5;
+        for basis_idx in 0..SPECTRAL_OSP_BASIS {
+            if dot(&self.basis[basis_idx], &self.basis[basis_idx]) > 1.0e-9 {
+                continue;
+            }
+
+            self.basis[basis_idx].fill(0.0);
+            for bin in bin_min..=bin_max {
+                let feature = self.spectral_vector[bin];
+                let x = ((bin as f64 - center) / half_width).clamp(-1.0, 1.0);
+                self.basis[basis_idx][bin] = match basis_idx {
+                    0 => feature,
+                    1 => feature * x,
+                    _ => feature * (x * x - 1.0 / 3.0),
+                };
+            }
+        }
+
+        orthonormalize(&mut self.basis);
+    }
+
+    fn training_gate(&self, amount: f64, bin_min: usize, bin_max: usize) -> SpectralTrainingGate {
+        let bin_count = (bin_max - bin_min + 1).max(1) as f64;
+        let mut mag_sum = 0.0;
+        let mut log_sum = 0.0;
+        let mut energy_sum = 0.0;
+        let mut weighted_bin_sum = 0.0;
+        let mut upper_energy = 0.0;
+        let mut peak_mag = 0.0_f64;
+        let upper_start = bin_min + ((bin_max - bin_min) * 2) / 3;
+
+        for bin in bin_min..=bin_max {
+            let mag = self.analysis_magnitudes[bin].max(0.0);
+            let energy = mag * mag;
+            mag_sum += mag;
+            log_sum += (mag + 1.0e-12).ln();
+            energy_sum += energy;
+            weighted_bin_sum += energy * bin as f64;
+            if bin >= upper_start {
+                upper_energy += energy;
+            }
+            peak_mag = peak_mag.max(mag);
+        }
+
+        if mag_sum <= 1.0e-12 || energy_sum <= 1.0e-18 {
+            return SpectralTrainingGate::default();
+        }
+
+        let arithmetic_mean = mag_sum / bin_count;
+        let geometric_mean = (log_sum / bin_count).exp();
+        let flatness = (geometric_mean / (arithmetic_mean + 1.0e-12)).clamp(0.0, 1.0);
+        let peak_concentration =
+            ((peak_mag / (mag_sum + 1.0e-12)) * bin_count).clamp(0.0, bin_count) / bin_count;
+        let centroid_bin = weighted_bin_sum / energy_sum;
+        let centroid =
+            ((centroid_bin - bin_min as f64) / (bin_max - bin_min).max(1) as f64).clamp(0.0, 1.0);
+        let upper_ratio = (upper_energy / energy_sum).clamp(0.0, 1.0);
+
+        let prev_energy = dot(
+            &self.prev_spectral_vector[bin_min..=bin_max],
+            &self.prev_spectral_vector[bin_min..=bin_max],
+        );
+        let flux = if prev_energy <= 1.0e-12 {
+            0.0
+        } else {
+            let diff_energy = self.spectral_vector[bin_min..=bin_max]
+                .iter()
+                .zip(self.prev_spectral_vector[bin_min..=bin_max].iter())
+                .map(|(current, previous)| {
+                    let diff = current - previous;
+                    diff * diff
+                })
+                .sum::<f64>();
+            (diff_energy.sqrt() * FRAC_1_SQRT_2).clamp(0.0, 1.0)
+        };
+
+        let noise_like = ((flatness - 0.18) / 0.58).clamp(0.0, 1.0);
+        let unstable = ((flux - 0.16) / 0.68).clamp(0.0, 1.0);
+        let upper_bias = ((upper_ratio - 0.42) / 0.38).clamp(0.0, 1.0);
+        let centroid_bias = ((centroid - 0.55) / 0.35).clamp(0.0, 1.0);
+        let sibilant_confidence = (amount * 0.52
+            + noise_like * 0.28
+            + unstable * 0.12
+            + upper_bias * 0.05
+            + centroid_bias * 0.03)
+            .clamp(0.0, 1.0);
+
+        let tonal_confidence =
+            ((1.0 - noise_like) * 0.72 + peak_concentration * 0.28).clamp(0.0, 1.0);
+        let stability = (1.0 - unstable).clamp(0.0, 1.0);
+        let clean_confidence = (1.0 - amount).powi(2);
+        let voiced_confidence =
+            (tonal_confidence * stability * clean_confidence * (1.0 - sibilant_confidence).powi(2))
+                .clamp(0.0, 1.0);
+
+        SpectralTrainingGate {
+            voiced_confidence,
+            sibilant_confidence,
+            flatness,
+            flux,
+            centroid,
+        }
+    }
+}
+
+fn sqrt_hann_window(size: usize) -> Vec<f64> {
+    (0..size)
+        .map(|idx| {
+            let phase = 2.0 * PI * (idx as f64 + 0.5) / size as f64;
+            let hann = 0.5 * (1.0 - phase.cos());
+            hann.max(0.0).sqrt()
+        })
+        .collect()
+}
+
+#[inline]
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+fn orthonormalize(basis: &mut [Vec<f64>]) {
+    for idx in 0..basis.len() {
+        for prev in 0..idx {
+            let projection = dot(&basis[idx], &basis[prev]);
+            let (left, right) = basis.split_at_mut(idx);
+            let previous = &left[prev];
+            let current = &mut right[0];
+            for (component, previous_component) in current.iter_mut().zip(previous.iter()) {
+                *component -= projection * *previous_component;
+            }
+        }
+
+        let norm = dot(&basis[idx], &basis[idx]).sqrt();
+        if norm > 1.0e-9 {
+            for component in &mut basis[idx] {
+                *component /= norm;
+            }
+        } else {
+            basis[idx].fill(0.0);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -406,7 +869,7 @@ pub struct ProcessSettings {
     pub threshold_db: f64,
     pub max_reduction_db: f64,
     pub mode_relative: bool,
-    pub use_peak_filter: bool,
+    pub basis_mode: BasisMode,
     pub use_wide_range: bool,
     pub trigger_hear: bool,
     pub filter_solo: bool,
@@ -424,11 +887,10 @@ pub struct ProcessFrame {
     pub reduction_db: f64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ChannelState {
     detect_hp: [BiquadState; 3],
     detect_lp: [BiquadState; 3],
-    detect_peak: BiquadState,
     split_lp: [BiquadState; 3],
     bell: [BiquadState; 2],
     detect_env: EnvelopeFollower,
@@ -445,6 +907,7 @@ struct ChannelState {
     formant_trackers: [Kalman1D; 3],
     vowel_probs: [f64; 5],
     dominant_vowel: VowelClass,
+    spectral_osp: SpectralOspChannel,
 }
 
 impl ChannelState {
@@ -452,7 +915,6 @@ impl ChannelState {
         Self {
             detect_hp: [BiquadState::default(); 3],
             detect_lp: [BiquadState::default(); 3],
-            detect_peak: BiquadState::default(),
             split_lp: [BiquadState::default(); 3],
             bell: [BiquadState::default(); 2],
             detect_env: EnvelopeFollower::new(0.2, 70.0, sample_rate),
@@ -469,13 +931,13 @@ impl ChannelState {
             formant_trackers: default_formant_trackers(),
             vowel_probs: [0.2; 5],
             dominant_vowel: VowelClass::A,
+            spectral_osp: SpectralOspChannel::new(),
         }
     }
 
     fn reset(&mut self) {
         self.detect_hp = [BiquadState::default(); 3];
         self.detect_lp = [BiquadState::default(); 3];
-        self.detect_peak = BiquadState::default();
         self.split_lp = [BiquadState::default(); 3];
         self.bell = [BiquadState::default(); 2];
         self.detect_env.reset();
@@ -492,6 +954,7 @@ impl ChannelState {
         self.formant_trackers = default_formant_trackers();
         self.vowel_probs = [0.2; 5];
         self.dominant_vowel = VowelClass::A;
+        self.spectral_osp.reset();
     }
 }
 
@@ -499,11 +962,14 @@ pub struct DeEsserDsp {
     sample_rate: f64,
     detect_hp: [BiquadCoeffs; 3],
     detect_lp: [BiquadCoeffs; 3],
-    detect_peak: BiquadCoeffs,
     split_lp: [BiquadCoeffs; 3],
     bell: [BiquadCoeffs; 2],
     formant_coeffs: [BiquadCoeffs; 3],
     detection_center_hz: f64,
+    spectral_min_hz: f64,
+    spectral_max_hz: f64,
+    spectral_cut_width: f64,
+    spectral_cut_slope: f64,
     full_cut_depth_db: f64,
     channels: [ChannelState; 2],
 }
@@ -516,11 +982,14 @@ impl DeEsserDsp {
             sample_rate,
             detect_hp: [BiquadCoeffs::default(); 3],
             detect_lp: [BiquadCoeffs::default(); 3],
-            detect_peak: BiquadCoeffs::default(),
             split_lp: [BiquadCoeffs::default(); 3],
             bell: [BiquadCoeffs::default(); 2],
             formant_coeffs: [BiquadCoeffs::default(); 3],
             detection_center_hz: 6_900.0,
+            spectral_min_hz: 4_000.0,
+            spectral_max_hz: 12_000.0,
+            spectral_cut_width: 0.5,
+            spectral_cut_slope: 50.0,
             full_cut_depth_db: 0.0,
             channels: [
                 ChannelState::new(sample_rate),
@@ -528,7 +997,7 @@ impl DeEsserDsp {
             ],
         };
 
-        dsp.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
+        dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
         dsp.update_lookahead(0.0);
         dsp.update_vocal_mode(true);
         dsp
@@ -541,7 +1010,8 @@ impl DeEsserDsp {
     }
 
     pub fn latency_samples(&self) -> u32 {
-        self.channels[0].audio_delay.latency_samples() as u32
+        (self.channels[0].audio_delay.latency_samples()
+            + self.channels[0].spectral_osp.latency_samples()) as u32
     }
 
     pub fn update_lookahead(&mut self, delay_ms: f64) {
@@ -581,7 +1051,6 @@ impl DeEsserDsp {
         &mut self,
         min_freq_hz: f64,
         max_freq_hz: f64,
-        _use_peak_filter: bool,
         cut_width: f64,
         cut_depth: f64,
         cut_slope: f64,
@@ -598,15 +1067,17 @@ impl DeEsserDsp {
         }
 
         let center_freq = (min_freq * max_freq).sqrt().clamp(20.0, nyquist_guard);
-        let detection_q = (center_freq / (max_freq - min_freq).max(1.0)).clamp(0.35, 8.0);
         let bell_q = (0.4 + cut_width.clamp(0.0, 1.0) * 11.6).clamp(0.4, 12.0);
         let slope = (cut_slope / 100.0).clamp(0.0, 1.0);
 
         self.detect_hp = Self::make_hp(min_freq, self.sample_rate);
         self.detect_lp = Self::make_lp(max_freq, self.sample_rate);
-        self.detect_peak = BiquadCoeffs::bandpass_peak(center_freq, detection_q, self.sample_rate);
         self.split_lp = Self::make_lp(center_freq, self.sample_rate);
         self.detection_center_hz = center_freq;
+        self.spectral_min_hz = min_freq;
+        self.spectral_max_hz = max_freq;
+        self.spectral_cut_width = cut_width.clamp(0.0, 1.0);
+        self.spectral_cut_slope = cut_slope.clamp(0.0, 100.0);
 
         self.full_cut_depth_db = max_reduction_db.abs() * cut_depth.clamp(0.0, 1.0);
         let stage_1_depth = -(self.full_cut_depth_db * (0.65 + 0.2 * (1.0 - slope)));
@@ -650,8 +1121,8 @@ impl DeEsserDsp {
         let delayed_l = self.channels[0].audio_delay.process(audio_l);
         let delayed_r = self.channels[1].audio_delay.process(audio_r);
 
-        let band_detect_l = self.detect_signal(sc_l, 0, settings.use_peak_filter);
-        let band_detect_r = self.detect_signal(sc_r, 1, settings.use_peak_filter);
+        let band_detect_l = self.detect_signal(sc_l, 0);
+        let band_detect_r = self.detect_signal(sc_r, 1);
         let tkeo_sensitivity = threshold_to_tkeo_sensitivity(settings.threshold_db);
         let detected_l = if settings.use_wide_range {
             sc_l * 0.65 + band_detect_l * 0.35
@@ -745,26 +1216,43 @@ impl DeEsserDsp {
         let reduction_db_l = -(self.full_cut_depth_db * amount_l);
         let reduction_db_r = -(self.full_cut_depth_db * amount_r);
 
+        let (spectral_wet_l, spectral_dry_l) = self.channels[0].spectral_osp.process(
+            delayed_l,
+            amount_l,
+            self.spectral_min_hz,
+            self.spectral_max_hz,
+            self.full_cut_depth_db,
+            self.spectral_cut_width,
+            self.spectral_cut_slope,
+            settings.basis_mode,
+            self.sample_rate,
+        );
+        let (spectral_wet_r, spectral_dry_r) = self.channels[1].spectral_osp.process(
+            delayed_r,
+            amount_r,
+            self.spectral_min_hz,
+            self.spectral_max_hz,
+            self.full_cut_depth_db,
+            self.spectral_cut_width,
+            self.spectral_cut_slope,
+            settings.basis_mode,
+            self.sample_rate,
+        );
+
         let wet_l = if settings.trigger_hear {
             detected_l
         } else if settings.filter_solo {
             detected_l * db_to_lin(reduction_db_l)
-        } else if settings.use_wide_range {
-            self.apply_bell(delayed_l, amount_l, 0)
         } else {
-            let (low, high) = self.split_complement(delayed_l, 0);
-            low + high * db_to_lin(reduction_db_l)
+            spectral_wet_l
         };
 
         let wet_r = if settings.trigger_hear {
             detected_r
         } else if settings.filter_solo {
             detected_r * db_to_lin(reduction_db_r)
-        } else if settings.use_wide_range {
-            self.apply_bell(delayed_r, amount_r, 1)
         } else {
-            let (low, high) = self.split_complement(delayed_r, 1);
-            low + high * db_to_lin(reduction_db_r)
+            spectral_wet_r
         };
 
         let (wet_l, wet_r) = if settings.stereo_mid_side {
@@ -773,9 +1261,9 @@ impl DeEsserDsp {
             (wet_l, wet_r)
         };
         let (dry_l, dry_r) = if settings.stereo_mid_side {
-            ms_to_lr(delayed_l, delayed_r)
+            ms_to_lr(spectral_dry_l, spectral_dry_r)
         } else {
-            (delayed_l, delayed_r)
+            (spectral_dry_l, spectral_dry_r)
         };
 
         ProcessFrame {
@@ -797,13 +1285,7 @@ impl DeEsserDsp {
     }
 
     #[inline]
-    fn detect_signal(&mut self, input: f64, channel_idx: usize, use_peak_filter: bool) -> f64 {
-        if use_peak_filter {
-            return self
-                .detect_peak
-                .process(&mut self.channels[channel_idx].detect_peak, input);
-        }
-
+    fn detect_signal(&mut self, input: f64, channel_idx: usize) -> f64 {
         let channel = &mut self.channels[channel_idx];
         let mut stage = input;
         for (coeffs, state) in self.detect_hp.iter().zip(channel.detect_hp.iter_mut()) {
@@ -953,6 +1435,7 @@ impl DeEsserDsp {
     }
 
     #[inline]
+    #[cfg(test)]
     fn split_complement(&mut self, input: f64, channel_idx: usize) -> (f64, f64) {
         let channel = &mut self.channels[channel_idx];
         let mut low = input;
@@ -961,15 +1444,6 @@ impl DeEsserDsp {
         }
 
         (low, input - low)
-    }
-
-    #[inline]
-    fn apply_bell(&mut self, input: f64, amount: f64, channel_idx: usize) -> f64 {
-        let channel = &mut self.channels[channel_idx];
-        let stage_1 = self.bell[0].process(&mut channel.bell[0], input);
-        let stage_2 = self.bell[1].process(&mut channel.bell[1], stage_1);
-        let amount = amount.clamp(0.0, 1.0);
-        input * (1.0 - amount) + stage_2 * amount
     }
 }
 
@@ -1070,7 +1544,7 @@ mod tests {
     #[test]
     fn complementary_split_recombines_exactly() {
         let mut dsp = DeEsserDsp::new(48_000.0);
-        dsp.update_filters(4_000.0, 10_000.0, false, 0.5, 1.0, 50.0, 12.0);
+        dsp.update_filters(4_000.0, 10_000.0, 0.5, 1.0, 50.0, 12.0);
 
         for sample in [0.0, 0.1, -0.25, 0.75, -0.5, 0.33] {
             let (low, high) = dsp.split_complement(sample, 0);
@@ -1082,7 +1556,102 @@ mod tests {
     fn lookahead_latency_matches_requested_delay() {
         let mut dsp = DeEsserDsp::new(48_000.0);
         dsp.update_lookahead(5.0);
-        assert_eq!(dsp.latency_samples(), 240);
+        assert_eq!(dsp.latency_samples(), 752);
+    }
+
+    #[test]
+    fn basis_mode_controls_which_spectral_frames_learn() {
+        fn first_frame_basis_energy(mode: BasisMode) -> f64 {
+            let mut channel = SpectralOspChannel::new();
+            let sample_rate = 48_000.0;
+            for sample_idx in 0..SPECTRAL_OSP_FFT_SIZE {
+                let phase = 2.0 * PI * 7_000.0 * sample_idx as f64 / sample_rate;
+                channel.process(
+                    0.5 * phase.sin(),
+                    0.0,
+                    4_000.0,
+                    12_000.0,
+                    12.0,
+                    0.5,
+                    50.0,
+                    mode,
+                    sample_rate,
+                );
+            }
+
+            channel
+                .basis
+                .iter()
+                .flat_map(|basis| basis.iter())
+                .map(|component| component * component)
+                .sum()
+        }
+
+        assert!(first_frame_basis_energy(BasisMode::Even) > 0.5);
+        assert!(first_frame_basis_energy(BasisMode::Both) > 0.5);
+        assert_eq!(first_frame_basis_energy(BasisMode::Odd), 0.0);
+    }
+
+    #[test]
+    fn spectral_basis_tracks_multiple_covariance_frames() {
+        let mut channel = SpectralOspChannel::new();
+        channel.spectral_vector[48] = 1.0;
+        channel.update_covariance_basis(0.05, 48, 96);
+        channel.spectral_vector.fill(0.0);
+        channel.spectral_vector[96] = 1.0;
+        channel.update_covariance_basis(0.05, 48, 96);
+
+        let first_bin_power = channel
+            .basis
+            .iter()
+            .map(|basis| basis[48].abs())
+            .sum::<f64>();
+        let second_bin_power = channel
+            .basis
+            .iter()
+            .map(|basis| basis[96].abs())
+            .sum::<f64>();
+        let first_cov = channel.covariance[48 * SPECTRAL_OSP_BINS + 48];
+        let second_cov = channel.covariance[96 * SPECTRAL_OSP_BINS + 96];
+
+        assert!(first_cov > 0.0);
+        assert!(second_cov > 0.0);
+        assert!(first_bin_power > 0.5);
+        assert!(second_bin_power > 0.5);
+    }
+
+    #[test]
+    fn spectral_training_gate_prefers_stable_tonal_voiced_frames() {
+        let mut channel = SpectralOspChannel::new();
+        channel.analysis_magnitudes[72] = 1.0;
+        channel.spectral_vector[72] = 1.0;
+
+        let gate = channel.training_gate(0.0, 48, 96);
+
+        assert!(gate.voiced_confidence > 0.7);
+        assert!(gate.sibilant_confidence < 0.2);
+        assert!(gate.flatness < 0.2);
+    }
+
+    #[test]
+    fn spectral_training_gate_rejects_noisy_or_sibilant_frames() {
+        let mut noisy = SpectralOspChannel::new();
+        let norm = (49.0_f64).sqrt();
+        for bin in 48..=96 {
+            noisy.analysis_magnitudes[bin] = 1.0;
+            noisy.spectral_vector[bin] = 1.0 / norm;
+        }
+        let noise_gate = noisy.training_gate(0.0, 48, 96);
+
+        let mut sibilant = SpectralOspChannel::new();
+        sibilant.analysis_magnitudes[92] = 1.0;
+        sibilant.spectral_vector[92] = 1.0;
+        let sibilant_gate = sibilant.training_gate(0.85, 48, 96);
+
+        assert!(noise_gate.voiced_confidence < 0.15);
+        assert!(noise_gate.sibilant_confidence > 0.25);
+        assert!(sibilant_gate.voiced_confidence < 0.05);
+        assert!(sibilant_gate.sibilant_confidence > 0.4);
     }
 
     #[test]
