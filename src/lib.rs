@@ -15,6 +15,8 @@ pub mod dsp;
 #[cfg(not(target_os = "windows"))]
 mod gui;
 pub mod metrics;
+#[cfg(target_os = "windows")]
+mod windows_editor;
 
 use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
@@ -557,7 +559,11 @@ impl Plugin for NebulaDeEsser {
 
     #[cfg(target_os = "windows")]
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        None
+        windows_editor::create_editor(
+            self.params.clone(),
+            self.analyzer.get_shared(),
+            self.meters.clone(),
+        )
     }
 
     fn initialize(
