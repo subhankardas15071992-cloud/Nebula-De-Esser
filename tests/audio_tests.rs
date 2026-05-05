@@ -5,15 +5,7 @@ use nebula_desser::dsp::{DeEsserDsp, ProcessSettings};
 fn tone_reduction_db(freq_hz: f64, amplitude: f64, settings: ProcessSettings) -> f64 {
     let sample_rate = 48_000.0;
     let mut dsp = DeEsserDsp::new(sample_rate);
-    dsp.update_filters(
-        4_000.0,
-        12_000.0,
-        false,
-        0.5,
-        1.0,
-        50.0,
-        settings.max_reduction_db,
-    );
+    dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, settings.max_reduction_db);
     dsp.update_vocal_mode(true);
 
     let mut minimum_reduction = 0.0_f64;
@@ -44,34 +36,21 @@ fn high_band_tone_triggers_more_reduction_than_low_band_tone() {
 }
 
 #[test]
-fn zero_lookahead_has_zero_initial_delay() {
+fn zero_lookahead_still_reports_spectral_osp_latency() {
     let mut dsp = DeEsserDsp::new(48_000.0);
-    dsp.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
+    dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
     dsp.update_lookahead(0.0);
 
-    let frame = dsp.process_frame(
-        1.0,
-        1.0,
-        1.0,
-        1.0,
-        ProcessSettings {
-            threshold_db: 100.0,
-            max_reduction_db: 12.0,
-            ..ProcessSettings::default()
-        },
-    );
-
-    assert!((frame.dry_l - 1.0).abs() < 1.0e-12);
-    assert!((frame.dry_r - 1.0).abs() < 1.0e-12);
+    assert_eq!(dsp.latency_samples(), 512);
 }
 
 #[test]
 fn lookahead_delay_matches_requested_latency() {
     let mut dsp = DeEsserDsp::new(48_000.0);
-    dsp.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
+    dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
     dsp.update_lookahead(5.0);
 
-    let latency_samples = 240;
+    let latency_samples = dsp.latency_samples() as usize;
     for index in 0..latency_samples {
         let frame = dsp.process_frame(
             if index == 0 { 1.0 } else { 0.0 },
@@ -110,7 +89,7 @@ fn lookahead_delay_matches_requested_latency() {
 fn trigger_hear_outputs_detector_band_not_full_signal() {
     let sample_rate = 48_000.0;
     let mut dsp = DeEsserDsp::new(sample_rate);
-    dsp.update_filters(5_000.0, 10_000.0, false, 0.5, 1.0, 50.0, 12.0);
+    dsp.update_filters(5_000.0, 10_000.0, 0.5, 1.0, 50.0, 12.0);
 
     let mut trigger_energy = 0.0;
     let mut dry_energy = 0.0;
