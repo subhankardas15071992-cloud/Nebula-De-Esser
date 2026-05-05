@@ -23,7 +23,7 @@ fn split_mode_is_transparent_when_no_reduction_is_requested() {
             left,
             right,
             ProcessSettings {
-                tkeo_threshold: 0.4,
+                threshold_db: 40.0,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -49,7 +49,7 @@ fn mid_side_path_remains_transparent_below_threshold() {
             left,
             right,
             ProcessSettings {
-                tkeo_threshold: 1.0,
+                threshold_db: 100.0,
                 max_reduction_db: 12.0,
                 stereo_mid_side: true,
                 ..ProcessSettings::default()
@@ -78,7 +78,7 @@ fn wide_and_split_modes_both_stay_finite() {
             signal,
             signal,
             ProcessSettings {
-                tkeo_threshold: 0.22,
+                threshold_db: 22.0,
                 max_reduction_db: 18.0,
                 use_wide_range: false,
                 ..ProcessSettings::default()
@@ -90,7 +90,7 @@ fn wide_and_split_modes_both_stay_finite() {
             signal,
             signal,
             ProcessSettings {
-                tkeo_threshold: 0.22,
+                threshold_db: 22.0,
                 max_reduction_db: 18.0,
                 use_wide_range: true,
                 ..ProcessSettings::default()
@@ -125,7 +125,7 @@ fn relative_mode_responds_differently_than_absolute_mode() {
             sample,
             sample,
             ProcessSettings {
-                tkeo_threshold: 0.52,
+                threshold_db: 52.0,
                 max_reduction_db: 12.0,
                 mode_relative: false,
                 ..ProcessSettings::default()
@@ -137,7 +137,7 @@ fn relative_mode_responds_differently_than_absolute_mode() {
             sample,
             sample,
             ProcessSettings {
-                tkeo_threshold: 0.52,
+                threshold_db: 52.0,
                 max_reduction_db: 12.0,
                 mode_relative: true,
                 ..ProcessSettings::default()
