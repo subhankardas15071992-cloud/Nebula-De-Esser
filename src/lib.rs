@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
-use nih_plug_egui::{create_egui_editor, EguiState};
 use nih_plug_egui::egui;
+use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
 
 pub mod analyzer;
@@ -362,22 +362,6 @@ const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[
     },
 ];
 
-#[cfg(target_os = "windows")]
-const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[AudioIOLayout {
-    main_input_channels: NonZeroU32::new(2),
-    main_output_channels: NonZeroU32::new(2),
-    aux_input_ports: &[],
-    aux_output_ports: &[],
-    names: PortNames {
-        layout: Some("Stereo"),
-        main_input: Some("Input"),
-        main_output: Some("Output"),
-        aux_inputs: &[],
-        aux_outputs: &[],
-    },
-}];
-
-#[cfg(not(target_os = "windows"))]
 const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = SHARED_AUDIO_IO_LAYOUTS;
 
 struct WetMixSmoother {
@@ -476,7 +460,7 @@ impl Plugin for NebulaDeEsser {
     }
 
     // ✅ FIXED: Windows-safe editor with catch_unwind and defer guard
-        fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         // ✅ REMOVED: The Windows defer guard was preventing GUI from loading
         // The catch_unwind + panic=abort + process() guard are sufficient for stability
 
@@ -503,7 +487,8 @@ impl Plugin for NebulaDeEsser {
                             let Some(parameter_index) = midi_learn.binding_for_cc(cc) else {
                                 continue;
                             };
-                            let value = u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
+                            let value =
+                                u32_to_f32(midi_learn.cc_values[cc].load(Ordering::Relaxed));
                             apply_midi_mapping(parameter_index, value, &params, setter);
                         }
                     }
@@ -557,7 +542,9 @@ impl Plugin for NebulaDeEsser {
                     }
                 },
             )
-        })).ok().flatten()  // Return None if a panic occurred, preventing host crash
+        }))
+        .ok()
+        .flatten() // Return None if a panic occurred, preventing host crash
     }
 
     fn initialize(
@@ -580,7 +567,8 @@ impl Plugin for NebulaDeEsser {
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
         context.set_latency_samples(0);
-        self.is_ready.store(true, std::sync::atomic::Ordering::Release);
+        self.is_ready
+            .store(true, std::sync::atomic::Ordering::Release);
         true
     }
 
@@ -1037,27 +1025,21 @@ mod tests {
             Some(2)
         );
         assert_eq!(stereo_sidechain.aux_input_ports.len(), 1);
-        assert_eq!(
-            stereo_sidechain.aux_input_ports[0].map(|c| c.get()),
-            Some(2)
-        );
+        assert_eq!(stereo_sidechain.aux_input_ports[0].get(), 2);
     }
 
     #[test]
     fn active_layouts_match_platform_stability_policy() {
         #[cfg(target_os = "windows")]
         {
-            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), 1);
-            assert!(ACTIVE_AUDIO_IO_LAYOUTS[0].aux_input_ports.is_empty());
+            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), SHARED_AUDIO_IO_LAYOUTS.len());
+            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS[1].aux_input_ports[0].get(), 2);
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), SHARED_AUDIO_IO_LAYOUTS.len());
-            assert_eq!(
-                ACTIVE_AUDIO_IO_LAYOUTS[1].aux_input_ports[0].map(|c| c.get()),
-                Some(2)
-            );
+            assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS[1].aux_input_ports[0].get(), 2);
         }
     }
 }
