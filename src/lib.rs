@@ -13,7 +13,7 @@ pub mod dsp;
 mod gui;
 
 use analyzer::SpectrumAnalyzer;
-use dsp::{db_to_lin, DeEsserDsp, ProcessFrame, ProcessSettings};
+use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
 use gui::{draw, GuiParams, NebulaGui};
 
 const UNMAPPED_CC: i32 = -1;
@@ -130,8 +130,8 @@ struct NebulaParams {
     pub max_freq: FloatParam,
     #[id = "mode_relative"]
     pub mode_relative: FloatParam,
-    #[id = "use_peak_filter"]
-    pub use_peak_filter: FloatParam,
+    #[id = "basis_mode"]
+    pub basis_mode: FloatParam,
     #[id = "use_wide_range"]
     pub use_wide_range: FloatParam,
     #[id = "filter_solo"]
@@ -209,7 +209,8 @@ impl Default for NebulaParams {
                 .with_unit(" Hz")
                 .with_step_size(1.0),
             mode_relative: bool_param("Mode", true),
-            use_peak_filter: bool_param("Filter", false),
+            basis_mode: FloatParam::new("Basis", 2.0, FloatRange::Linear { min: 0.0, max: 2.0 })
+                .with_step_size(1.0),
             use_wide_range: bool_param("Range", false),
             filter_solo: bool_param("Filter Solo", false),
             lookahead_enabled: bool_param("Lookahead Enabled", false),
@@ -504,7 +505,7 @@ impl Plugin for NebulaDeEsser {
                         min_freq: params.min_freq.value() as f64,
                         max_freq: params.max_freq.value() as f64,
                         mode_relative: params.mode_relative.value() > 0.5,
-                        use_peak_filter: params.use_peak_filter.value() > 0.5,
+                        basis_mode: params.basis_mode.value().round().clamp(0.0, 2.0) as u32,
                         use_wide_range: params.use_wide_range.value() > 0.5,
                         filter_solo: params.filter_solo.value() > 0.5,
                         lookahead_enabled: params.lookahead_enabled.value() > 0.5,
@@ -631,7 +632,7 @@ impl Plugin for NebulaDeEsser {
         let cut_depth = self.params.cut_depth.value() as f64;
         let cut_slope = self.params.cut_slope.value() as f64;
         let mode_relative = self.params.mode_relative.value() > 0.5;
-        let use_peak_filter = self.params.use_peak_filter.value() > 0.5;
+        let basis_mode = self.params.basis_mode.value().round().clamp(0.0, 2.0) as u32;
         let use_wide_range = self.params.use_wide_range.value() > 0.5;
         let filter_solo = self.params.filter_solo.value() > 0.5;
         let trigger_hear = self.params.trigger_hear.value() > 0.5;
@@ -648,7 +649,6 @@ impl Plugin for NebulaDeEsser {
             &mut self.dsp,
             min_freq,
             max_freq,
-            use_peak_filter,
             cut_width,
             cut_depth,
             cut_slope,
@@ -665,7 +665,6 @@ impl Plugin for NebulaDeEsser {
             &mut self.os_dsp,
             min_freq,
             max_freq,
-            use_peak_filter,
             cut_width,
             cut_depth,
             cut_slope,
@@ -674,10 +673,10 @@ impl Plugin for NebulaDeEsser {
             single_vocal,
         );
 
-        let target_latency = if lookahead_enabled && lookahead_ms > 0.0 {
-            lookahead_latency_samples(lookahead_ms, self.sample_rate)
+        let target_latency = if os_factor > 1 {
+            (self.os_dsp.latency_samples() as f64 / os_factor as f64).ceil() as u32
         } else {
-            0
+            self.dsp.latency_samples()
         };
         if target_latency != self.reported_latency {
             context.set_latency_samples(target_latency);
@@ -688,7 +687,7 @@ impl Plugin for NebulaDeEsser {
             threshold_db: threshold,
             max_reduction_db: max_reduction,
             mode_relative,
-            use_peak_filter,
+            basis_mode: BasisMode::from_selection(basis_mode),
             use_wide_range,
             trigger_hear,
             filter_solo,
@@ -874,6 +873,8 @@ impl Vst3Plugin for NebulaDeEsser {
 
 nih_export_clap!(NebulaDeEsser);
 nih_export_vst3!(NebulaDeEsser);
+#[cfg(target_os = "macos")]
+clap_wrapper::export_auv2!();
 
 fn apply_midi_mapping(
     parameter_index: u8,
@@ -930,7 +931,11 @@ fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, sett
     set_float!(changes.min_freq, params.min_freq);
     set_float!(changes.max_freq, params.max_freq);
     set_bool!(changes.mode_relative, params.mode_relative);
-    set_bool!(changes.use_peak_filter, params.use_peak_filter);
+    if let Some(basis_mode) = changes.basis_mode {
+        setter.begin_set_parameter(&params.basis_mode);
+        setter.set_parameter(&params.basis_mode, basis_mode as f32);
+        setter.end_set_parameter(&params.basis_mode);
+    }
     set_bool!(changes.use_wide_range, params.use_wide_range);
     set_bool!(changes.filter_solo, params.filter_solo);
     set_bool!(changes.lookahead_enabled, params.lookahead_enabled);
@@ -962,7 +967,6 @@ fn prepare_dsp(
     dsp: &mut DeEsserDsp,
     min_freq: f64,
     max_freq: f64,
-    use_peak_filter: bool,
     cut_width: f64,
     cut_depth: f64,
     cut_slope: f64,
@@ -973,7 +977,6 @@ fn prepare_dsp(
     dsp.update_filters(
         min_freq,
         max_freq,
-        use_peak_filter,
         cut_width,
         cut_depth,
         cut_slope,
@@ -991,10 +994,6 @@ fn oversampling_factor(selection: u32) -> u32 {
         4 => 8,
         _ => 1,
     }
-}
-
-fn lookahead_latency_samples(lookahead_ms: f64, sample_rate: f64) -> u32 {
-    ((lookahead_ms.max(0.0) * sample_rate) / 1000.0).round() as u32
 }
 
 fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
