@@ -1,7 +1,7 @@
 [package]
 name = "nebula_desser"
 version = "2.9.0"
-edition = "2014"
+edition = "2021"
 authors = ["Nebula Audio"]
 description = "Nebula DeEsser - Rust de-esser plugin for CLAP, VST3, and AUv2"
 license = "AGPL-3.0-or-later"
