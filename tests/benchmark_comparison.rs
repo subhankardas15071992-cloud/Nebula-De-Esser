@@ -6,7 +6,7 @@ use nebula_desser::dsp::{DeEsserDsp, ProcessSettings};
 fn sample_rates_up_to_384khz_produce_finite_output() {
     for sample_rate in [44_100.0, 96_000.0, 192_000.0, 384_000.0] {
         let mut dsp = DeEsserDsp::new(sample_rate);
-        dsp.update_filters(4_000.0, 12_000.0, false, 0.7, 1.0, 60.0, 16.0);
+        dsp.update_filters(4_000.0, 12_000.0, 0.7, 1.0, 60.0, 16.0);
         dsp.update_vocal_mode(true);
 
         for sample_idx in 0..4_096 {
@@ -35,7 +35,7 @@ fn common_host_buffer_sizes_are_stable() {
     let sample_rate = 48_000.0;
     for buffer_size in [32, 64, 128, 256, 512, 1024, 2048] {
         let mut dsp = DeEsserDsp::new(sample_rate);
-        dsp.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
+        dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
 
         for sample_idx in 0..buffer_size {
             let low = 0.5 * (2.0 * PI * 900.0 * sample_idx as f64 / sample_rate).sin();
@@ -64,8 +64,8 @@ fn external_sidechain_can_drive_gain_reduction() {
     let sample_rate = 48_000.0;
     let mut internal = DeEsserDsp::new(sample_rate);
     let mut external = DeEsserDsp::new(sample_rate);
-    internal.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
-    external.update_filters(4_000.0, 12_000.0, false, 0.5, 1.0, 50.0, 12.0);
+    internal.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+    external.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
 
     let mut internal_min = 0.0_f64;
     let mut external_min = 0.0_f64;
