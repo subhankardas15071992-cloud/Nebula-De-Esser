@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 pub mod analyzer;
 pub mod dsp;
 mod gui;
+pub mod metrics;
 
 use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
