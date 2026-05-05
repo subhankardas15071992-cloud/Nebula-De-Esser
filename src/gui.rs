@@ -1176,14 +1176,7 @@ fn draw_controls(
         push_undo(gui, p);
         ch.use_wide_range = Some(i == 1);
     }
-    if let Some(i) = radio_group(
-        ui,
-        cols[2],
-        "Basis",
-        &["Odd", "Even", "Both"],
-        p.basis_mode.min(2) as usize,
-        s,
-    ) {
+    if let Some(i) = basis_radio_group(ui, cols[2], p.basis_mode.min(2) as usize, s) {
         push_undo(gui, p);
         ch.basis_mode = Some(i as u32);
     }
@@ -1494,6 +1487,107 @@ fn radio_group(
             res = Some(i);
         }
     }
+    res
+}
+
+fn basis_radio_group(ui: &mut Ui, rect: Rect, ai: usize, s: f32) -> Option<usize> {
+    {
+        let pa = ui.painter_at(rect);
+        pa.rect_filled(rect, 6.0 * s, ACRYLIC_CARD);
+        pa.rect_stroke(
+            rect,
+            6.0 * s,
+            Stroke::new(1.0, STROKE_DEF),
+            egui::StrokeKind::Outside,
+        );
+        pa.text(
+            Pos2::new(rect.center().x, rect.min.y + 8.0 * s),
+            egui::Align2::CENTER_CENTER,
+            "Basis",
+            FontId::new(12.5 * s, FontFamily::Proportional),
+            TEXT_TER,
+        );
+    }
+
+    let item_h = 16.0 * s;
+    let top_y = rect.min.y + 18.0 * s;
+    let second_y = top_y + item_h + 2.0 * s;
+    let left_w = rect.width() * 0.48;
+    let right_w = rect.width() * 0.42;
+    let items = [
+        (
+            0usize,
+            "Odd",
+            Rect::from_min_size(
+                Pos2::new(rect.min.x + 4.0 * s, top_y),
+                Vec2::new(left_w, item_h),
+            ),
+        ),
+        (
+            1usize,
+            "Even",
+            Rect::from_min_size(
+                Pos2::new(rect.min.x + 4.0 * s, second_y),
+                Vec2::new(left_w, item_h),
+            ),
+        ),
+        (
+            2usize,
+            "Both",
+            Rect::from_min_size(
+                Pos2::new(rect.max.x - right_w - 4.0 * s, top_y),
+                Vec2::new(right_w, item_h),
+            ),
+        ),
+    ];
+
+    let mut res = None;
+    for (idx, label, item_r) in items {
+        let r = ui.allocate_rect(item_r, Sense::click());
+        let ia = idx == ai;
+        let hov = r.hovered();
+        {
+            let pa = ui.painter_at(rect);
+            let radio_c = Pos2::new(item_r.min.x + 7.0 * s, item_r.center().y);
+            let radio_r = 5.0 * s;
+            pa.circle_filled(
+                radio_c,
+                radio_r,
+                if ia {
+                    ACCENT
+                } else if hov {
+                    CTRL_HOVER
+                } else {
+                    CTRL_DEFAULT
+                },
+            );
+            pa.circle_stroke(
+                radio_c,
+                radio_r,
+                Stroke::new(1.0, if ia { ACCENT_DARK } else { STROKE_DEF }),
+            );
+            if ia {
+                pa.circle_filled(radio_c, 2.5 * s, Color32::from_rgb(230, 230, 230));
+            }
+            pa.text(
+                Pos2::new(radio_c.x + radio_r + 5.0 * s, item_r.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                FontId::new(11.5 * s, FontFamily::Proportional),
+                if ia {
+                    TEXT_PRI
+                } else if hov {
+                    TEXT_SEC
+                } else {
+                    TEXT_TER
+                },
+            );
+        }
+        if r.clicked() {
+            res = Some(idx);
+        }
+    }
+
     res
 }
 
