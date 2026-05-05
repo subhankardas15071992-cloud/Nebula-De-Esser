@@ -1341,9 +1341,13 @@ fn draw_controls(
         ("Lookahead", p.lookahead_enabled),
         ("Mid / Side", p.stereo_mid_side),
     ];
-    let bw = inner.width() / btns.len() as f32 - 4.0 * s;
+    let switch_gap = 4.0 * s;
+    let bw =
+        (inner.width() - switch_gap * (btns.len().saturating_sub(1)) as f32) / btns.len() as f32;
+    let row_w = bw * btns.len() as f32 + switch_gap * (btns.len().saturating_sub(1)) as f32;
+    let row_x = inner.center().x - row_w * 0.5;
     for (i, (lbl, active)) in btns.iter().enumerate() {
-        let bx = inner.min.x + (bw + 4.0 * s) * i as f32;
+        let bx = row_x + (bw + switch_gap) * i as f32;
         let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(bw, btn_h));
         let r = ui.allocate_rect(br, Sense::click());
         let hov = r.hovered();
@@ -1352,7 +1356,8 @@ fn draw_controls(
             // WinUI ToggleSwitch — pill track + sliding thumb
             let track_w = 36.0 * s;
             let track_h = 18.0 * s;
-            let track_x = br.min.x + 4.0 * s;
+            let visible_w = track_w + 6.0 * s + 64.0 * s;
+            let track_x = br.min.x + ((br.width() - visible_w) * 0.5).max(4.0 * s);
             let track_y = br.center().y - track_h * 0.5;
             let track =
                 Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
