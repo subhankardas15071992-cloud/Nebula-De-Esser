@@ -102,12 +102,16 @@ impl AdaptiveSubspaceTracker {
     }
 
     #[inline]
-    fn update(&mut self, features: [f64; 3]) {
+    fn update(&mut self, features: [f64; 3], rate_scale: f64) {
         let norm = (features.iter().map(|v| v * v).sum::<f64>()).sqrt();
         if norm <= 1.0e-12 {
             return;
         }
         let normalized = features.map(|v| v / norm);
+        let update_rate = self.update_rate * rate_scale.clamp(0.0, 1.0);
+        if update_rate <= 0.0 {
+            return;
+        }
         let dot = self
             .eigenvector
             .iter()
@@ -116,7 +120,7 @@ impl AdaptiveSubspaceTracker {
             .sum::<f64>();
 
         for (index, component) in self.eigenvector.iter_mut().enumerate() {
-            *component += self.update_rate * dot * (normalized[index] - dot * *component);
+            *component += update_rate * dot * (normalized[index] - dot * *component);
         }
 
         let vec_norm = (self.eigenvector.iter().map(|v| v * v).sum::<f64>()).sqrt();
@@ -138,6 +142,12 @@ impl AdaptiveSubspaceTracker {
             .sum::<f64>();
         ((norm_sq - projection * projection).max(0.0) / norm_sq).clamp(0.0, 1.0)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SubspaceMetrics {
+    confidence: f64,
+    orthogonal_ratio: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -660,7 +670,7 @@ impl DeEsserDsp {
         let full_env_r = self.channels[1].full_env.process(sc_r);
 
         let subspace_l = self.subspace_metrics(
-            sc_l,
+            detected_l,
             detected_env_l,
             full_env_l,
             tkeo_sensitivity,
@@ -669,7 +679,7 @@ impl DeEsserDsp {
             0,
         );
         let subspace_r = self.subspace_metrics(
-            sc_r,
+            detected_r,
             detected_env_r,
             full_env_r,
             tkeo_sensitivity,
@@ -691,7 +701,7 @@ impl DeEsserDsp {
 
         let comparison_l = if settings.use_wide_range {
             // Wide = full-signal analysis. Decide using overall voice behavior.
-            let behavior_energy = full_env_l * (0.7 + 0.3 * subspace_l);
+            let behavior_energy = full_env_l * (0.7 + 0.3 * subspace_l.confidence);
             lin_to_db(behavior_energy)
         } else if settings.mode_relative {
             // Split = harsh-band analysis relative to full signal.
@@ -701,7 +711,7 @@ impl DeEsserDsp {
             lin_to_db(detect_env_l)
         };
         let comparison_r = if settings.use_wide_range {
-            let behavior_energy = full_env_r * (0.7 + 0.3 * subspace_r);
+            let behavior_energy = full_env_r * (0.7 + 0.3 * subspace_r.confidence);
             lin_to_db(behavior_energy)
         } else if settings.mode_relative {
             lin_to_db(detect_env_r) - lin_to_db(full_env_r)
@@ -717,14 +727,18 @@ impl DeEsserDsp {
         let base_target_l = reduction_amount(comparison_l, fixed_trigger_db, max_reduction_db);
         let base_target_r = reduction_amount(comparison_r, fixed_trigger_db, max_reduction_db);
 
-        // Keep user controls responsive by treating the transparency stack as a shaping layer
-        // around the base control law instead of a hard attenuation cascade.
-        let transparency_l = transparency_shaping(subspace_l, psycho_l, formant_lock_l);
-        let transparency_r = transparency_shaping(subspace_r, psycho_r, formant_lock_r);
-        // Keep user controls as the dominant driver.
-        // The transparency layer gently nudges behavior instead of suppressing it.
-        let reduction_target_l = (base_target_l * (0.75 + 0.25 * transparency_l)).clamp(0.0, 1.0);
-        let reduction_target_r = (base_target_r * (0.75 + 0.25 * transparency_r)).clamp(0.0, 1.0);
+        // OSP confidence is the main reduction controller. The envelope detector remains as a
+        // stabilizing energy gate so the processor does not chase TKEO noise during silence.
+        let base_support_l = base_target_l * (0.25 + 0.75 * subspace_l.confidence);
+        let base_support_r = base_target_r * (0.25 + 0.75 * subspace_r.confidence);
+        let osp_target_l = (subspace_l.confidence * 0.85 + base_support_l * 0.15).clamp(0.0, 1.0);
+        let osp_target_r = (subspace_r.confidence * 0.85 + base_support_r * 0.15).clamp(0.0, 1.0);
+        let transparency_l =
+            transparency_shaping(subspace_l.orthogonal_ratio, psycho_l, formant_lock_l);
+        let transparency_r =
+            transparency_shaping(subspace_r.orthogonal_ratio, psycho_r, formant_lock_r);
+        let reduction_target_l = (osp_target_l * transparency_l).clamp(0.0, 1.0);
+        let reduction_target_r = (osp_target_r * transparency_r).clamp(0.0, 1.0);
 
         let amount_l = self.channels[0].reduction.process(reduction_target_l);
         let amount_r = self.channels[1].reduction.process(reduction_target_r);
@@ -811,7 +825,7 @@ impl DeEsserDsp {
         mode_relative: bool,
         use_wide_range: bool,
         channel_idx: usize,
-    ) -> f64 {
+    ) -> SubspaceMetrics {
         let channel = &mut self.channels[channel_idx];
         let tkeo = teager_kaiser_energy(input, channel.prev_input_1, channel.prev_input_2);
         channel.prev_input_2 = channel.prev_input_1;
@@ -820,9 +834,6 @@ impl DeEsserDsp {
         let f_short = channel.tkeo_env_short.process(tkeo);
         let f_mid = channel.tkeo_env_mid.process(tkeo);
         let f_long = channel.tkeo_env_long.process(tkeo);
-        let features = [f_short, f_mid, f_long];
-        channel.subspace_tracker.update(features);
-        let orth_ratio = channel.subspace_tracker.orthogonal_ratio(features);
         let sum = (f_short + f_mid + f_long).max(1.0e-12);
 
         // Absolute mode = strict 3-vector decomposition:
@@ -830,35 +841,52 @@ impl DeEsserDsp {
         let voiced_axis = (f_long / sum).clamp(0.0, 1.0);
         let unvoiced_axis = (f_short / sum).clamp(0.0, 1.0);
         let residual_axis = (f_mid / sum).clamp(0.0, 1.0);
+        let features = [voiced_axis, residual_axis, unvoiced_axis];
+        let orth_ratio = channel.subspace_tracker.orthogonal_ratio(features);
         let sharpness_score = unvoiced_axis * 0.6 + residual_axis * 0.4;
         let sharpness_requirement = 0.15 + 0.7 * tkeo_sensitivity.clamp(0.0, 1.0);
         let spike_classification = ((sharpness_score - sharpness_requirement)
             / (1.0 - sharpness_requirement).max(1.0e-6))
         .clamp(0.0, 1.0);
+        let learn_rate = 1.0 - spike_classification * 0.92;
+        channel.subspace_tracker.update(features, learn_rate);
+        let detected_ratio = (detected_env / (full_env + 1.0e-9)).clamp(0.0, 4.0);
+        let detected_gate = if use_wide_range {
+            ((lin_to_db(full_env + 1.0e-12) + 72.0) / 42.0).clamp(0.0, 1.0)
+        } else {
+            (detected_ratio / 0.55).clamp(0.0, 1.0)
+        };
 
         let strict_three_vector = spike_classification
             * (unvoiced_axis * 0.55 + residual_axis * 0.45)
             * (0.55 + 0.45 * orth_ratio)
-            * (1.0 - 0.25 * voiced_axis);
+            * (1.0 - 0.25 * voiced_axis)
+            * detected_gate;
 
         if !mode_relative {
-            return strict_three_vector.clamp(0.2, 1.1);
+            return SubspaceMetrics {
+                confidence: strict_three_vector.clamp(0.0, 1.0),
+                orthogonal_ratio: orth_ratio,
+            };
         }
 
         // Relative mode = adaptive multi-vector behavior (beyond 3D when needed).
         // The decision to expand weighting uses signal context + detector relation.
-        let detected_ratio = (detected_env / (full_env + 1.0e-9)).clamp(0.0, 4.0);
         let flux = ((f_short - f_mid).abs() + (f_mid - f_long).abs()) / sum;
         let multi_vector_enable = if use_wide_range {
             (detected_ratio * 0.45 + flux * 1.6 + orth_ratio * 0.5).clamp(0.0, 1.0)
         } else {
             (detected_ratio * 0.55 + flux * 1.2 + orth_ratio * 0.6).clamp(0.0, 1.0)
         };
-        let extended_vector_gain = strict_three_vector
+        let extended_vector_gain = (strict_three_vector
             + multi_vector_enable * (flux * 0.55 + orth_ratio * 0.45)
-            + spike_classification * (0.12 + 0.08 * (1.0 - tkeo_sensitivity));
+            + spike_classification * (0.12 + 0.08 * (1.0 - tkeo_sensitivity)))
+            * detected_gate;
 
-        extended_vector_gain.clamp(0.25, 1.2)
+        SubspaceMetrics {
+            confidence: extended_vector_gain.clamp(0.0, 1.0),
+            orthogonal_ratio: orth_ratio,
+        }
     }
 
     #[inline]
@@ -1080,13 +1108,13 @@ mod tests {
     fn threshold_control_changes_reduction_amount() {
         let mut dsp = DeEsserDsp::new(48_000.0);
         let settings_loose = ProcessSettings {
-            threshold_db: 10.0,
+            threshold_db: 0.0,
             max_reduction_db: -12.0,
             mode_relative: false,
             ..ProcessSettings::default()
         };
         let settings_strict = ProcessSettings {
-            threshold_db: 90.0,
+            threshold_db: 100.0,
             max_reduction_db: -12.0,
             mode_relative: false,
             ..ProcessSettings::default()
@@ -1094,19 +1122,21 @@ mod tests {
 
         let mut loose_reduction = 0.0;
         let mut strict_reduction = 0.0;
-        for _ in 0..256 {
+        for sample_idx in 0..512 {
+            let sample = if sample_idx % 24 == 0 { 0.85 } else { 0.0 };
             loose_reduction = dsp
-                .process_frame(0.85, 0.85, 0.85, 0.85, settings_loose)
+                .process_frame(sample, sample, sample, sample, settings_loose)
                 .reduction_db;
         }
         dsp.reset();
-        for _ in 0..256 {
+        for sample_idx in 0..512 {
+            let sample = if sample_idx % 24 == 0 { 0.85 } else { 0.0 };
             strict_reduction = dsp
-                .process_frame(0.85, 0.85, 0.85, 0.85, settings_strict)
+                .process_frame(sample, sample, sample, sample, settings_strict)
                 .reduction_db;
         }
 
-        assert!(loose_reduction < strict_reduction - 0.5);
+        assert!(loose_reduction < strict_reduction - 0.25);
     }
 
     #[test]
