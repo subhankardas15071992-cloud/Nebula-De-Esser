@@ -4,17 +4,27 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
+#[cfg(not(target_os = "windows"))]
 use nih_plug_egui::egui;
+#[cfg(not(target_os = "windows"))]
 use nih_plug_egui::{create_egui_editor, EguiState};
+#[cfg(target_os = "windows")]
+use nih_plug_vizia::vizia::prelude::*;
+#[cfg(target_os = "windows")]
+use nih_plug_vizia::widgets::*;
+#[cfg(target_os = "windows")]
+use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
 use parking_lot::Mutex;
 
 pub mod analyzer;
 pub mod dsp;
+#[cfg(not(target_os = "windows"))]
 mod gui;
 pub mod metrics;
 
 use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
+#[cfg(not(target_os = "windows"))]
 use gui::{draw, GuiParams, NebulaGui};
 
 const UNMAPPED_CC: i32 = -1;
@@ -118,8 +128,13 @@ impl MidiLearnShared {
 
 #[derive(Params)]
 struct NebulaParams {
+    #[cfg(not(target_os = "windows"))]
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
+
+    #[cfg(target_os = "windows")]
+    #[persist = "editor-state"]
+    editor_state: Arc<ViziaState>,
 
     #[id = "threshold"]
     pub threshold: FloatParam,
@@ -173,6 +188,15 @@ struct NebulaParams {
     pub cut_slope: FloatParam,
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Lens)]
+struct WindowsEditorData {
+    params: Arc<NebulaParams>,
+}
+
+#[cfg(target_os = "windows")]
+impl Model for WindowsEditorData {}
+
 impl Default for NebulaParams {
     fn default() -> Self {
         let freq_range = FloatRange::Skewed {
@@ -182,7 +206,10 @@ impl Default for NebulaParams {
         };
 
         Self {
+            #[cfg(not(target_os = "windows"))]
             editor_state: EguiState::from_size(860, 640),
+            #[cfg(target_os = "windows")]
+            editor_state: ViziaState::new(|| (860, 640)),
             threshold: FloatParam::new(
                 "TKEO Sharpness",
                 50.0,
@@ -311,6 +338,7 @@ fn bool_param(name: &str, default: bool) -> FloatParam {
         if default { 1.0 } else { 0.0 },
         FloatRange::Linear { min: 0.0, max: 1.0 },
     )
+    .with_step_size(1.0)
 }
 
 struct Meters {
@@ -461,12 +489,8 @@ impl Plugin for NebulaDeEsser {
         self.params.clone()
     }
 
-    // ✅ FIXED: Windows-safe editor with catch_unwind and defer guard
+    #[cfg(not(target_os = "windows"))]
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        // ✅ REMOVED: The Windows defer guard was preventing GUI from loading
-        // The catch_unwind + panic=abort + process() guard are sufficient for stability
-
-        // Wrap in catch_unwind to prevent any panic from crashing the host (fixes 0xc0000409)
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let params = self.params.clone();
             let meters = self.meters.clone();
@@ -546,7 +570,55 @@ impl Plugin for NebulaDeEsser {
             )
         }))
         .ok()
-        .flatten() // Return None if a panic occurred, preventing host crash
+        .flatten()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let params = self.params.clone();
+            let editor_state = self.params.editor_state.clone();
+
+            create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+                assets::register_noto_sans_light(cx);
+                assets::register_noto_sans_thin(cx);
+
+                WindowsEditorData {
+                    params: params.clone(),
+                }
+                .build(cx);
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Nebula De-Esser")
+                        .font_family(vec![FamilyOwned::Name(String::from(assets::NOTO_SANS))])
+                        .font_weight(FontWeightKeyword::Thin)
+                        .font_size(30.0)
+                        .height(Pixels(50.0))
+                        .child_top(Stretch(1.0))
+                        .child_bottom(Pixels(1.0));
+
+                    Label::new(cx, "Windows stable editor")
+                        .font_family(vec![FamilyOwned::Name(String::from(assets::NOTO_SANS))])
+                        .font_size(12.0)
+                        .height(Pixels(22.0))
+                        .child_top(Stretch(1.0))
+                        .child_bottom(Pixels(1.0));
+
+                    ScrollView::new(cx, 0.0, 0.0, false, true, |cx| {
+                        GenericUi::new(cx, WindowsEditorData::params).child_top(Pixels(0.0));
+                    })
+                    .width(Percentage(100.0))
+                    .top(Pixels(5.0));
+                })
+                .row_between(Pixels(0.0))
+                .child_left(Stretch(1.0))
+                .child_right(Stretch(1.0));
+
+                ResizeHandle::new(cx);
+            })
+        }))
+        .ok()
+        .flatten()
     }
 
     fn initialize(
@@ -906,6 +978,7 @@ fn apply_midi_mapping(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, setter: &ParamSetter) {
     macro_rules! set_float {
         ($field:expr, $param:expr) => {
