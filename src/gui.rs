@@ -120,7 +120,7 @@ pub struct ParamSnapshot {
     pub min_freq: f64,
     pub max_freq: f64,
     pub mode_relative: bool,
-    pub use_peak_filter: bool,
+    pub basis_mode: u32,
     pub use_wide_range: bool,
     pub filter_solo: bool,
     pub lookahead_enabled: bool,
@@ -147,7 +147,7 @@ impl ParamSnapshot {
             min_freq: p.min_freq,
             max_freq: p.max_freq,
             mode_relative: p.mode_relative,
-            use_peak_filter: p.use_peak_filter,
+            basis_mode: p.basis_mode,
             use_wide_range: p.use_wide_range,
             filter_solo: p.filter_solo,
             lookahead_enabled: p.lookahead_enabled,
@@ -173,7 +173,7 @@ impl ParamSnapshot {
         ch.min_freq = Some(self.min_freq);
         ch.max_freq = Some(self.max_freq);
         ch.mode_relative = Some(self.mode_relative);
-        ch.use_peak_filter = Some(self.use_peak_filter);
+        ch.basis_mode = Some(self.basis_mode);
         ch.use_wide_range = Some(self.use_wide_range);
         ch.filter_solo = Some(self.filter_solo);
         ch.lookahead_enabled = Some(self.lookahead_enabled);
@@ -288,7 +288,7 @@ pub struct GuiParams {
     pub min_freq: f64,
     pub max_freq: f64,
     pub mode_relative: bool,
-    pub use_peak_filter: bool,
+    pub basis_mode: u32,
     pub use_wide_range: bool,
     pub filter_solo: bool,
     pub lookahead_enabled: bool,
@@ -320,7 +320,7 @@ pub struct GuiChanges {
     pub min_freq: Option<f64>,
     pub max_freq: Option<f64>,
     pub mode_relative: Option<bool>,
-    pub use_peak_filter: Option<bool>,
+    pub basis_mode: Option<u32>,
     pub use_wide_range: Option<bool>,
     pub filter_solo: Option<bool>,
     pub lookahead_enabled: Option<bool>,
@@ -1179,13 +1179,13 @@ fn draw_controls(
     if let Some(i) = radio_group(
         ui,
         cols[2],
-        "Filter",
-        &["Lowpass", "Peak"],
-        if p.use_peak_filter { 1 } else { 0 },
+        "Basis",
+        &["Odd", "Even", "Both"],
+        p.basis_mode.min(2) as usize,
         s,
     ) {
         push_undo(gui, p);
-        ch.use_peak_filter = Some(i == 1);
+        ch.basis_mode = Some(i as u32);
     }
     if let Some(i) = radio_group(
         ui,
