@@ -1,6 +1,6 @@
 # NEBULA DE-ESSER
 
-**Professional 64-bit CLAP & VST3 De-esser Plugin**  
+**Professional 64-bit AUv2, CLAP & VST3 De-esser Plugin**  
 Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 ---
@@ -9,10 +9,19 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.8.0 brings in the most major stability update, the plugin is now perfectly stable on Cakewalk NXT running on macOS. 
+Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control menu and the plugin is now available in AUv2 format.
 
 <img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/99787e50-64c8-4114-8dc8-ed497d3edf3e" />
 
+---
+## ✨ **What's New in v2.9.0**
+
+### 🎛️ **More DSP tuning and optimizations, new control menu and plugin now available in AUv2 format**
+
+- **More DSP tuning** - The plugin now uses full academic spectral source-separation OSP system and uses multi-frame covariance tracking. It no more relies on envelope tracking and no more uses filters for de-essing.
+- **Improved voiced/sibilant training gates** - The new gate now measures spectral flatness for noise/sibilance likelihood, spectral flux for unstable/transient frames, centroid and upper-band energy bias for hissy/sibilant pressure, peak concentration for tonal/voiced evidence, TKEO-driven reduction amount as a clean-frame veto.
+- **Filter Menu replaced with new Basis menu** - It now has three options, "Odd" estimates the “voiced” basis from odd non-spiky frames, "Even" estimates the “voiced” basis from even non-spiky frames, "Both" estimates the “voiced” basis from non-spiky frames. For most purposes using both is recommended.
+- The plugin is now available in AUv2 format using clap-wrapper.
 ---
 
 ## ✨ **What's New in v2.8.0**
