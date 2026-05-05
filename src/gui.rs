@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.8.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser v2.9.0 — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,7 +448,7 @@ pub fn draw(
     if gui.midi_context_menu {
         draw_context_menu_midi(ctx, gui, s);
     }
-        ch
+    ch
 }
 
 // ─── NavigationView Header (replaces title bar) ───────────────────────────────
@@ -497,7 +497,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.8",
+        "v2.9",
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
@@ -897,7 +897,7 @@ fn draw_det_panel(ui: &mut Ui, rect: Rect, p: &GuiParams, ch: &mut GuiChanges, s
             TEXT_SEC,
         );
     }
-        let cx = rect.center().x;
+    let cx = rect.center().x;
     let mt = rect.min.y + 46.0 * s;
     let mh = rect.height() - 86.0 * s;
     let mw = 12.0 * s;
@@ -1347,7 +1347,7 @@ fn draw_controls(
         ("Trigger Hear", p.trigger_hear),
         ("Lookahead", p.lookahead_enabled),
         ("Mid / Side", p.stereo_mid_side),
-            ];
+    ];
     let bw = inner.width() / btns.len() as f32 - 4.0 * s;
     for (i, (lbl, active)) in btns.iter().enumerate() {
         let bx = inner.min.x + (bw + 4.0 * s) * i as f32;
@@ -1797,7 +1797,7 @@ fn draw_spectrum(
         }
         let atk = 0.30_f32;
         let rel = 0.85_f32;
-                for (i, &mag) in mags.iter().enumerate().take(nb) {
+        for (i, &mag) in mags.iter().enumerate().take(nb) {
             let m = mag.clamp(-90.0, 0.0);
             gui.smooth_mags[i] = if m > gui.smooth_mags[i] {
                 gui.smooth_mags[i] * atk + m * (1.0 - atk)
@@ -1817,8 +1817,12 @@ fn draw_spectrum(
     for col in 0..=cols {
         let freq = x_to_freq(col as f32, inner.width());
         let bin_f = freq * fft_size as f32 / sr;
-        let bin = (bin_f as usize).min(nb.saturating_sub(1));
-        let db = gui.smooth_mags[bin].clamp(db_min, db_max);
+        let bin_lo = (bin_f.floor() as usize).min(nb.saturating_sub(1));
+        let bin_hi = (bin_lo + 1).min(nb.saturating_sub(1));
+        let frac = (bin_f - bin_lo as f32).clamp(0.0, 1.0);
+        let db_lo = gui.smooth_mags[bin_lo];
+        let db_hi = gui.smooth_mags[bin_hi];
+        let db = (db_lo + (db_hi - db_lo) * frac).clamp(db_min, db_max);
         let ny = 1.0 - (db - db_min) / db_rng;
         pts.push(Pos2::new(inner.min.x + col as f32, inner.min.y + ny * ph));
     }
@@ -2246,7 +2250,8 @@ fn draw_content_dialog_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                         FontId::new(9.0 * s, FontFamily::Proportional),
                         if isl { Color32::WHITE } else { TEXT_PRI },
                     );
-                    pa.text(                        Pos2::new(rr.max.x - 8.0 * s, rr.center().y),
+                    pa.text(
+                        Pos2::new(rr.max.x - 8.0 * s, rr.center().y),
                         egui::Align2::RIGHT_CENTER,
                         &cc_s,
                         FontId::new(9.0 * s, FontFamily::Proportional),
