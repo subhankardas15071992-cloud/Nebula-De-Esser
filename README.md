@@ -242,6 +242,17 @@ The plugin window is freely resizable. The entire UI scales proportionally. Mini
 | Sample Rates | 44.1–192 kHz |
 | Oversampling | 1×–8× |
 
+### Objective Metrics
+
+The Rust test suite includes deterministic objective audio metrics in `src/metrics.rs` and `tests/objective_metrics.rs`:
+
+- target-band attenuation in the configured sibilance band
+- low-band leakage outside the reduction band
+- residual spectral focus
+- bypass/null transparency SNR
+- reported-vs-measured latency
+- output peak and finite-sample safety
+
 ---
 
 ## 🏗️ **Build Instructions (Pure Manual Code Build)**
