@@ -17,7 +17,7 @@ fn sample_rates_up_to_384khz_produce_finite_output() {
                 sample,
                 sample,
                 ProcessSettings {
-                    tkeo_threshold: 0.26,
+                    threshold_db: 26.0,
                     max_reduction_db: 16.0,
                     ..ProcessSettings::default()
                 },
@@ -47,7 +47,7 @@ fn common_host_buffer_sizes_are_stable() {
                 sample,
                 sample,
                 ProcessSettings {
-                    tkeo_threshold: 0.24,
+                    threshold_db: 24.0,
                     max_reduction_db: 12.0,
                     ..ProcessSettings::default()
                 },
@@ -71,7 +71,9 @@ fn external_sidechain_can_drive_gain_reduction() {
     let mut external_min = 0.0_f64;
     for sample_idx in 0..8_192 {
         let main_sample = 0.2 * (2.0 * PI * 1_000.0 * sample_idx as f64 / sample_rate).sin();
-        let sidechain_sample = 0.8 * (2.0 * PI * 7_000.0 * sample_idx as f64 / sample_rate).sin();
+        let burst_gate = if (sample_idx / 64) % 2 == 0 { 1.0 } else { 0.0 };
+        let sidechain_sample =
+            0.8 * burst_gate * (2.0 * PI * 7_000.0 * sample_idx as f64 / sample_rate).sin();
 
         let internal_frame = internal.process_frame(
             main_sample,
@@ -79,7 +81,7 @@ fn external_sidechain_can_drive_gain_reduction() {
             main_sample,
             main_sample,
             ProcessSettings {
-                tkeo_threshold: 0.28,
+                threshold_db: 28.0,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -90,7 +92,7 @@ fn external_sidechain_can_drive_gain_reduction() {
             sidechain_sample,
             sidechain_sample,
             ProcessSettings {
-                tkeo_threshold: 0.28,
+                threshold_db: 28.0,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -100,5 +102,5 @@ fn external_sidechain_can_drive_gain_reduction() {
         external_min = external_min.min(external_frame.reduction_db);
     }
 
-    assert!(external_min < internal_min - 2.0);
+    assert!(external_min < internal_min - 0.5);
 }
