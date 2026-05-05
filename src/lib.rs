@@ -8,12 +8,6 @@ use nih_plug::prelude::*;
 use nih_plug_egui::egui;
 #[cfg(not(target_os = "windows"))]
 use nih_plug_egui::{create_egui_editor, EguiState};
-#[cfg(target_os = "windows")]
-use nih_plug_vizia::vizia::prelude::*;
-#[cfg(target_os = "windows")]
-use nih_plug_vizia::widgets::*;
-#[cfg(target_os = "windows")]
-use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
 use parking_lot::Mutex;
 
 pub mod analyzer;
@@ -89,6 +83,7 @@ impl MidiLearnShared {
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn binding_for_cc(&self, cc: usize) -> Option<u8> {
         let binding = self.cc_bindings[cc.min(127)].load(Ordering::Acquire);
         (binding >= 0).then_some(binding as u8)
@@ -99,6 +94,7 @@ impl MidiLearnShared {
         self.bindings_dirty.store(true, Ordering::Release);
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn sync_mutex_from_atomic_if_needed(&self) {
         if !self.bindings_dirty.swap(false, Ordering::AcqRel) {
             return;
@@ -114,6 +110,7 @@ impl MidiLearnShared {
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn sync_atomic_from_mutex(&self) {
         for binding in &self.cc_bindings {
             binding.store(UNMAPPED_CC, Ordering::Release);
@@ -131,10 +128,6 @@ struct NebulaParams {
     #[cfg(not(target_os = "windows"))]
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
-
-    #[cfg(target_os = "windows")]
-    #[persist = "editor-state"]
-    editor_state: Arc<ViziaState>,
 
     #[id = "threshold"]
     pub threshold: FloatParam,
@@ -188,15 +181,6 @@ struct NebulaParams {
     pub cut_slope: FloatParam,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Lens)]
-struct WindowsEditorData {
-    params: Arc<NebulaParams>,
-}
-
-#[cfg(target_os = "windows")]
-impl Model for WindowsEditorData {}
-
 impl Default for NebulaParams {
     fn default() -> Self {
         let freq_range = FloatRange::Skewed {
@@ -208,8 +192,6 @@ impl Default for NebulaParams {
         Self {
             #[cfg(not(target_os = "windows"))]
             editor_state: EguiState::from_size(860, 640),
-            #[cfg(target_os = "windows")]
-            editor_state: ViziaState::new(|| (860, 640)),
             threshold: FloatParam::new(
                 "TKEO Sharpness",
                 50.0,
@@ -575,50 +557,7 @@ impl Plugin for NebulaDeEsser {
 
     #[cfg(target_os = "windows")]
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let params = self.params.clone();
-            let editor_state = self.params.editor_state.clone();
-
-            create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
-                assets::register_noto_sans_light(cx);
-                assets::register_noto_sans_thin(cx);
-
-                WindowsEditorData {
-                    params: params.clone(),
-                }
-                .build(cx);
-
-                VStack::new(cx, |cx| {
-                    Label::new(cx, "Nebula De-Esser")
-                        .font_family(vec![FamilyOwned::Name(String::from(assets::NOTO_SANS))])
-                        .font_weight(FontWeightKeyword::Thin)
-                        .font_size(30.0)
-                        .height(Pixels(50.0))
-                        .child_top(Stretch(1.0))
-                        .child_bottom(Pixels(1.0));
-
-                    Label::new(cx, "Windows stable editor")
-                        .font_family(vec![FamilyOwned::Name(String::from(assets::NOTO_SANS))])
-                        .font_size(12.0)
-                        .height(Pixels(22.0))
-                        .child_top(Stretch(1.0))
-                        .child_bottom(Pixels(1.0));
-
-                    ScrollView::new(cx, 0.0, 0.0, false, true, |cx| {
-                        GenericUi::new(cx, WindowsEditorData::params).child_top(Pixels(0.0));
-                    })
-                    .width(Percentage(100.0))
-                    .top(Pixels(5.0));
-                })
-                .row_between(Pixels(0.0))
-                .child_left(Stretch(1.0))
-                .child_right(Stretch(1.0));
-
-                ResizeHandle::new(cx);
-            })
-        }))
-        .ok()
-        .flatten()
+        None
     }
 
     fn initialize(
@@ -949,6 +888,7 @@ nih_export_vst3!(NebulaDeEsser);
 #[cfg(target_os = "macos")]
 clap_wrapper::export_auv2!();
 
+#[cfg(not(target_os = "windows"))]
 fn apply_midi_mapping(
     parameter_index: u8,
     value: f32,
