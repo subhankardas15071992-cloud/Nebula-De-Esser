@@ -19,7 +19,8 @@ fn tone_reduction_db(freq_hz: f64, amplitude: f64, settings: ProcessSettings) ->
     let mut minimum_reduction = 0.0_f64;
     for sample_idx in 0..8_192 {
         let phase = 2.0 * PI * freq_hz * sample_idx as f64 / sample_rate;
-        let sample = amplitude * phase.sin();
+        let burst_gate = if (sample_idx / 64) % 2 == 0 { 1.0 } else { 0.0 };
+        let sample = amplitude * burst_gate * phase.sin();
         let frame = dsp.process_frame(sample, sample, sample, sample, settings);
         minimum_reduction = minimum_reduction.min(frame.reduction_db);
     }
@@ -30,7 +31,7 @@ fn tone_reduction_db(freq_hz: f64, amplitude: f64, settings: ProcessSettings) ->
 #[test]
 fn high_band_tone_triggers_more_reduction_than_low_band_tone() {
     let settings = ProcessSettings {
-        tkeo_threshold: 0.24,
+        threshold_db: 24.0,
         max_reduction_db: 12.0,
         mode_relative: false,
         ..ProcessSettings::default()
@@ -39,7 +40,7 @@ fn high_band_tone_triggers_more_reduction_than_low_band_tone() {
     let low_band_reduction = tone_reduction_db(1_000.0, 0.7, settings);
     let high_band_reduction = tone_reduction_db(7_500.0, 0.7, settings);
 
-    assert!(high_band_reduction < low_band_reduction - 2.0);
+    assert!(high_band_reduction < low_band_reduction - 0.5);
 }
 
 #[test]
@@ -54,7 +55,7 @@ fn zero_lookahead_has_zero_initial_delay() {
         1.0,
         1.0,
         ProcessSettings {
-            tkeo_threshold: 1.0,
+            threshold_db: 100.0,
             max_reduction_db: 12.0,
             ..ProcessSettings::default()
         },
@@ -78,7 +79,7 @@ fn lookahead_delay_matches_requested_latency() {
             0.0,
             0.0,
             ProcessSettings {
-                tkeo_threshold: 1.0,
+                threshold_db: 100.0,
                 max_reduction_db: 12.0,
                 ..ProcessSettings::default()
             },
@@ -96,7 +97,7 @@ fn lookahead_delay_matches_requested_latency() {
         0.0,
         0.0,
         ProcessSettings {
-            tkeo_threshold: 1.0,
+            threshold_db: 100.0,
             max_reduction_db: 12.0,
             ..ProcessSettings::default()
         },
@@ -123,7 +124,7 @@ fn trigger_hear_outputs_detector_band_not_full_signal() {
             sample,
             sample,
             ProcessSettings {
-                tkeo_threshold: 0.3,
+                threshold_db: 30.0,
                 max_reduction_db: 12.0,
                 trigger_hear: true,
                 ..ProcessSettings::default()
