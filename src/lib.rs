@@ -15,6 +15,7 @@ pub mod dsp;
 #[cfg(not(target_os = "windows"))]
 mod gui;
 pub mod metrics;
+mod storage;
 #[cfg(target_os = "windows")]
 mod windows_editor;
 
@@ -22,6 +23,8 @@ use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
 #[cfg(not(target_os = "windows"))]
 use gui::{draw, GuiParams, NebulaGui};
+use storage::{PersistentStore, StoredMidiState};
+pub(crate) use storage::{StoredPreset, StoredPresetSnapshot};
 
 const UNMAPPED_CC: i32 = -1;
 
@@ -120,6 +123,24 @@ impl MidiLearnShared {
         for (cc, parameter_index) in mappings {
             self.cc_bindings[cc as usize].store(parameter_index as i32, Ordering::Release);
         }
+    }
+
+    pub(crate) fn restore_state(&self, midi_state: &StoredMidiState) {
+        *self.mappings.lock() = midi_state.mappings.clone();
+        *self.saved_mappings.lock() = midi_state.mappings.clone();
+        self.midi_enabled
+            .store(midi_state.midi_enabled, Ordering::Release);
+        self.sync_atomic_from_mutex();
+    }
+
+    pub(crate) fn persist_as_saved(&self, storage: &PersistentStore) {
+        self.sync_mutex_from_atomic_if_needed();
+        let mappings = self.mappings.lock().clone();
+        *self.saved_mappings.lock() = mappings.clone();
+        storage.save_midi_state(StoredMidiState {
+            mappings,
+            midi_enabled: self.midi_enabled.load(Ordering::Acquire),
+        });
     }
 }
 
@@ -419,6 +440,7 @@ struct NebulaDeEsser {
     analyzer: SpectrumAnalyzer,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
+    storage: Arc<PersistentStore>,
     current_os_factor: u32,
     reported_latency: u32,
     wet_mix: WetMixSmoother,
@@ -431,6 +453,10 @@ struct NebulaDeEsser {
 impl Default for NebulaDeEsser {
     fn default() -> Self {
         let sample_rate = 44_100.0;
+        let storage = Arc::new(PersistentStore::load());
+        let midi_learn = Arc::new(MidiLearnShared::new());
+        let midi_state = storage.midi_state();
+        midi_learn.restore_state(&midi_state);
         Self {
             params: Arc::new(NebulaParams::default()),
             sample_rate,
@@ -438,7 +464,8 @@ impl Default for NebulaDeEsser {
             os_dsp: DeEsserDsp::new(sample_rate),
             analyzer: SpectrumAnalyzer::new(),
             meters: Arc::new(Meters::default()),
-            midi_learn: Arc::new(MidiLearnShared::new()),
+            midi_learn,
+            storage,
             current_os_factor: 1,
             reported_latency: 0,
             wet_mix: WetMixSmoother::new(sample_rate),
@@ -448,6 +475,12 @@ impl Default for NebulaDeEsser {
             prev_sc_r: 0.0,
             is_ready: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+}
+
+impl Drop for NebulaDeEsser {
+    fn drop(&mut self) {
+        self.midi_learn.persist_as_saved(&self.storage);
     }
 }
 
@@ -478,10 +511,11 @@ impl Plugin for NebulaDeEsser {
             let meters = self.meters.clone();
             let spectrum = self.analyzer.get_shared();
             let midi_learn = self.midi_learn.clone();
+            let storage = self.storage.clone();
 
             create_egui_editor(
                 self.params.editor_state.clone(),
-                NebulaGui::new(spectrum, midi_learn.clone()),
+                NebulaGui::new(spectrum, midi_learn.clone(), storage),
                 |_ctx: &egui::Context, _state: &mut NebulaGui| {},
                 move |ctx: &egui::Context, setter: &ParamSetter, gui_state: &mut NebulaGui| {
                     midi_learn.sync_mutex_from_atomic_if_needed();
@@ -562,6 +596,7 @@ impl Plugin for NebulaDeEsser {
             self.analyzer.get_shared(),
             self.meters.clone(),
             self.midi_learn.clone(),
+            self.storage.clone(),
         )
     }
 
