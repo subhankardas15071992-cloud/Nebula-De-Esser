@@ -32,7 +32,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    ReleaseCapture, SetCapture, VK_ESCAPE, VK_RETURN,
+    ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
@@ -833,7 +833,7 @@ impl NativeWindowState {
                 draw_text(
                     rt,
                     spec.label,
-                    UiRect::new(spec.rect.x, spec.rect.y + 8.0 * s, spec.rect.w, 12.0 * s),
+                    UiRect::new(spec.rect.x, spec.rect.y + 2.0 * s, spec.rect.w, 10.0 * s),
                     &formats.small,
                     &brushes.text_tertiary,
                     Align::Center,
@@ -1102,6 +1102,7 @@ impl NativeWindowState {
     }
 
     fn mouse_down(&mut self, x: f32, y: f32) {
+        let _ = unsafe { SetFocus(Some(self.hwnd)) };
         let Some(size) = client_size(self.hwnd) else {
             return;
         };
@@ -1198,6 +1199,7 @@ impl NativeWindowState {
     }
 
     fn mouse_right_down(&mut self, x: f32, y: f32) {
+        let _ = unsafe { SetFocus(Some(self.hwnd)) };
         if self.numeric_input.is_some() || self.preset_save_open || self.midi_popup_open {
             return;
         }
@@ -1615,10 +1617,7 @@ impl NativeWindowState {
     }
 
     fn confirm_preset_save(&mut self) {
-        let name = self.preset_name_buf.trim().to_string();
-        if name.is_empty() {
-            return;
-        }
+        let name = default_preset_name(self.preset_name_buf.trim(), &self.presets);
 
         let snapshot = self.capture_snapshot();
         if let Some(index) = self
@@ -3272,8 +3271,8 @@ fn knob_group(
 ) -> KnobGroup {
     let slot_w = rect.w / defs.len().max(1) as f32;
     let knob_size = (slot_w * 0.46)
-        .min((rect.h - 37.0 * s).max(12.0 * s))
-        .min(38.0 * s)
+        .min((rect.h - 34.0 * s).max(12.0 * s))
+        .min(40.0 * s)
         .max(12.0 * s);
     let knobs = defs
         .iter()
@@ -3282,7 +3281,7 @@ fn knob_group(
             let slot = UiRect::new(rect.x + idx as f32 * slot_w, rect.y, slot_w, rect.h);
             let knob_rect = UiRect::new(
                 slot.center_x() - knob_size * 0.5,
-                slot.y + 18.0 * s,
+                slot.y + 17.0 * s,
                 knob_size,
                 knob_size,
             );
@@ -3302,9 +3301,9 @@ fn knob_group(
 fn knob_value_rect(rect: UiRect, s: f32) -> UiRect {
     UiRect::new(
         rect.x + 5.0 * s,
-        rect.bottom() - 15.0 * s,
+        rect.bottom() - 13.0 * s,
         rect.w - 10.0 * s,
-        11.0 * s,
+        10.0 * s,
     )
 }
 
@@ -3613,6 +3612,24 @@ fn numeric_spec(target: ControlTarget) -> (&'static str, f32, f32) {
         ControlTarget::CutSlope => ("Cut Slope", 0.0, 100.0),
         ControlTarget::Mix => ("Mix", 0.0, 1.0),
         _ => ("Value", 0.0, 1.0),
+    }
+}
+
+fn default_preset_name(name: &str, presets: &[(String, ParamSnapshot)]) -> String {
+    if !name.is_empty() {
+        return name.to_string();
+    }
+
+    let mut index = 1;
+    loop {
+        let candidate = format!("Preset {index}");
+        if !presets
+            .iter()
+            .any(|(preset_name, _)| preset_name == &candidate)
+        {
+            return candidate;
+        }
+        index += 1;
     }
 }
 
