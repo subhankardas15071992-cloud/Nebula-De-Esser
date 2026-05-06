@@ -233,6 +233,7 @@ pub struct NebulaGui {
     pub presets: Vec<(String, ParamSnapshot)>,
     pub preset_name_buf: String,
     pub preset_save_popup: bool,
+    pub preset_save_focus_pending: bool,
     pub preset_dropdown_open: bool,
     pub selected_preset: usize,
     pub state_a: Option<ParamSnapshot>,
@@ -261,6 +262,7 @@ impl NebulaGui {
             presets: Vec::new(),
             preset_name_buf: String::new(),
             preset_save_popup: false,
+            preset_save_focus_pending: false,
             preset_dropdown_open: false,
             selected_preset: 0,
             state_a: None,
@@ -667,6 +669,7 @@ fn draw_command_bar(
     if appbar_btn!("Save", false, false, 40.0).clicked() {
         gui.preset_name_buf.clear();
         gui.preset_save_popup = true;
+        gui.preset_save_focus_pending = true;
         gui.preset_dropdown_open = false;
     }
     if appbar_btn!("Delete", false, true, 46.0).clicked() && !gui.presets.is_empty() {
@@ -2170,6 +2173,10 @@ fn draw_content_dialog_preset(
         Pos2::new(pop.center().x + 54.0 * s, pop.max.y - 16.0 * s),
         Vec2::new(84.0 * s, 22.0 * s),
     );
+    let input_rect = Rect::from_min_max(
+        fr.min + Vec2::new(8.0 * s, 4.0 * s),
+        fr.max - Vec2::new(8.0 * s, 4.0 * s),
+    );
     egui::Area::new(egui::Id::new("neb_prsave"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
@@ -2233,36 +2240,37 @@ fn draw_content_dialog_preset(
                     TEXT_SEC,
                 );
             }
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
-                let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
-                    .font(FontId::new(11.5 * s, FontFamily::Proportional))
-                    .text_color(TEXT_PRI)
-                    .frame(false)
-                    .desired_width(fr.width())
-                    .hint_text("Preset name…");
-                let r = ui.add(te);
+            let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
+                .id_source("neb_prsave_input")
+                .font(FontId::new(11.5 * s, FontFamily::Proportional))
+                .text_color(TEXT_PRI)
+                .frame(false)
+                .desired_width(input_rect.width())
+                .hint_text("Preset name...");
+            let r = ui.put(input_rect, te);
+            if gui.preset_save_focus_pending {
                 r.request_focus();
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    do_save(gui, p);
-                }
-            });
+                gui.preset_save_focus_pending = false;
+            }
+            if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                do_save(gui, p);
+            }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 gui.preset_save_popup = false;
+                gui.preset_save_focus_pending = false;
             }
             if ui.allocate_rect(ok, Sense::click()).clicked() {
                 do_save(gui, p);
             }
             if ui.allocate_rect(cx_, Sense::click()).clicked() {
                 gui.preset_save_popup = false;
+                gui.preset_save_focus_pending = false;
             }
         });
 }
 
 fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
-    let name = gui.preset_name_buf.trim().to_string();
-    if name.is_empty() {
-        return;
-    }
+    let name = default_preset_name(gui.preset_name_buf.trim(), &gui.presets);
     let snap = ParamSnapshot::from_params(p);
     if let Some(idx) = gui.presets.iter().position(|(n, _)| n == &name) {
         gui.presets[idx].1 = snap;
@@ -2272,6 +2280,25 @@ fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
         gui.selected_preset = gui.presets.len() - 1;
     }
     gui.preset_save_popup = false;
+    gui.preset_save_focus_pending = false;
+}
+
+fn default_preset_name(name: &str, presets: &[(String, ParamSnapshot)]) -> String {
+    if !name.is_empty() {
+        return name.to_string();
+    }
+
+    let mut index = 1;
+    loop {
+        let candidate = format!("Preset {index}");
+        if !presets
+            .iter()
+            .any(|(preset_name, _)| preset_name == &candidate)
+        {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 // ─── ContentDialog — MIDI Learn ──────────────────────────────────────────────
