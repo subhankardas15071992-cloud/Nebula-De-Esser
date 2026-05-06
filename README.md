@@ -311,7 +311,7 @@ https://subhankar42.gumroad.com/l/adounr
 Note:
 For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
 
-The zip files contain both AUv2, CLAP and VST3 plugins.
+The zip files contain AUv2, CLAP and VST3 plugins.
 
 Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
@@ -320,11 +320,6 @@ To fix this problem after unzipping run the following command:
   xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 or Nebula De-Esser.component file]
 
 After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 or /Library/Audio/Plug-Ins/Component (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ or ~/Library/Audio/Plug-Ins/Component/ (if you want to install it for only the current user)
----
-
-## ⚠️ Microsoft Windows Not Supported
-
-**The Windows version of this plugin is being temporarily put on hiatus because currently nih-plug has compatibility issues on Windows. The Windows variant will resume once nih-plug gets updated to be stable on Windows**
 
 ---
 
