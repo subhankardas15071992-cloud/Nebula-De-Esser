@@ -2164,6 +2164,7 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             if std::mem::take(&mut gui.num_input_focus_pending) {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                 ui.memory_mut(|mem| mem.request_focus(text_id));
             }
             {
@@ -2302,6 +2303,7 @@ fn draw_content_dialog_preset(
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             if std::mem::take(&mut gui.preset_save_focus_pending) {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                 ui.memory_mut(|mem| mem.request_focus(text_id));
             }
             {
