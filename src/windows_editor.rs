@@ -390,7 +390,7 @@ impl NativeWindowState {
 
         draw_text(
             rt,
-            "v2.4",
+            "v2.9",
             UiRect::new(layout.full.right() - 70.0 * s, 16.0 * s, 54.0 * s, 20.0 * s),
             &formats.body,
             &brushes.text_tertiary,
