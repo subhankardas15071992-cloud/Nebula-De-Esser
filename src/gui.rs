@@ -298,6 +298,7 @@ pub struct NebulaGui {
     pub midi_learn: Arc<MidiLearnShared>,
     pub storage: Arc<PersistentStore>,
     pub num_input: NumInput,
+    pub num_input_focus_pending: bool,
     pub time: f64,
     pub smooth_mags: Vec<f32>,
     pub presets: Vec<(String, ParamSnapshot)>,
@@ -337,6 +338,7 @@ impl NebulaGui {
             midi_learn,
             storage,
             num_input: NumInput::default(),
+            num_input_focus_pending: false,
             time: 0.0,
             smooth_mags: vec![-120.0_f32; 1025],
             presets,
@@ -1773,6 +1775,7 @@ fn knob_row(
                 min: *min,
                 max: *max,
             };
+            gui.num_input_focus_pending = true;
         }
         if ui.allocate_rect(fr, Sense::click()).secondary_clicked() {
             gui.num_input = NumInput {
@@ -1783,6 +1786,7 @@ fn knob_row(
                 min: *min,
                 max: *max,
             };
+            gui.num_input_focus_pending = true;
         }
         {
             let pa = ui.painter_at(rect);
@@ -2154,10 +2158,14 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
         Vec2::new(80.0 * s, 22.0 * s),
     );
     let lbl = gui.num_input.label.clone();
+    let text_id = egui::Id::new("neb_num_input_field");
     egui::Area::new(egui::Id::new("neb_num"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
+            if std::mem::take(&mut gui.num_input_focus_pending) {
+                ui.memory_mut(|mem| mem.request_focus(text_id));
+            }
             {
                 let p = ui.painter();
                 // Scrim
@@ -2223,26 +2231,36 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
                     TEXT_SEC,
                 );
             }
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(fr), |ui| {
-                let te = egui::TextEdit::singleline(&mut gui.num_input.value_str)
-                    .font(FontId::new(11.5 * s, FontFamily::Proportional))
-                    .text_color(TEXT_PRI)
-                    .frame(false)
-                    .desired_width(fr.width());
-                let r = ui.add(te);
-                r.request_focus();
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    apply_num(gui, ch);
-                }
-            });
+            let text_rect = fr.shrink2(Vec2::new(8.0 * s, 4.0 * s));
+            let text_response = ui
+                .allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                    let te = egui::TextEdit::singleline(&mut gui.num_input.value_str)
+                        .id(text_id)
+                        .font(FontId::new(11.5 * s, FontFamily::Proportional))
+                        .text_color(TEXT_PRI)
+                        .frame(false)
+                        .desired_width(text_rect.width());
+                    ui.add(te)
+                })
+                .inner;
+            if text_response.clicked() {
+                ui.memory_mut(|mem| mem.request_focus(text_id));
+            }
+            if ui.memory(|mem| mem.has_focus(text_id))
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            {
+                apply_num(gui, ch);
+            }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 gui.num_input.open = false;
+                gui.num_input_focus_pending = false;
             }
             if ui.allocate_rect(ok, Sense::click()).clicked() {
                 apply_num(gui, ch);
             }
             if ui.allocate_rect(cx_, Sense::click()).clicked() {
                 gui.num_input.open = false;
+                gui.num_input_focus_pending = false;
             }
         });
 }
@@ -2253,6 +2271,7 @@ fn apply_num(gui: &mut NebulaGui, ch: &mut GuiChanges) {
         apply_ch(&gui.num_input.target, v, ch);
     }
     gui.num_input.open = false;
+    gui.num_input_focus_pending = false;
 }
 
 // ─── ContentDialog — Preset Save ─────────────────────────────────────────────
@@ -2263,8 +2282,6 @@ fn draw_content_dialog_preset(
     _ch: &mut GuiChanges,
     s: f32,
 ) {
-    handle_preset_name_input(ctx, gui, p);
-
     let sc = ctx.screen_rect();
     let pop = Rect::from_center_size(sc.center(), Vec2::new(260.0 * s, 120.0 * s));
     let fr = Rect::from_center_size(
@@ -2279,10 +2296,14 @@ fn draw_content_dialog_preset(
         Pos2::new(pop.center().x + 54.0 * s, pop.max.y - 16.0 * s),
         Vec2::new(84.0 * s, 22.0 * s),
     );
+    let text_id = egui::Id::new("neb_preset_name_field");
     egui::Area::new(egui::Id::new("neb_prsave"))
         .fixed_pos(Pos2::ZERO)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
+            if std::mem::take(&mut gui.preset_save_focus_pending) {
+                ui.memory_mut(|mem| mem.request_focus(text_id));
+            }
             {
                 let pa = ui.painter();
                 pa.rect_filled(sc, 0.0, Color32::from_black_alpha(140));
@@ -2313,37 +2334,6 @@ fn draw_content_dialog_preset(
                     ],
                     Stroke::new(2.0, ACCENT),
                 );
-                let text_pos = Pos2::new(fr.min.x + 10.0 * s, fr.center().y);
-                if gui.preset_name_buf.is_empty() {
-                    pa.text(
-                        text_pos,
-                        egui::Align2::LEFT_CENTER,
-                        "Preset name...",
-                        FontId::new(11.5 * s, FontFamily::Proportional),
-                        TEXT_TER,
-                    );
-                } else {
-                    let font = FontId::new(11.5 * s, FontFamily::Proportional);
-                    pa.text(
-                        text_pos,
-                        egui::Align2::LEFT_CENTER,
-                        &gui.preset_name_buf,
-                        font.clone(),
-                        TEXT_PRI,
-                    );
-                    if (gui.time * 2.0) as i64 % 2 == 0 {
-                        let galley = pa.layout_no_wrap(gui.preset_name_buf.clone(), font, TEXT_PRI);
-                        let caret_x =
-                            (text_pos.x + galley.size().x + 2.0 * s).min(fr.max.x - 8.0 * s);
-                        pa.line_segment(
-                            [
-                                Pos2::new(caret_x, fr.min.y + 6.0 * s),
-                                Pos2::new(caret_x, fr.max.y - 6.0 * s),
-                            ],
-                            Stroke::new(1.2 * s, ACCENT_LIGHT),
-                        );
-                    }
-                }
                 pa.rect_filled(ok, 4.0 * s, ACCENT);
                 pa.rect_stroke(
                     ok,
@@ -2373,10 +2363,30 @@ fn draw_content_dialog_preset(
                     TEXT_SEC,
                 );
             }
-            ui.ctx().request_repaint();
+            let text_rect = fr.shrink2(Vec2::new(8.0 * s, 4.0 * s));
+            let text_response = ui
+                .allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                    let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
+                        .id(text_id)
+                        .hint_text("Preset name...")
+                        .font(FontId::new(11.5 * s, FontFamily::Proportional))
+                        .text_color(TEXT_PRI)
+                        .frame(false)
+                        .desired_width(text_rect.width());
+                    ui.add(te)
+                })
+                .inner;
+            if text_response.clicked() {
+                ui.memory_mut(|mem| mem.request_focus(text_id));
+            }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 gui.preset_save_popup = false;
                 gui.preset_save_focus_pending = false;
+            }
+            if ui.memory(|mem| mem.has_focus(text_id))
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            {
+                do_save(gui, p);
             }
             if ui.allocate_rect(ok, Sense::click()).clicked() {
                 do_save(gui, p);
@@ -2386,43 +2396,6 @@ fn draw_content_dialog_preset(
                 gui.preset_save_focus_pending = false;
             }
         });
-}
-
-fn handle_preset_name_input(ctx: &Context, gui: &mut NebulaGui, p: &GuiParams) {
-    gui.preset_save_focus_pending = false;
-
-    for event in ctx.input(|i| i.events.clone()) {
-        match event {
-            egui::Event::Text(text) | egui::Event::Paste(text) => {
-                for ch in text.chars().filter(|ch| !ch.is_control()) {
-                    gui.preset_name_buf.push(ch);
-                }
-            }
-            egui::Event::Key {
-                key: egui::Key::Backspace,
-                pressed: true,
-                modifiers,
-                ..
-            } if !modifiers.command && !modifiers.ctrl && !modifiers.mac_cmd => {
-                gui.preset_name_buf.pop();
-            }
-            egui::Event::Key {
-                key: egui::Key::Enter,
-                pressed: true,
-                ..
-            } => {
-                do_save(gui, p);
-            }
-            egui::Event::Key {
-                key: egui::Key::Escape,
-                pressed: true,
-                ..
-            } => {
-                gui.preset_save_popup = false;
-            }
-            _ => {}
-        }
-    }
 }
 
 fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
