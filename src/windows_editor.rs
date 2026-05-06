@@ -10,8 +10,7 @@ use windows::Win32::Foundation::{
     GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
-    D2D_SIZE_U,
+    D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
@@ -944,10 +943,19 @@ impl NativeWindowState {
                 continue;
             }
             match zone.action {
-                HitAction::Drag(target, track) => {
+                HitAction::Drag(target, track, mode) => {
                     self.begin_target(target);
-                    self.set_target_from_x(target, track, x);
-                    self.drag = Some(DragState { target, track });
+                    match mode {
+                        DragMode::Horizontal => self.set_target_from_x(target, track, x),
+                        DragMode::Vertical => {}
+                    }
+                    self.drag = Some(DragState {
+                        target,
+                        track,
+                        mode,
+                        start_y: y,
+                        start_value: self.target_value(target),
+                    });
                     unsafe {
                         let _ = SetCapture(self.hwnd);
                     }
@@ -1382,7 +1390,7 @@ struct SegmentSpec {
     active: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct KnobGroup {
     label: &'static str,
     rect: UiRect,
@@ -1654,57 +1662,88 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
     groups
 }
 
-fn slider_specs(layout: &Layout) -> Vec<SliderSpec> {
+fn knob_groups(layout: &Layout) -> Vec<KnobGroup> {
     let s = layout.s;
     let inner = layout.controls.shrink(8.0 * s);
-    let top = inner.y + 66.0 * s;
-    let col_gap = 6.0 * s;
-    let row_gap = 5.0 * s;
-    let slider_w = (inner.w - col_gap * 2.0) / 3.0;
-    let slider_h = 45.0 * s;
-    let defs = [
-        ("TKEO", ControlTarget::Threshold, AccentBrush::Accent),
-        ("Max Red", ControlTarget::MaxReduction, AccentBrush::Orange),
-        (
-            "Stereo Link",
-            ControlTarget::StereoLink,
-            AccentBrush::Accent,
-        ),
-        ("Min Freq", ControlTarget::MinFreq, AccentBrush::Accent),
-        ("Max Freq", ControlTarget::MaxFreq, AccentBrush::Orange),
-        ("Lookahead", ControlTarget::LookaheadMs, AccentBrush::Accent),
-        ("Cut Width", ControlTarget::CutWidth, AccentBrush::Magenta),
-        ("Cut Depth", ControlTarget::CutDepth, AccentBrush::Magenta),
-        ("Cut Slope", ControlTarget::CutSlope, AccentBrush::Magenta),
-        ("Mix", ControlTarget::Mix, AccentBrush::Accent),
-        ("In Level", ControlTarget::InputLevel, AccentBrush::Purple),
-        ("Out Level", ControlTarget::OutputLevel, AccentBrush::Purple),
-        ("In Pan", ControlTarget::InputPan, AccentBrush::Purple),
-        ("Out Pan", ControlTarget::OutputPan, AccentBrush::Purple),
-    ];
-    defs.iter()
+    let row_h = 70.0 * s;
+    let row_gap = 7.0 * s;
+    let mut y = inner.y + 72.0 * s;
+
+    let main = knob_group(
+        "Core",
+        UiRect::new(inner.x, y, inner.w, row_h),
+        &[
+            ("TKEO", ControlTarget::Threshold, AccentBrush::Accent),
+            ("Max Red", ControlTarget::MaxReduction, AccentBrush::Orange),
+            ("Min Freq", ControlTarget::MinFreq, AccentBrush::Accent),
+            ("Max Freq", ControlTarget::MaxFreq, AccentBrush::Orange),
+            ("Lookahead", ControlTarget::LookaheadMs, AccentBrush::Accent),
+            ("Stereo", ControlTarget::StereoLink, AccentBrush::Accent),
+        ],
+        s,
+    );
+    y += row_h + row_gap;
+
+    let cut_w = inner.w * 0.84;
+    let cut = knob_group(
+        "Cut Shape",
+        UiRect::new(inner.center_x() - cut_w * 0.5, y, cut_w, row_h),
+        &[
+            ("Width", ControlTarget::CutWidth, AccentBrush::Magenta),
+            ("Depth", ControlTarget::CutDepth, AccentBrush::Magenta),
+            ("Slope", ControlTarget::CutSlope, AccentBrush::Magenta),
+            ("Mix", ControlTarget::Mix, AccentBrush::Accent),
+        ],
+        s,
+    );
+    y += row_h + row_gap;
+
+    let io_w = inner.w * 0.80;
+    let io = knob_group(
+        "I/O",
+        UiRect::new(inner.center_x() - io_w * 0.5, y, io_w, row_h),
+        &[
+            ("In Level", ControlTarget::InputLevel, AccentBrush::Purple),
+            ("In Pan", ControlTarget::InputPan, AccentBrush::Purple),
+            ("Out Level", ControlTarget::OutputLevel, AccentBrush::Purple),
+            ("Out Pan", ControlTarget::OutputPan, AccentBrush::Purple),
+        ],
+        s,
+    );
+
+    vec![main, cut, io]
+}
+
+fn knob_group(
+    label: &'static str,
+    rect: UiRect,
+    defs: &[(&'static str, ControlTarget, AccentBrush)],
+    s: f32,
+) -> KnobGroup {
+    let slot_w = rect.w / defs.len().max(1) as f32;
+    let knob_size = (slot_w * 0.46).min(33.0 * s).max(18.0 * s);
+    let knobs = defs
+        .iter()
         .enumerate()
         .map(|(idx, (label, target, accent))| {
-            let col = idx % 3;
-            let row = idx / 3;
-            let x = inner.x + col as f32 * (slider_w + col_gap);
-            let y = top + row as f32 * (slider_h + row_gap);
-            let rect = UiRect::new(x, y, slider_w, slider_h);
-            let track_rect = UiRect::new(
-                rect.x + 8.0 * s,
-                rect.y + 28.0 * s,
-                rect.w - 16.0 * s,
-                7.0 * s,
+            let slot = UiRect::new(rect.x + idx as f32 * slot_w, rect.y, slot_w, rect.h);
+            let knob_rect = UiRect::new(
+                slot.center_x() - knob_size * 0.5,
+                slot.y + 19.0 * s,
+                knob_size,
+                knob_size,
             );
-            SliderSpec {
-                label,
-                rect,
-                track_rect,
+            KnobSpec {
+                label: *label,
+                rect: slot,
+                knob_rect,
                 target: *target,
                 accent: *accent,
             }
         })
-        .collect()
+        .collect();
+
+    KnobGroup { label, rect, knobs }
 }
 
 fn toggle_specs(layout: &Layout) -> Vec<ToggleSpec> {
@@ -1766,10 +1805,51 @@ fn hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<HitZone> {
             }
         }
     }
-    for slider in slider_specs(layout) {
+    for group in knob_groups(layout) {
+        for knob in group.knobs {
+            zones.push(HitZone {
+                rect: knob.rect,
+                action: HitAction::Drag(knob.target, knob.knob_rect, DragMode::Vertical),
+            });
+        }
+    }
+    let graph = {
+        let rect = layout.spectrum;
+        let inner = rect.shrink(8.0 * s);
+        UiRect::new(inner.x, inner.y + 18.0 * s, inner.w, inner.h - 28.0 * s)
+    };
+    let min_x = graph.x + freq_to_x(params.min_freq.value(), graph.w);
+    let max_x = graph.x + freq_to_x(params.max_freq.value(), graph.w);
+    let node_y = graph.y + graph.h * 0.5;
+    let node_hit = 22.0 * s;
+    zones.push(HitZone {
+        rect: UiRect::new(min_x - node_hit * 0.5, node_y - node_hit * 0.5, node_hit, node_hit),
+        action: HitAction::Drag(
+            ControlTarget::MinFreq,
+            UiRect::new(graph.x, graph.y, graph.w, graph.h),
+            DragMode::Horizontal,
+        ),
+    });
+    zones.push(HitZone {
+        rect: UiRect::new(max_x - node_hit * 0.5, node_y - node_hit * 0.5, node_hit, node_hit),
+        action: HitAction::Drag(
+            ControlTarget::MaxFreq,
+            UiRect::new(graph.x, graph.y, graph.w, graph.h),
+            DragMode::Horizontal,
+        ),
+    });
+    for idx in 0..5 {
+        let seg_w = 174.0 * s / 5.0;
+        let cy = layout.command_bar.center_y();
+        let os_rect = UiRect::new(
+            layout.command_bar.x + 8.0 * s + 84.0 * s + 20.0 * s + idx as f32 * seg_w,
+            cy - 12.0 * s,
+            seg_w,
+            24.0 * s,
+        );
         zones.push(HitZone {
-            rect: slider.rect,
-            action: HitAction::Drag(slider.target, slider.track_rect),
+            rect: os_rect,
+            action: HitAction::Set(ControlTarget::Oversampling, idx as f32),
         });
     }
     for toggle in toggle_specs(layout) {
@@ -2019,6 +2099,133 @@ fn draw_line(
     }
 }
 
+fn fill_circle(
+    rt: &ID2D1HwndRenderTarget,
+    x: f32,
+    y: f32,
+    radius: f32,
+    brush: &ID2D1SolidColorBrush,
+) {
+    let ellipse = D2D1_ELLIPSE {
+        point: Vector2 { X: x, Y: y },
+        radiusX: radius,
+        radiusY: radius,
+    };
+    unsafe {
+        rt.FillEllipse(&ellipse, brush);
+    }
+}
+
+fn stroke_circle(
+    rt: &ID2D1HwndRenderTarget,
+    x: f32,
+    y: f32,
+    radius: f32,
+    brush: &ID2D1SolidColorBrush,
+    width: f32,
+) {
+    let ellipse = D2D1_ELLIPSE {
+        point: Vector2 { X: x, Y: y },
+        radiusX: radius,
+        radiusY: radius,
+    };
+    unsafe {
+        rt.DrawEllipse(
+            &ellipse,
+            brush,
+            width,
+            Option::<&windows::Win32::Graphics::Direct2D::ID2D1StrokeStyle>::None,
+        );
+    }
+}
+
+fn draw_arc(
+    rt: &ID2D1HwndRenderTarget,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    start: f32,
+    end: f32,
+    brush: &ID2D1SolidColorBrush,
+    width: f32,
+) {
+    let steps = 34;
+    let span = end - start;
+    let mut prev = None;
+    for idx in 0..=steps {
+        let angle = start + idx as f32 / steps as f32 * span;
+        let point = (cx + radius * angle.cos(), cy + radius * angle.sin());
+        if let Some((px, py)) = prev {
+            draw_line(rt, px, py, point.0, point.1, brush, width);
+        }
+        prev = Some(point);
+    }
+}
+
+fn draw_knob(
+    rt: &ID2D1HwndRenderTarget,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    norm: f32,
+    accent: AccentBrush,
+    brushes: &Brushes,
+    s: f32,
+) {
+    let norm = norm.clamp(0.0, 1.0);
+    let accent = accent.brush(brushes);
+    let start = std::f32::consts::PI * 0.75;
+    let sweep = std::f32::consts::PI * 1.5;
+    let angle = start + sweep * norm;
+
+    fill_circle(rt, cx, cy + 1.5 * s, radius + 1.5 * s, &brushes.mica_bot);
+    fill_circle(rt, cx, cy, radius, &brushes.control);
+    stroke_circle(rt, cx, cy, radius, &brushes.border, 1.0);
+    draw_arc(
+        rt,
+        cx,
+        cy,
+        radius - 1.5 * s,
+        std::f32::consts::PI * 1.08,
+        std::f32::consts::PI * 1.92,
+        &brushes.card,
+        1.4 * s,
+    );
+    draw_arc(rt, cx, cy, radius * 0.73, start, start + sweep, &brushes.border, 3.4 * s);
+    if norm > 0.004 {
+        draw_arc(rt, cx, cy, radius * 0.73, start, angle, accent, 3.0 * s);
+    }
+
+    let dot_x = cx + radius * 0.50 * angle.cos();
+    let dot_y = cy + radius * 0.50 * angle.sin();
+    fill_circle(rt, dot_x, dot_y, 2.6 * s, accent);
+    fill_circle(rt, dot_x, dot_y, 1.25 * s, &brushes.text_light);
+    fill_circle(rt, cx, cy, 1.7 * s, accent);
+}
+
+fn draw_freq_node(
+    rt: &ID2D1HwndRenderTarget,
+    x: f32,
+    y: f32,
+    label: &str,
+    accent: &ID2D1SolidColorBrush,
+    fill: &ID2D1SolidColorBrush,
+    formats: &TextFormats,
+    s: f32,
+) {
+    fill_circle(rt, x, y, 7.5 * s, fill);
+    stroke_circle(rt, x, y, 5.5 * s, accent, 1.2 * s);
+    fill_circle(rt, x, y, 2.2 * s, accent);
+    draw_text(
+        rt,
+        label,
+        UiRect::new(x - 18.0 * s, y - 25.0 * s, 36.0 * s, 14.0 * s),
+        &formats.tiny,
+        accent,
+        Align::Center,
+    );
+}
+
 enum Align {
     Leading,
     Center,
@@ -2173,16 +2380,16 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             }
             WM_MOUSEMOVE => {
                 if state.drag.is_some() {
-                    let (x, _) = point_from_lparam(lparam);
-                    state.mouse_move(x);
+                    let (x, y) = point_from_lparam(lparam);
+                    state.mouse_move(x, y);
                     LRESULT(0)
                 } else {
                     DefWindowProcW(hwnd, msg, wparam, lparam)
                 }
             }
             WM_LBUTTONUP => {
-                let (x, _) = point_from_lparam(lparam);
-                state.mouse_up(x);
+                let (x, y) = point_from_lparam(lparam);
+                state.mouse_up(x, y);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
