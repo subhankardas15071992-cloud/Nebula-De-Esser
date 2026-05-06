@@ -9,9 +9,17 @@ Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control menu, enhanced preset manager, the plugin is now available in AUv2 format and Windows variant has not only been fixed but is now the best variant of Nebula De-esser.
+Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control menu, enhanced preset manager, the plugin is now available in AUv2 format and Windows variant has not only been fixed but it's now the best variant of Nebula De-esser.
 
-<img width="1440" height="900" alt="Image" src="https://github.com/user-attachments/assets/99787e50-64c8-4114-8dc8-ed497d3edf3e" />
+---
+
+**Screenshot - macOS and Linux variant that uses EGUI:**
+<img width="866" height="702" alt="Image" src="https://github.com/user-attachments/assets/2c68a617-86d1-46c2-8e36-5bd4e0ba723f" />
+
+---
+
+**Screenshot - Windows variant that uses Direct2D:**
+<img width="860" height="698" alt="Image" src="https://github.com/user-attachments/assets/46f6cfd2-2071-4346-b556-fb7746c713c0" />
 
 ---
 ## ✨ **What's New in v2.9.0**
@@ -23,7 +31,7 @@ Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control 
 - **Filter Menu replaced with new Basis menu** - It now has three options, "Odd" estimates the “voiced” basis from odd non-spiky frames, "Even" estimates the “voiced” basis from even non-spiky frames, "Both" estimates the “voiced” basis from non-spiky frames. For most purposes using both is recommended.
 - **Preset Manager Fixed** - The Preset Manager is now fully functional.
 - **AUv2 Format** - The plugin is now available in AUv2 format using clap-wrapper.
-- **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows version EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula De-Esser.
+- **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows variant EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula De-Esser.
 ---
 
 ## ✨ **What's New in v2.8.0**
