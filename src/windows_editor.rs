@@ -530,9 +530,7 @@ impl NativeWindowState {
             s,
         );
 
-        let status = if self.params.lookahead_enabled.value() > 0.5 {
-            "Lookahead active"
-        } else if self.params.sidechain_external.value() > 0.5 {
+        let status = if self.params.sidechain_external.value() > 0.5 {
             "External sidechain"
         } else {
             "Internal detector"
@@ -850,12 +848,7 @@ impl NativeWindowState {
                     brushes,
                     s,
                 );
-                let value_rect = UiRect::new(
-                    spec.rect.x + 5.0 * s,
-                    spec.rect.bottom() - 20.0 * s,
-                    spec.rect.w - 10.0 * s,
-                    16.0 * s,
-                );
+                let value_rect = knob_value_rect(spec.rect, s);
                 fill_round(rt, value_rect, 3.0 * s, &brushes.control);
                 stroke_round(rt, value_rect, 3.0 * s, &brushes.border, 1.0);
                 draw_text(
@@ -2910,10 +2903,22 @@ impl MidiCleanupMenuLayout {
         let context = MidiContextMenuLayout::new(layout);
         let item_h = 24.0 * s;
         let body_rows = mapping_count.max(1) + 1;
+        let menu_w = 210.0 * s;
+        let min_x = 8.0 * s;
+        let max_x = (layout.full.right() - menu_w - 8.0 * s).max(min_x);
+        let preferred_right = context.rect.right() + 2.0 * s;
+        let preferred_left = context.rect.x - menu_w - 2.0 * s;
+        let x = if preferred_right + menu_w <= layout.full.right() - 8.0 * s {
+            preferred_right
+        } else if preferred_left >= min_x {
+            preferred_left
+        } else {
+            preferred_right.clamp(min_x, max_x)
+        };
         let rect = UiRect::new(
-            context.rect.right() + 2.0 * s,
+            x,
             context.rect.y + item_h,
-            210.0 * s,
+            menu_w,
             body_rows as f32 * item_h + 8.0 * s,
         );
         let clear_y = rect.y + 4.0 + mapping_count.max(1) as f32 * item_h;
@@ -3267,9 +3272,9 @@ fn knob_group(
 ) -> KnobGroup {
     let slot_w = rect.w / defs.len().max(1) as f32;
     let knob_size = (slot_w * 0.46)
-        .min((rect.h - 44.0 * s).max(12.0 * s))
-        .min(33.0 * s)
-        .max(12.0 * s);
+        .min((rect.h - 40.0 * s).max(10.0 * s))
+        .min(35.0 * s)
+        .max(10.0 * s);
     let knobs = defs
         .iter()
         .enumerate()
@@ -3277,7 +3282,7 @@ fn knob_group(
             let slot = UiRect::new(rect.x + idx as f32 * slot_w, rect.y, slot_w, rect.h);
             let knob_rect = UiRect::new(
                 slot.center_x() - knob_size * 0.5,
-                slot.y + 23.0 * s,
+                slot.y + 21.0 * s,
                 knob_size,
                 knob_size,
             );
@@ -3294,17 +3299,20 @@ fn knob_group(
     KnobGroup { label, rect, knobs }
 }
 
+fn knob_value_rect(rect: UiRect, s: f32) -> UiRect {
+    UiRect::new(
+        rect.x + 5.0 * s,
+        rect.bottom() - 18.0 * s,
+        rect.w - 10.0 * s,
+        14.0 * s,
+    )
+}
+
 fn numeric_hit_zones(layout: &Layout) -> Vec<NumericHitZone> {
-    let s = layout.s;
     let mut zones = Vec::new();
     for group in knob_groups(layout) {
         for knob in group.knobs {
-            let value_rect = UiRect::new(
-                knob.rect.x + 5.0 * s,
-                knob.rect.bottom() - 20.0 * s,
-                knob.rect.w - 10.0 * s,
-                16.0 * s,
-            );
+            let value_rect = knob_value_rect(knob.rect, layout.s);
             zones.push(NumericHitZone {
                 rect: knob.knob_rect,
                 target: knob.target,
