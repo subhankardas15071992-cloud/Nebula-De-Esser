@@ -21,6 +21,7 @@ Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control 
 - **More DSP tuning** - The plugin now uses full academic spectral source-separation OSP system and uses multi-frame covariance tracking. It no more relies on envelope tracking and no more uses filters for de-essing.
 - **Improved voiced/sibilant training gates** - The new gate now measures spectral flatness for noise/sibilance likelihood, spectral flux for unstable/transient frames, centroid and upper-band energy bias for hissy/sibilant pressure, peak concentration for tonal/voiced evidence, TKEO-driven reduction amount as a clean-frame veto.
 - **Filter Menu replaced with new Basis menu** - It now has three options, "Odd" estimates the “voiced” basis from odd non-spiky frames, "Even" estimates the “voiced” basis from even non-spiky frames, "Both" estimates the “voiced” basis from non-spiky frames. For most purposes using both is recommended.
+- **Preset Manager Fixed** - The Preset Manager is now fully functional.
 - **AUv2 Format** - The plugin is now available in AUv2 format using clap-wrapper.
 - **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows version EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula De-Esser.
 ---
