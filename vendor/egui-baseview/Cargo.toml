@@ -1,0 +1,43 @@
+[package]
+name = "egui-baseview"
+version = "0.5.0"
+authors = ["Billy Messenger <60663878+BillyDM@users.noreply.github.com>"]
+edition = "2021"
+description = "A baseview backend for egui"
+license = "MIT"
+repository = "https://github.com/BillyDM/egui-baseview"
+documentation = "https://docs.rs/egui-baseview"
+keywords = ["gui", "ui", "graphics", "interface", "widgets"]
+categories = ["gui"]
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["opengl", "default_fonts"]
+default_fonts = ["egui/default_fonts"]
+opengl = ["dep:egui_glow", "baseview/opengl"]
+wgpu = ["dep:egui-wgpu", "dep:raw-window-handle-06", "dep:pollster", "dep:wgpu"]
+## Enable parallel tessellation using [`rayon`](https://docs.rs/rayon).
+##
+## This can help performance for graphics-intense applications.
+rayon = ["egui/rayon"]
+## Enables a temporary workaround for keyboard input not working sometimes in Windows.
+## See https://github.com/BillyDM/egui-baseview/issues/20
+windows_keyboard_workaround = []
+
+[dependencies]
+egui = { version = "0.31", default-features = false, features = ["bytemuck"] }
+egui_glow = { version = "0.31", features = ["x11"], optional = true }
+egui-wgpu = { version = "0.31", features = ["x11"], optional = true }
+wgpu = { version = "24.0.0", optional = true }
+keyboard-types = { version = "0.6", default-features = false }
+baseview = { git = "https://github.com/RustAudio/baseview.git", rev = "9a0b42c09d712777b2edb4c5e0cb6baf21e988f0" }
+raw-window-handle = "0.5"
+raw-window-handle-06 = { package = "raw-window-handle", version = "0.6", optional = true }
+# TODO: Enable wayland feature when baseview gets wayland support.
+copypasta = { version = "0.10", default-features = false, features = ["x11"] }
+log = "0.4"
+open = "5.1"
+pollster = { version = "0.4", optional = true }
+thiserror = "2.0"

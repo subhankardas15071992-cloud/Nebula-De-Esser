@@ -1,0 +1,58 @@
+[package]
+name = "baseview"
+version = "0.1.0"
+authors = [
+    "William Light <git@wrl.lhiaudio.com>",
+    "Charles Saracco <crsaracco@gmail.com>",
+    "Mirko Covizzi <mrkcvzz@gmail.com>",
+    "Micah Johnston <micah@glowcoil.com>",
+    "Billy Messenger <billydm@protonmail.com>",
+    "Anton Lazarev <https://antonok.com>",
+    "Joakim Frostegård <joakim.frostegard@gmail.com>",
+    "Robbert van der Helm <mail@robbertvanderhelm.nl>",
+]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+opengl = ["uuid", "x11/glx"]
+
+[dependencies]
+keyboard-types = { version = "0.6.1", default-features = false }
+raw-window-handle = "0.5"
+
+[target.'cfg(target_os="linux")'.dependencies]
+x11rb = { version = "0.13.0", features = ["cursor", "resource_manager", "allow-unsafe-code"] }
+x11 = { version = "2.21", features = ["xlib", "xlib_xcb"] }
+nix = "0.22.0"
+
+[target.'cfg(target_os="windows")'.dependencies]
+winapi = { version = "0.3.8", features = ["libloaderapi", "winuser", "windef", "minwindef", "guiddef", "combaseapi", "wingdi", "errhandlingapi", "ole2", "oleidl", "shellapi", "winerror"] }
+uuid = { version = "0.8", features = ["v4"], optional = true }
+
+[target.'cfg(target_os="macos")'.dependencies]
+cocoa = "0.24.0"
+core-foundation = "0.9.1"
+objc = "0.2.7"
+uuid = { version = "0.8", features = ["v4"] }
+
+[dev-dependencies]
+rtrb = "0.2"
+softbuffer = "0.3.4"
+
+[workspace]
+members = ["examples/render_femtovg"]
+
+[lints.clippy]
+missing-safety-doc = "allow"
+
+[[example]]
+name = "open_window"
+test = true
+doctest = true
+
+[[example]]
+name = "open_parented"
+test = true
+doctest = true
