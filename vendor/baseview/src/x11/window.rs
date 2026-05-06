@@ -15,9 +15,9 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux,
     CreateWindowAux, EventMask, InputFocus, PropMode, Visualid, Window as XWindow, WindowClass,
-    CURRENT_TIME,
 };
 use x11rb::wrapper::ConnectionExt as _;
+use x11rb::CURRENT_TIME;
 
 use super::XcbConnection;
 use crate::{
@@ -328,7 +328,8 @@ impl<'a> Window<'a> {
             .xcb_connection
             .conn
             .get_input_focus()
-            .and_then(|cookie| cookie.reply())
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
             .map(|reply| reply.focus == self.inner.window_id)
             .unwrap_or(false)
     }
