@@ -3214,7 +3214,7 @@ fn knob_groups(layout: &Layout) -> Vec<KnobGroup> {
     let inner = layout.controls.shrink(8.0 * s);
     let toggle_h = 34.0 * s;
     let toggle_gap = 10.0 * s;
-    let row_gap = 14.0 * s;
+    let row_gap = 10.0 * s;
     let mut y = inner.y + 76.0 * s;
     let rows_bottom = inner.bottom() - toggle_h - toggle_gap;
     let row_h = ((rows_bottom - y - row_gap * 2.0) / 3.0).max(52.0 * s);
@@ -3272,9 +3272,9 @@ fn knob_group(
 ) -> KnobGroup {
     let slot_w = rect.w / defs.len().max(1) as f32;
     let knob_size = (slot_w * 0.46)
-        .min((rect.h - 40.0 * s).max(10.0 * s))
-        .min(35.0 * s)
-        .max(10.0 * s);
+        .min((rect.h - 37.0 * s).max(12.0 * s))
+        .min(38.0 * s)
+        .max(12.0 * s);
     let knobs = defs
         .iter()
         .enumerate()
@@ -3282,7 +3282,7 @@ fn knob_group(
             let slot = UiRect::new(rect.x + idx as f32 * slot_w, rect.y, slot_w, rect.h);
             let knob_rect = UiRect::new(
                 slot.center_x() - knob_size * 0.5,
-                slot.y + 21.0 * s,
+                slot.y + 18.0 * s,
                 knob_size,
                 knob_size,
             );
@@ -3302,9 +3302,9 @@ fn knob_group(
 fn knob_value_rect(rect: UiRect, s: f32) -> UiRect {
     UiRect::new(
         rect.x + 5.0 * s,
-        rect.bottom() - 18.0 * s,
+        rect.bottom() - 15.0 * s,
         rect.w - 10.0 * s,
-        14.0 * s,
+        11.0 * s,
     )
 }
 
@@ -3825,7 +3825,7 @@ fn draw_knob(
     let sweep = std::f32::consts::PI * 1.5;
     let angle = start + sweep * norm;
 
-    fill_circle(rt, cx, cy + 1.5 * s, radius + 1.5 * s, &brushes.mica_bot);
+    fill_circle(rt, cx, cy + 1.0 * s, radius + 1.0 * s, &brushes.mica_bot);
     fill_circle(rt, cx, cy, radius, &brushes.control);
     stroke_circle(rt, cx, cy, radius, &brushes.border, 1.0);
     draw_arc(
