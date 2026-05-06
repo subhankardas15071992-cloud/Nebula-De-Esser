@@ -269,6 +269,17 @@ cargo run --release --package xtask -- bundle nebula-desser --release
 #         target/bundled/Nebula De-Esser.vst3
 ```
 
+#### **Windows (x86_64 / MSVC)**
+Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build Tools C++ toolchain.
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --release --target x86_64-pc-windows-msvc
+cargo run --release --package xtask -- bundle nebula-desser --release
+# Output: target\bundled\Nebula De-Esser.clap
+#         target\bundled\Nebula De-Esser.vst3
+```
+
 #### **macOS (Universal Binary: arm64 + x86_64)**
 ```bash
 cargo build --release --target aarch64-apple-darwin
