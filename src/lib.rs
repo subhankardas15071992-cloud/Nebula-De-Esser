@@ -86,7 +86,7 @@ impl MidiLearnShared {
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn binding_for_cc(&self, cc: usize) -> Option<u8> {
+    pub(crate) fn binding_for_cc(&self, cc: usize) -> Option<u8> {
         let binding = self.cc_bindings[cc.min(127)].load(Ordering::Acquire);
         (binding >= 0).then_some(binding as u8)
     }
@@ -96,8 +96,7 @@ impl MidiLearnShared {
         self.bindings_dirty.store(true, Ordering::Release);
     }
 
-    #[cfg(not(target_os = "windows"))]
-    fn sync_mutex_from_atomic_if_needed(&self) {
+    pub(crate) fn sync_mutex_from_atomic_if_needed(&self) {
         if !self.bindings_dirty.swap(false, Ordering::AcqRel) {
             return;
         }
@@ -112,8 +111,7 @@ impl MidiLearnShared {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
-    fn sync_atomic_from_mutex(&self) {
+    pub(crate) fn sync_atomic_from_mutex(&self) {
         for binding in &self.cc_bindings {
             binding.store(UNMAPPED_CC, Ordering::Release);
         }
@@ -563,6 +561,7 @@ impl Plugin for NebulaDeEsser {
             self.params.clone(),
             self.analyzer.get_shared(),
             self.meters.clone(),
+            self.midi_learn.clone(),
         )
     }
 
