@@ -37,16 +37,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
     LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, ShowWindow, CREATESTRUCTW,
-    CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, IDC_ARROW, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD,
-    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS, GWLP_USERDATA, HMENU, IDC_ARROW,
+    SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE,
+    WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
 use super::analyzer::SpectrumData;
 use super::{
-    u32_to_f32, Meters, MidiLearnShared, NebulaParams, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
+    u32_to_f32, Meters, MidiLearnShared, NebulaParams, PersistentStore, StoredPreset,
+    StoredPresetSnapshot, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
 };
 
 const BASE_W: f32 = 860.0;
@@ -59,12 +60,14 @@ pub(super) fn create_editor(
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
+    storage: Arc<PersistentStore>,
 ) -> Option<Box<dyn Editor>> {
     Some(Box::new(NativeEditor {
         params,
         spectrum,
         meters,
         midi_learn,
+        storage,
         scale_bits: AtomicU32::new(1.0_f32.to_bits()),
     }))
 }
@@ -74,6 +77,7 @@ struct NativeEditor {
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
+    storage: Arc<PersistentStore>,
     scale_bits: AtomicU32,
 }
 
@@ -99,6 +103,7 @@ impl Editor for NativeEditor {
             self.spectrum.clone(),
             self.meters.clone(),
             self.midi_learn.clone(),
+            self.storage.clone(),
             context,
             scale,
         ));
@@ -175,6 +180,7 @@ struct NativeWindowState {
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
+    storage: Arc<PersistentStore>,
     context: Arc<dyn GuiContext>,
     d2d_factory: Option<ID2D1Factory>,
     dwrite_factory: Option<IDWriteFactory>,
@@ -206,15 +212,22 @@ impl NativeWindowState {
         spectrum: Arc<Mutex<SpectrumData>>,
         meters: Arc<Meters>,
         midi_learn: Arc<MidiLearnShared>,
+        storage: Arc<PersistentStore>,
         context: Arc<dyn GuiContext>,
         scale: f32,
     ) -> Self {
+        let presets = storage
+            .presets()
+            .into_iter()
+            .map(|preset| (preset.name, ParamSnapshot::from_stored(&preset.snapshot)))
+            .collect();
         Self {
             hwnd: HWND::default(),
             params,
             spectrum,
             meters,
             midi_learn,
+            storage,
             context,
             d2d_factory: None,
             dwrite_factory: None,
@@ -230,7 +243,7 @@ impl NativeWindowState {
             midi_context_menu_open: false,
             midi_cleanup_menu_open: false,
             preset_name_buf: String::new(),
-            presets: Vec::new(),
+            presets,
             selected_preset: 0,
             state_a: None,
             state_b: None,
@@ -1524,6 +1537,7 @@ impl NativeWindowState {
                 self.midi_context_menu_open = false;
                 self.midi_cleanup_menu_open = false;
                 self.preset_name_buf.clear();
+                let _ = unsafe { SetFocus(Some(self.hwnd)) };
             }
             CommandAction::DeletePreset => {
                 if !self.presets.is_empty() {
@@ -1532,6 +1546,7 @@ impl NativeWindowState {
                     if self.selected_preset >= self.presets.len() && self.selected_preset > 0 {
                         self.selected_preset -= 1;
                     }
+                    self.persist_presets();
                 }
                 self.preset_menu_open = false;
                 self.midi_context_menu_open = false;
@@ -1631,14 +1646,25 @@ impl NativeWindowState {
             self.presets.push((name, snapshot));
             self.selected_preset = self.presets.len() - 1;
         }
+        self.persist_presets();
         self.preset_save_open = false;
         self.preset_menu_open = false;
     }
 
     fn persist_midi_mapping(&self) {
-        self.midi_learn.sync_mutex_from_atomic_if_needed();
-        let current = self.midi_learn.mappings.lock().clone();
-        *self.midi_learn.saved_mappings.lock() = current;
+        self.midi_learn.persist_as_saved(&self.storage);
+    }
+
+    fn persist_presets(&self) {
+        let presets = self
+            .presets
+            .iter()
+            .map(|(name, snapshot)| StoredPreset {
+                name: name.clone(),
+                snapshot: snapshot.to_stored(),
+            })
+            .collect();
+        self.storage.save_presets(presets);
     }
 
     fn handle_overlay_click(&mut self, x: f32, y: f32, layout: &Layout) -> bool {
@@ -1732,6 +1758,7 @@ impl NativeWindowState {
                         self.midi_learn
                             .midi_enabled
                             .store(!enabled, Ordering::Release);
+                        self.persist_midi_mapping();
                         self.midi_context_menu_open = false;
                     }
                     1 => {
@@ -1746,8 +1773,7 @@ impl NativeWindowState {
                         self.midi_cleanup_menu_open = false;
                     }
                     3 => {
-                        let current = self.midi_learn.mappings.lock().clone();
-                        *self.midi_learn.saved_mappings.lock() = current;
+                        self.persist_midi_mapping();
                         self.midi_context_menu_open = false;
                         self.midi_cleanup_menu_open = false;
                     }
@@ -2493,6 +2519,68 @@ struct ParamSnapshot {
     cut_depth: f32,
     mix: f32,
     cut_slope: f32,
+}
+
+impl ParamSnapshot {
+    fn from_stored(snapshot: &StoredPresetSnapshot) -> Self {
+        Self {
+            threshold: snapshot.threshold,
+            max_reduction: snapshot.max_reduction,
+            min_freq: snapshot.min_freq,
+            max_freq: snapshot.max_freq,
+            mode_relative: snapshot.mode_relative,
+            basis_mode: snapshot.basis_mode,
+            use_wide_range: snapshot.use_wide_range,
+            filter_solo: snapshot.filter_solo,
+            lookahead_enabled: snapshot.lookahead_enabled,
+            lookahead_ms: snapshot.lookahead_ms,
+            trigger_hear: snapshot.trigger_hear,
+            stereo_link: snapshot.stereo_link,
+            stereo_mid_side: snapshot.stereo_mid_side,
+            sidechain_external: snapshot.sidechain_external,
+            vocal_mode: snapshot.vocal_mode,
+            input_level: snapshot.input_level,
+            input_pan: snapshot.input_pan,
+            output_level: snapshot.output_level,
+            output_pan: snapshot.output_pan,
+            bypass: snapshot.bypass,
+            oversampling: snapshot.oversampling,
+            cut_width: snapshot.cut_width,
+            cut_depth: snapshot.cut_depth,
+            mix: snapshot.mix,
+            cut_slope: snapshot.cut_slope,
+        }
+    }
+
+    fn to_stored(&self) -> StoredPresetSnapshot {
+        StoredPresetSnapshot {
+            threshold: self.threshold,
+            max_reduction: self.max_reduction,
+            min_freq: self.min_freq,
+            max_freq: self.max_freq,
+            mode_relative: self.mode_relative,
+            basis_mode: self.basis_mode,
+            use_wide_range: self.use_wide_range,
+            filter_solo: self.filter_solo,
+            lookahead_enabled: self.lookahead_enabled,
+            lookahead_ms: self.lookahead_ms,
+            trigger_hear: self.trigger_hear,
+            stereo_link: self.stereo_link,
+            stereo_mid_side: self.stereo_mid_side,
+            sidechain_external: self.sidechain_external,
+            vocal_mode: self.vocal_mode,
+            input_level: self.input_level,
+            input_pan: self.input_pan,
+            output_level: self.output_level,
+            output_pan: self.output_pan,
+            bypass: self.bypass,
+            oversampling: self.oversampling,
+            cut_width: self.cut_width,
+            cut_depth: self.cut_depth,
+            mix: self.mix,
+            cut_slope: self.cut_slope,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -4030,6 +4118,13 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         let state = &mut *state_ptr;
 
         match msg {
+            WM_GETDLGCODE => {
+                if state.numeric_input.is_some() || state.preset_save_open {
+                    LRESULT((DLGC_WANTALLKEYS | DLGC_WANTCHARS) as isize)
+                } else {
+                    DefWindowProcW(hwnd, msg, wparam, lparam)
+                }
+            }
             WM_ERASEBKGND => LRESULT(1),
             WM_SIZE => {
                 state.render_target = None;
