@@ -1,7 +1,7 @@
 # NEBULA DE-ESSER
 
 **Professional 64-bit AUv2, CLAP & VST3 De-esser Plugin**  
-Written in Rust · nih-plug · egui · Zero Warnings · Pure Native Builds
+Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Zero Warnings · Pure Native Builds
 
 ---
 
