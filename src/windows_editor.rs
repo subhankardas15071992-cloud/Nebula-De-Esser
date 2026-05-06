@@ -10,13 +10,15 @@ use windows::Win32::Foundation::{
     GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+    D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F,
+    D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
-    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
+    D2D1_FEATURE_LEVEL_DEFAULT, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
+    D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat,
@@ -226,6 +228,7 @@ impl NativeWindowState {
         self.draw_meter_panel(&rt, &brushes, &formats, layout.left_panel, true, s);
         self.draw_meter_panel(&rt, &brushes, &formats, layout.right_panel, false, s);
         self.draw_controls(&rt, &brushes, &formats, &layout);
+        self.draw_command_bar(&rt, &brushes, &formats, &layout);
         self.draw_spectrum(&rt, &brushes, &formats, &layout);
 
         if unsafe { rt.EndDraw(None, None) }.is_err() {
@@ -287,7 +290,7 @@ impl NativeWindowState {
         );
         draw_text(
             rt,
-            "Windows native editor - Direct2D",
+            "Sibilance Processor  |  Native Direct2D",
             UiRect::new(44.0 * s, 30.0 * s, 260.0 * s, 18.0 * s),
             &formats.small,
             &brushes.text_tertiary,
@@ -336,6 +339,151 @@ impl NativeWindowState {
         );
     }
 
+    fn draw_command_bar(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        let s = layout.s;
+        fill_rect(rt, layout.command_bar, &brushes.panel);
+        draw_line(
+            rt,
+            layout.command_bar.x,
+            layout.command_bar.bottom(),
+            layout.command_bar.right(),
+            layout.command_bar.bottom(),
+            &brushes.divider,
+            1.0,
+        );
+
+        let mut x = layout.command_bar.x + 8.0 * s;
+        let cy = layout.command_bar.center_y();
+        let button_h = 24.0 * s;
+        let bypass = self.params.bypass.value() > 0.5;
+        let bypass_rect = UiRect::new(x, cy - button_h * 0.5, 84.0 * s, button_h);
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bypass_rect,
+            if bypass { "Bypassed" } else { "Bypass" },
+            bypass,
+            true,
+            s,
+        );
+        x = bypass_rect.right() + 10.0 * s;
+
+        draw_line(
+            rt,
+            x,
+            cy - button_h * 0.36,
+            x,
+            cy + button_h * 0.36,
+            &brushes.divider,
+            1.0,
+        );
+        x += 10.0 * s;
+
+        let os_labels = ["Off", "2x", "4x", "6x", "8x"];
+        let os = self.params.oversampling.value().round().clamp(0.0, 4.0) as usize;
+        let os_rect = UiRect::new(x, cy - button_h * 0.5, 174.0 * s, button_h);
+        fill_round(rt, os_rect, 4.0 * s, &brushes.control);
+        stroke_round(rt, os_rect, 4.0 * s, &brushes.border, 1.0);
+        let segment_w = os_rect.w / os_labels.len() as f32;
+        for (idx, label) in os_labels.iter().enumerate() {
+            let segment = UiRect::new(os_rect.x + idx as f32 * segment_w, os_rect.y, segment_w, os_rect.h);
+            if idx == os {
+                fill_round(rt, segment.shrink(2.0 * s), 3.0 * s, &brushes.accent);
+            }
+            draw_text(
+                rt,
+                label,
+                segment,
+                &formats.small,
+                if idx == os {
+                    &brushes.text_light
+                } else {
+                    &brushes.text_secondary
+                },
+                Align::Center,
+            );
+        }
+        x = os_rect.right() + 10.0 * s;
+
+        let status = if self.params.lookahead_enabled.value() > 0.5 {
+            "Lookahead active"
+        } else if self.params.sidechain_external.value() > 0.5 {
+            "External sidechain"
+        } else {
+            "Internal detector"
+        };
+        draw_text(
+            rt,
+            status,
+            UiRect::new(x, cy - button_h * 0.5, 160.0 * s, button_h),
+            &formats.small,
+            &brushes.text_tertiary,
+            Align::Leading,
+        );
+
+        draw_text(
+            rt,
+            "A/B  |  MIDI Learn",
+            UiRect::new(
+                layout.command_bar.right() - 144.0 * s,
+                cy - button_h * 0.5,
+                132.0 * s,
+                button_h,
+            ),
+            &formats.small,
+            &brushes.text_tertiary,
+            Align::Trailing,
+        );
+    }
+
+    fn draw_toolbar_button(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        rect: UiRect,
+        label: &str,
+        active: bool,
+        danger: bool,
+        s: f32,
+    ) {
+        let fill = if active && danger {
+            &brushes.red_soft
+        } else if active {
+            &brushes.accent
+        } else {
+            &brushes.control
+        };
+        let border = if active && danger {
+            &brushes.red
+        } else if active {
+            &brushes.accent_dark
+        } else {
+            &brushes.border
+        };
+        fill_round(rt, rect, 4.0 * s, fill);
+        stroke_round(rt, rect, 4.0 * s, border, 1.0);
+        draw_text(
+            rt,
+            label,
+            rect,
+            &formats.body,
+            if active {
+                &brushes.text_light
+            } else {
+                &brushes.text_secondary
+            },
+            Align::Center,
+        );
+    }
+
     fn draw_meter_panel(
         &self,
         rt: &ID2D1HwndRenderTarget,
@@ -346,7 +494,7 @@ impl NativeWindowState {
         s: f32,
     ) {
         card(rt, rect, 8.0 * s, brushes);
-        let title = if detect { "Detect" } else { "Reduction" };
+        let title = if detect { "Detect" } else { "Annihilation" };
         draw_text(
             rt,
             title,
@@ -440,7 +588,7 @@ impl NativeWindowState {
     ) {
         card(rt, layout.controls, 8.0 * layout.s, brushes);
         self.draw_segments(rt, brushes, formats, layout);
-        self.draw_sliders(rt, brushes, formats, layout);
+        self.draw_knobs(rt, brushes, formats, layout);
         self.draw_toggles(rt, brushes, formats, layout);
     }
 
@@ -502,7 +650,7 @@ impl NativeWindowState {
         }
     }
 
-    fn draw_sliders(
+    fn draw_knobs(
         &self,
         rt: &ID2D1HwndRenderTarget,
         brushes: &Brushes,
@@ -510,62 +658,58 @@ impl NativeWindowState {
         layout: &Layout,
     ) {
         let s = layout.s;
-        for spec in slider_specs(layout) {
-            let value = self.target_value(spec.target);
-            let norm = target_norm(spec.target, value);
-            fill_round(rt, spec.rect, 6.0 * s, &brushes.card);
-            stroke_round(rt, spec.rect, 6.0 * s, &brushes.border, 1.0);
+        for group in knob_groups(layout) {
             draw_text(
                 rt,
-                spec.label,
+                group.label,
                 UiRect::new(
-                    spec.rect.x + 8.0 * s,
-                    spec.rect.y + 4.0 * s,
-                    spec.rect.w - 16.0 * s,
-                    15.0 * s,
+                    group.rect.x + 8.0 * s,
+                    group.rect.y - 4.0 * s,
+                    group.rect.w - 16.0 * s,
+                    14.0 * s,
                 ),
                 &formats.small,
                 &brushes.text_tertiary,
                 Align::Leading,
             );
-            draw_text(
-                rt,
-                &format_value(spec.target, value),
-                UiRect::new(
-                    spec.rect.x + 8.0 * s,
-                    spec.rect.y + 4.0 * s,
-                    spec.rect.w - 16.0 * s,
-                    15.0 * s,
-                ),
-                &formats.small,
-                &brushes.text_secondary,
-                Align::Trailing,
-            );
-
-            let track = spec.track_rect;
-            fill_round(rt, track, 3.0 * s, &brushes.control);
-            stroke_round(rt, track, 3.0 * s, &brushes.border, 1.0);
-            let fill_w = (track.w * norm).clamp(0.0, track.w);
-            if fill_w > 1.0 {
-                fill_round(
+            for spec in group.knobs {
+                let value = self.target_value(spec.target);
+                let norm = target_norm(spec.target, value);
+                draw_text(
                     rt,
-                    UiRect::new(track.x, track.y, fill_w, track.h),
-                    3.0 * s,
+                    spec.label,
+                    UiRect::new(spec.rect.x, spec.rect.y + 2.0 * s, spec.rect.w, 14.0 * s),
+                    &formats.small,
+                    &brushes.text_tertiary,
+                    Align::Center,
+                );
+                draw_knob(
+                    rt,
+                    spec.knob_rect.center_x(),
+                    spec.knob_rect.center_y(),
+                    spec.knob_rect.w.min(spec.knob_rect.h) * 0.5,
+                    norm,
+                    spec.accent,
+                    brushes,
+                    s,
+                );
+                let value_rect = UiRect::new(
+                    spec.rect.x + 5.0 * s,
+                    spec.rect.bottom() - 18.0 * s,
+                    spec.rect.w - 10.0 * s,
+                    15.0 * s,
+                );
+                fill_round(rt, value_rect, 3.0 * s, &brushes.control);
+                stroke_round(rt, value_rect, 3.0 * s, &brushes.border, 1.0);
+                draw_text(
+                    rt,
+                    &format_value(spec.target, value),
+                    value_rect,
+                    &formats.small,
                     spec.accent.brush(brushes),
+                    Align::Center,
                 );
             }
-            let thumb_x = track.x + fill_w;
-            fill_round(
-                rt,
-                UiRect::new(
-                    thumb_x - 3.0 * s,
-                    track.y - 4.0 * s,
-                    6.0 * s,
-                    track.h + 8.0 * s,
-                ),
-                3.0 * s,
-                &brushes.text_light,
-            );
         }
     }
 
@@ -702,6 +846,7 @@ impl NativeWindowState {
 
         let min_x = graph.x + freq_to_x(self.params.min_freq.value(), graph.w);
         let max_x = graph.x + freq_to_x(self.params.max_freq.value(), graph.w);
+        let node_y = graph.y + graph.h * 0.5;
         if max_x > min_x {
             fill_rect(
                 rt,
@@ -726,6 +871,8 @@ impl NativeWindowState {
                 &brushes.orange,
                 1.5 * s,
             );
+            draw_freq_node(rt, min_x, node_y, "Min", &brushes.teal, &brushes.card, formats, s);
+            draw_freq_node(rt, max_x, node_y, "Max", &brushes.orange, &brushes.card, formats, s);
         }
 
         let (mags, sample_rate) = {
@@ -828,16 +975,22 @@ impl NativeWindowState {
         }
     }
 
-    fn mouse_move(&mut self, x: f32) {
+    fn mouse_move(&mut self, x: f32, y: f32) {
         if let Some(drag) = self.drag {
-            self.set_target_from_x(drag.target, drag.track, x);
+            match drag.mode {
+                DragMode::Horizontal => self.set_target_from_x(drag.target, drag.track, x),
+                DragMode::Vertical => self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y),
+            }
             invalidate(self.hwnd);
         }
     }
 
-    fn mouse_up(&mut self, x: f32) {
+    fn mouse_up(&mut self, x: f32, y: f32) {
         if let Some(drag) = self.drag.take() {
-            self.set_target_from_x(drag.target, drag.track, x);
+            match drag.mode {
+                DragMode::Horizontal => self.set_target_from_x(drag.target, drag.track, x),
+                DragMode::Vertical => self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y),
+            }
             self.end_target(drag.target);
             let _ = unsafe { ReleaseCapture() };
             invalidate(self.hwnd);
@@ -952,6 +1105,12 @@ impl NativeWindowState {
 
     fn set_target_from_x(&self, target: ControlTarget, track: UiRect, x: f32) {
         let norm = ((x - track.x) / track.w).clamp(0.0, 1.0);
+        self.set_target_plain(target, value_from_norm(target, norm));
+    }
+
+    fn set_target_from_y(&self, target: ControlTarget, start_value: f32, start_y: f32, y: f32) {
+        let start_norm = target_norm(target, start_value);
+        let norm = (start_norm + (start_y - y) * 0.006).clamp(0.0, 1.0);
         self.set_target_plain(target, value_from_norm(target, norm));
     }
 }
@@ -1108,6 +1267,7 @@ const fn color(r: u8, g: u8, b: u8, a: u8) -> D2D1_COLOR_F {
 struct Layout {
     full: UiRect,
     header: UiRect,
+    command_bar: UiRect,
     bypass_rect: UiRect,
     left_panel: UiRect,
     right_panel: UiRect,
@@ -1120,14 +1280,16 @@ impl Layout {
     fn new(w: f32, h: f32, _scale_hint: f32) -> Self {
         let s = (w / BASE_W).min(h / BASE_H).max(0.45);
         let header_h = 52.0 * s;
+        let command_h = 36.0 * s;
         let margin = 8.0 * s;
         let full = UiRect::new(0.0, 0.0, w, h);
         let header = UiRect::new(0.0, 0.0, w, header_h);
+        let command_bar = UiRect::new(0.0, header_h, w, command_h);
         let content = UiRect::new(
             margin,
-            header_h + margin,
+            header_h + command_h + margin,
             (w - margin * 2.0).max(1.0),
-            (h - header_h - margin * 2.0).max(1.0),
+            (h - header_h - command_h - margin * 2.0).max(1.0),
         );
         let meter_w = 92.0 * s;
         let gap = 8.0 * s;
@@ -1142,6 +1304,7 @@ impl Layout {
         Self {
             full,
             header,
+            command_bar,
             bypass_rect,
             left_panel,
             right_panel,
@@ -1175,6 +1338,10 @@ impl UiRect {
 
     fn center_x(self) -> f32 {
         self.x + self.w * 0.5
+    }
+
+    fn center_y(self) -> f32 {
+        self.y + self.h * 0.5
     }
 
     fn contains(self, x: f32, y: f32) -> bool {
@@ -1216,10 +1383,17 @@ struct SegmentSpec {
 }
 
 #[derive(Clone, Copy)]
-struct SliderSpec {
+struct KnobGroup {
     label: &'static str,
     rect: UiRect,
-    track_rect: UiRect,
+    knobs: Vec<KnobSpec>,
+}
+
+#[derive(Clone, Copy)]
+struct KnobSpec {
+    label: &'static str,
+    rect: UiRect,
+    knob_rect: UiRect,
     target: ControlTarget,
     accent: AccentBrush,
 }
@@ -1239,7 +1413,7 @@ struct HitZone {
 
 #[derive(Clone, Copy)]
 enum HitAction {
-    Drag(ControlTarget, UiRect),
+    Drag(ControlTarget, UiRect, DragMode),
     Set(ControlTarget, f32),
     Toggle(ControlTarget),
     ResetDetect,
@@ -1250,6 +1424,15 @@ enum HitAction {
 struct DragState {
     target: ControlTarget,
     track: UiRect,
+    mode: DragMode,
+    start_y: f32,
+    start_value: f32,
+}
+
+#[derive(Clone, Copy)]
+enum DragMode {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
