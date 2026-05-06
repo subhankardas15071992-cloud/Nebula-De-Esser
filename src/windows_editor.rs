@@ -31,18 +31,23 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, InvalidateRect, UpdateWindow, HBRUSH, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, VK_ESCAPE, VK_RETURN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
     LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, ShowWindow, CREATESTRUCTW,
-    CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, IDC_ARROW, SW_SHOW, WINDOW_EX_STYLE,
-    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-    WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, IDC_ARROW, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
 use super::analyzer::SpectrumData;
-use super::{u32_to_f32, Meters, NebulaParams};
+use super::{
+    u32_to_f32, Meters, MidiLearnShared, NebulaParams, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
+};
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
@@ -53,11 +58,13 @@ pub(super) fn create_editor(
     params: Arc<NebulaParams>,
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
+    midi_learn: Arc<MidiLearnShared>,
 ) -> Option<Box<dyn Editor>> {
     Some(Box::new(NativeEditor {
         params,
         spectrum,
         meters,
+        midi_learn,
         scale_bits: AtomicU32::new(1.0_f32.to_bits()),
     }))
 }
@@ -66,6 +73,7 @@ struct NativeEditor {
     params: Arc<NebulaParams>,
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
+    midi_learn: Arc<MidiLearnShared>,
     scale_bits: AtomicU32,
 }
 
@@ -90,6 +98,7 @@ impl Editor for NativeEditor {
             self.params.clone(),
             self.spectrum.clone(),
             self.meters.clone(),
+            self.midi_learn.clone(),
             context,
             scale,
         ));
@@ -165,6 +174,7 @@ struct NativeWindowState {
     params: Arc<NebulaParams>,
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
+    midi_learn: Arc<MidiLearnShared>,
     context: Arc<dyn GuiContext>,
     d2d_factory: Option<ID2D1Factory>,
     dwrite_factory: Option<IDWriteFactory>,
@@ -172,6 +182,19 @@ struct NativeWindowState {
     text_formats: Option<TextFormats>,
     smooth_mags: Vec<f32>,
     drag: Option<DragState>,
+    drag_snapshot: Option<ParamSnapshot>,
+    numeric_input: Option<NumericInput>,
+    preset_save_open: bool,
+    preset_menu_open: bool,
+    midi_popup_open: bool,
+    preset_name_buf: String,
+    presets: Vec<(String, ParamSnapshot)>,
+    selected_preset: usize,
+    state_a: Option<ParamSnapshot>,
+    state_b: Option<ParamSnapshot>,
+    active_state: char,
+    undo_stack: Vec<ParamSnapshot>,
+    redo_stack: Vec<ParamSnapshot>,
     scale: f32,
 }
 
@@ -180,6 +203,7 @@ impl NativeWindowState {
         params: Arc<NebulaParams>,
         spectrum: Arc<Mutex<SpectrumData>>,
         meters: Arc<Meters>,
+        midi_learn: Arc<MidiLearnShared>,
         context: Arc<dyn GuiContext>,
         scale: f32,
     ) -> Self {
@@ -188,6 +212,7 @@ impl NativeWindowState {
             params,
             spectrum,
             meters,
+            midi_learn,
             context,
             d2d_factory: None,
             dwrite_factory: None,
@@ -195,6 +220,19 @@ impl NativeWindowState {
             text_formats: None,
             smooth_mags: vec![-120.0; 1025],
             drag: None,
+            drag_snapshot: None,
+            numeric_input: None,
+            preset_save_open: false,
+            preset_menu_open: false,
+            midi_popup_open: false,
+            preset_name_buf: String::new(),
+            presets: Vec::new(),
+            selected_preset: 0,
+            state_a: None,
+            state_b: None,
+            active_state: 'A',
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             scale,
         }
     }
@@ -229,6 +267,10 @@ impl NativeWindowState {
         self.draw_controls(&rt, &brushes, &formats, &layout);
         self.draw_command_bar(&rt, &brushes, &formats, &layout);
         self.draw_spectrum(&rt, &brushes, &formats, &layout);
+        self.draw_preset_menu(&rt, &brushes, &formats, &layout);
+        self.draw_midi_popup(&rt, &brushes, &formats, &layout);
+        self.draw_preset_save_popup(&rt, &brushes, &formats, &layout);
+        self.draw_numeric_popup(&rt, &brushes, &formats, &layout);
 
         if unsafe { rt.EndDraw(None, None) }.is_err() {
             self.render_target = None;
@@ -296,19 +338,27 @@ impl NativeWindowState {
             Align::Leading,
         );
 
-        let bypass = self.params.bypass.value() > 0.5;
-        let bypass_rect = layout.bypass_rect;
-        let bypass_fill = if bypass {
-            &brushes.red_soft
-        } else {
-            &brushes.control
-        };
-        fill_round(rt, bypass_rect, 4.0 * s, bypass_fill);
+        let status_rect = UiRect::new(
+            layout.full.right() - 220.0 * s,
+            14.0 * s,
+            142.0 * s,
+            24.0 * s,
+        );
+        fill_round(
+            rt,
+            status_rect,
+            4.0 * s,
+            if self.params.bypass.value() > 0.5 {
+                &brushes.red_soft
+            } else {
+                &brushes.control
+            },
+        );
         stroke_round(
             rt,
-            bypass_rect,
+            status_rect,
             4.0 * s,
-            if bypass {
+            if self.params.bypass.value() > 0.5 {
                 &brushes.red
             } else {
                 &brushes.border
@@ -317,10 +367,14 @@ impl NativeWindowState {
         );
         draw_text(
             rt,
-            if bypass { "Bypassed" } else { "Bypass" },
-            bypass_rect,
-            &formats.body,
-            if bypass {
+            if self.params.bypass.value() > 0.5 {
+                "Processor bypassed"
+            } else {
+                "Processor active"
+            },
+            status_rect,
+            &formats.small,
+            if self.params.bypass.value() > 0.5 {
                 &brushes.red
             } else {
                 &brushes.text_secondary
@@ -346,6 +400,7 @@ impl NativeWindowState {
         layout: &Layout,
     ) {
         let s = layout.s;
+        let bar = CommandBarRects::new(layout);
         fill_rect(rt, layout.command_bar, &brushes.panel);
         draw_line(
             rt,
@@ -357,59 +412,117 @@ impl NativeWindowState {
             1.0,
         );
 
-        let mut x = layout.command_bar.x + 8.0 * s;
-        let cy = layout.command_bar.center_y();
-        let button_h = 24.0 * s;
         let bypass = self.params.bypass.value() > 0.5;
-        let bypass_rect = UiRect::new(x, cy - button_h * 0.5, 84.0 * s, button_h);
         self.draw_toolbar_button(
             rt,
             brushes,
             formats,
-            bypass_rect,
+            bar.bypass,
             if bypass { "Bypassed" } else { "Bypass" },
             bypass,
             true,
             s,
         );
-        x = bypass_rect.right() + 10.0 * s;
 
-        draw_line(
+        let preset_label = if self.presets.is_empty() {
+            "Preset"
+        } else {
+            truncate_label(
+                &self.presets[self.selected_preset.min(self.presets.len() - 1)].0,
+                16,
+            )
+        };
+        fill_round(
             rt,
-            x,
-            cy - button_h * 0.36,
-            x,
-            cy + button_h * 0.36,
-            &brushes.divider,
+            bar.preset,
+            4.0 * s,
+            if self.preset_menu_open {
+                &brushes.accent_soft
+            } else {
+                &brushes.control
+            },
+        );
+        stroke_round(
+            rt,
+            bar.preset,
+            4.0 * s,
+            if self.preset_menu_open {
+                &brushes.accent
+            } else {
+                &brushes.border
+            },
             1.0,
         );
-        x += 10.0 * s;
+        draw_text(
+            rt,
+            &format!("{preset_label}  v"),
+            bar.preset,
+            &formats.body,
+            if self.preset_menu_open {
+                &brushes.text_primary
+            } else {
+                &brushes.text_secondary
+            },
+            Align::Center,
+        );
 
-        let os_labels = ["Off", "2x", "4x", "6x", "8x"];
-        let os = self.params.oversampling.value().round().clamp(0.0, 4.0) as usize;
-        let os_rect = UiRect::new(x, cy - button_h * 0.5, 174.0 * s, button_h);
-        fill_round(rt, os_rect, 4.0 * s, &brushes.control);
-        stroke_round(rt, os_rect, 4.0 * s, &brushes.border, 1.0);
-        let segment_w = os_rect.w / os_labels.len() as f32;
-        for (idx, label) in os_labels.iter().enumerate() {
-            let segment = UiRect::new(os_rect.x + idx as f32 * segment_w, os_rect.y, segment_w, os_rect.h);
-            if idx == os {
-                fill_round(rt, segment.shrink(2.0 * s), 3.0 * s, &brushes.accent);
-            }
-            draw_text(
-                rt,
-                label,
-                segment,
-                &formats.small,
-                if idx == os {
-                    &brushes.text_light
-                } else {
-                    &brushes.text_secondary
-                },
-                Align::Center,
-            );
-        }
-        x = os_rect.right() + 10.0 * s;
+        self.draw_toolbar_button(rt, brushes, formats, bar.save, "Save", false, false, s);
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bar.delete,
+            "Delete",
+            !self.presets.is_empty(),
+            true,
+            s,
+        );
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bar.undo,
+            "Undo",
+            !self.undo_stack.is_empty(),
+            false,
+            s,
+        );
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bar.redo,
+            "Redo",
+            !self.redo_stack.is_empty(),
+            false,
+            s,
+        );
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bar.ab,
+            if self.active_state == 'A' {
+                "A/B [A]"
+            } else {
+                "A/B [B]"
+            },
+            self.state_a.is_some() || self.state_b.is_some(),
+            false,
+            s,
+        );
+
+        let learning = self.midi_learn.learning_target.load(Ordering::Relaxed) >= 0;
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            bar.midi,
+            if learning { "Learning" } else { "MIDI Learn" },
+            learning || self.midi_popup_open,
+            false,
+            s,
+        );
 
         let status = if self.params.lookahead_enabled.value() > 0.5 {
             "Lookahead active"
@@ -421,25 +534,38 @@ impl NativeWindowState {
         draw_text(
             rt,
             status,
-            UiRect::new(x, cy - button_h * 0.5, 160.0 * s, button_h),
+            bar.status,
             &formats.small,
             &brushes.text_tertiary,
             Align::Leading,
         );
 
-        draw_text(
-            rt,
-            "A/B  |  MIDI Learn",
-            UiRect::new(
-                layout.command_bar.right() - 144.0 * s,
-                cy - button_h * 0.5,
-                132.0 * s,
-                button_h,
-            ),
-            &formats.small,
-            &brushes.text_tertiary,
-            Align::Trailing,
-        );
+        fill_round(rt, bar.os_rect, 4.0 * s, &brushes.control);
+        stroke_round(rt, bar.os_rect, 4.0 * s, &brushes.border, 1.0);
+        let os_labels = ["Off", "2x", "4x", "6x", "8x"];
+        let os = self.params.oversampling.value().round().clamp(0.0, 4.0) as usize;
+        for (idx, label) in os_labels.iter().enumerate() {
+            if idx == os {
+                fill_round(
+                    rt,
+                    bar.os_segments[idx].shrink(2.0 * s),
+                    3.0 * s,
+                    &brushes.accent,
+                );
+            }
+            draw_text(
+                rt,
+                label,
+                bar.os_segments[idx],
+                &formats.small,
+                if idx == os {
+                    &brushes.text_light
+                } else {
+                    &brushes.text_secondary
+                },
+                Align::Center,
+            );
+        }
     }
 
     fn draw_toolbar_button(
@@ -493,11 +619,12 @@ impl NativeWindowState {
         s: f32,
     ) {
         card(rt, rect, 8.0 * s, brushes);
+        let panel = MeterPanelLayout::new(rect, detect, s);
         let title = if detect { "Detect" } else { "Annihilation" };
         draw_text(
             rt,
             title,
-            UiRect::new(rect.x, rect.y + 8.0 * s, rect.w, 20.0 * s),
+            UiRect::new(rect.x, rect.y + 8.0 * s, rect.w, 18.0 * s),
             &formats.body,
             &brushes.text_secondary,
             Align::Center,
@@ -514,40 +641,33 @@ impl NativeWindowState {
             u32_to_f32(self.meters.red_max_bits.load(Ordering::Relaxed))
         };
 
-        let max_rect = UiRect::new(
-            rect.x + 9.0 * s,
-            rect.y + 30.0 * s,
-            rect.w - 18.0 * s,
-            20.0 * s,
-        );
-        fill_round(rt, max_rect, 4.0 * s, &brushes.control);
-        stroke_round(rt, max_rect, 4.0 * s, &brushes.border, 1.0);
+        fill_round(rt, panel.max_rect, 4.0 * s, &brushes.control);
+        stroke_round(rt, panel.max_rect, 4.0 * s, &brushes.border, 1.0);
         draw_text(
             rt,
             &format!("{max_value:.1}"),
-            max_rect,
+            panel.max_rect,
             &formats.small,
             &brushes.text_secondary,
             Align::Center,
         );
 
-        let meter = UiRect::new(
-            rect.center_x() - 8.0 * s,
-            rect.y + 62.0 * s,
-            16.0 * s,
-            rect.h - 104.0 * s,
-        );
-        fill_round(rt, meter, 4.0 * s, &brushes.control);
-        stroke_round(rt, meter, 4.0 * s, &brushes.border, 1.0);
+        fill_round(rt, panel.meter_rect, 4.0 * s, &brushes.control);
+        stroke_round(rt, panel.meter_rect, 4.0 * s, &brushes.border, 1.0);
 
         let norm = if detect {
             ((value + 60.0) / 60.0).clamp(0.0, 1.0)
         } else {
             (-value / 100.0).clamp(0.0, 1.0)
         };
-        let fill_h = meter.h * norm;
+        let fill_h = panel.meter_rect.h * norm;
         if fill_h > 1.0 {
-            let fill = UiRect::new(meter.x, meter.bottom() - fill_h, meter.w, fill_h);
+            let fill = UiRect::new(
+                panel.meter_rect.x,
+                panel.meter_rect.bottom() - fill_h,
+                panel.meter_rect.w,
+                fill_h,
+            );
             let brush = if norm > 0.75 {
                 &brushes.red
             } else if norm > 0.55 {
@@ -558,20 +678,52 @@ impl NativeWindowState {
             fill_round(rt, fill, 3.0 * s, brush);
         }
 
-        let bottom = if detect {
-            format!("{value:.1} dB")
+        fill_round(rt, panel.slider_rect, 3.0 * s, &brushes.control);
+        stroke_round(rt, panel.slider_rect, 3.0 * s, &brushes.border, 1.0);
+
+        let control_norm = if detect {
+            (self.params.threshold.value() / 100.0).clamp(0.0, 1.0)
         } else {
-            format!("{value:.1} dB")
+            ((self.params.max_reduction.value() + 100.0) / 100.0).clamp(0.0, 1.0)
+        };
+        let thumb_y = panel.slider_rect.y + panel.slider_rect.h * (1.0 - control_norm);
+        let thumb = UiRect::new(
+            panel.slider_rect.x,
+            thumb_y - 4.0 * s,
+            panel.slider_rect.w,
+            8.0 * s,
+        );
+        fill_round(
+            rt,
+            thumb,
+            4.0 * s,
+            if detect {
+                &brushes.accent
+            } else {
+                &brushes.orange
+            },
+        );
+        stroke_round(
+            rt,
+            thumb,
+            4.0 * s,
+            if detect {
+                &brushes.accent_dark
+            } else {
+                &brushes.red_soft
+            },
+            1.0,
+        );
+
+        let bottom = if detect {
+            format!("{:.0}%", self.params.threshold.value())
+        } else {
+            format!("{:.1} dB", self.params.max_reduction.value())
         };
         draw_text(
             rt,
             &bottom,
-            UiRect::new(
-                rect.x + 4.0 * s,
-                rect.bottom() - 32.0 * s,
-                rect.w - 8.0 * s,
-                20.0 * s,
-            ),
+            panel.value_rect,
             &formats.small,
             &brushes.text_secondary,
             Align::Center,
@@ -663,9 +815,9 @@ impl NativeWindowState {
                 group.label,
                 UiRect::new(
                     group.rect.x + 8.0 * s,
-                    group.rect.y - 4.0 * s,
+                    group.rect.y - 12.0 * s,
                     group.rect.w - 16.0 * s,
-                    14.0 * s,
+                    10.0 * s,
                 ),
                 &formats.small,
                 &brushes.text_tertiary,
@@ -677,7 +829,7 @@ impl NativeWindowState {
                 draw_text(
                     rt,
                     spec.label,
-                    UiRect::new(spec.rect.x, spec.rect.y + 2.0 * s, spec.rect.w, 14.0 * s),
+                    UiRect::new(spec.rect.x, spec.rect.y + 8.0 * s, spec.rect.w, 12.0 * s),
                     &formats.small,
                     &brushes.text_tertiary,
                     Align::Center,
@@ -694,9 +846,9 @@ impl NativeWindowState {
                 );
                 let value_rect = UiRect::new(
                     spec.rect.x + 5.0 * s,
-                    spec.rect.bottom() - 18.0 * s,
+                    spec.rect.bottom() - 20.0 * s,
                     spec.rect.w - 10.0 * s,
-                    15.0 * s,
+                    16.0 * s,
                 );
                 fill_round(rt, value_rect, 3.0 * s, &brushes.control);
                 stroke_round(rt, value_rect, 3.0 * s, &brushes.border, 1.0);
@@ -870,8 +1022,26 @@ impl NativeWindowState {
                 &brushes.orange,
                 1.5 * s,
             );
-            draw_freq_node(rt, min_x, node_y, "Min", &brushes.teal, &brushes.card, formats, s);
-            draw_freq_node(rt, max_x, node_y, "Max", &brushes.orange, &brushes.card, formats, s);
+            draw_freq_node(
+                rt,
+                min_x,
+                node_y,
+                "Min",
+                &brushes.teal,
+                &brushes.card,
+                formats,
+                s,
+            );
+            draw_freq_node(
+                rt,
+                max_x,
+                node_y,
+                "Max",
+                &brushes.orange,
+                &brushes.card,
+                formats,
+                s,
+            );
         }
 
         let (mags, sample_rate) = {
@@ -937,6 +1107,11 @@ impl NativeWindowState {
             return;
         };
         let layout = Layout::new(size.0 as f32, size.1 as f32, self.scale);
+        if self.handle_overlay_click(x, y, &layout) {
+            invalidate(self.hwnd);
+            return;
+        }
+
         let zones = hit_zones(&self.params, &layout);
         for zone in zones {
             if !zone.rect.contains(x, y) {
@@ -945,14 +1120,16 @@ impl NativeWindowState {
             match zone.action {
                 HitAction::Drag(target, track, mode) => {
                     self.begin_target(target);
-                    match mode {
-                        DragMode::Horizontal => self.set_target_from_x(target, track, x),
-                        DragMode::Vertical => {}
-                    }
+                    self.drag_snapshot = Some(self.capture_snapshot());
                     self.drag = Some(DragState {
                         target,
                         track,
                         mode,
+                        pointer_offset: if matches!(mode, DragMode::Horizontal) {
+                            x - self.target_x(target, track)
+                        } else {
+                            0.0
+                        },
                         start_y: y,
                         start_value: self.target_value(target),
                     });
@@ -961,15 +1138,19 @@ impl NativeWindowState {
                     }
                 }
                 HitAction::Set(target, value) => {
+                    let before = self.capture_snapshot();
                     self.set_target_gesture(target, value);
+                    self.record_undo(before);
                 }
                 HitAction::Toggle(target) => {
+                    let before = self.capture_snapshot();
                     let next = if self.target_value(target) > 0.5 {
                         0.0
                     } else {
                         1.0
                     };
                     self.set_target_gesture(target, next);
+                    self.record_undo(before);
                 }
                 HitAction::ResetDetect => {
                     self.meters.reset_det.store(1, Ordering::Release);
@@ -977,6 +1158,7 @@ impl NativeWindowState {
                 HitAction::ResetReduction => {
                     self.meters.reset_red.store(1, Ordering::Release);
                 }
+                HitAction::Command(action) => self.handle_command(action),
             }
             invalidate(self.hwnd);
             break;
@@ -986,8 +1168,12 @@ impl NativeWindowState {
     fn mouse_move(&mut self, x: f32, y: f32) {
         if let Some(drag) = self.drag {
             match drag.mode {
-                DragMode::Horizontal => self.set_target_from_x(drag.target, drag.track, x),
-                DragMode::Vertical => self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y),
+                DragMode::Horizontal => {
+                    self.set_target_from_x(drag.target, drag.track, x - drag.pointer_offset)
+                }
+                DragMode::Vertical => {
+                    self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y)
+                }
             }
             invalidate(self.hwnd);
         }
@@ -996,11 +1182,95 @@ impl NativeWindowState {
     fn mouse_up(&mut self, x: f32, y: f32) {
         if let Some(drag) = self.drag.take() {
             match drag.mode {
-                DragMode::Horizontal => self.set_target_from_x(drag.target, drag.track, x),
-                DragMode::Vertical => self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y),
+                DragMode::Horizontal => {
+                    self.set_target_from_x(drag.target, drag.track, x - drag.pointer_offset)
+                }
+                DragMode::Vertical => {
+                    self.set_target_from_y(drag.target, drag.start_value, drag.start_y, y)
+                }
             }
             self.end_target(drag.target);
             let _ = unsafe { ReleaseCapture() };
+            if let Some(before) = self.drag_snapshot.take() {
+                self.record_undo(before);
+            }
+            invalidate(self.hwnd);
+        }
+    }
+
+    fn mouse_right_down(&mut self, x: f32, y: f32) {
+        if self.numeric_input.is_some() || self.preset_save_open || self.midi_popup_open {
+            return;
+        }
+
+        let Some(size) = client_size(self.hwnd) else {
+            return;
+        };
+        let layout = Layout::new(size.0 as f32, size.1 as f32, self.scale);
+        for zone in numeric_hit_zones(&layout) {
+            if zone.rect.contains(x, y) {
+                self.open_numeric_input(zone.target);
+                self.preset_menu_open = false;
+                invalidate(self.hwnd);
+                break;
+            }
+        }
+    }
+
+    fn key_down(&mut self, vkey: u32) {
+        match vkey {
+            key if key == VK_ESCAPE.0 as u32 => {
+                self.numeric_input = None;
+                self.preset_save_open = false;
+                self.preset_menu_open = false;
+                if self.midi_popup_open {
+                    self.midi_learn.learning_target.store(-1, Ordering::Release);
+                }
+                self.midi_popup_open = false;
+                invalidate(self.hwnd);
+            }
+            key if key == VK_RETURN.0 as u32 => {
+                if self.numeric_input.is_some() {
+                    self.confirm_numeric_input();
+                    invalidate(self.hwnd);
+                } else if self.preset_save_open {
+                    self.confirm_preset_save();
+                    invalidate(self.hwnd);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn char_input(&mut self, ch: char) {
+        if self.numeric_input.is_some() {
+            let mut confirm = false;
+            if let Some(input) = self.numeric_input.as_mut() {
+                match ch {
+                    '\u{8}' => {
+                        input.value.pop();
+                    }
+                    '\r' | '\n' => confirm = true,
+                    '-' | '.' | '0'..='9' => input.value.push(ch),
+                    _ => {}
+                }
+            }
+            if confirm {
+                self.confirm_numeric_input();
+            }
+            invalidate(self.hwnd);
+            return;
+        }
+
+        if self.preset_save_open {
+            match ch {
+                '\u{8}' => {
+                    self.preset_name_buf.pop();
+                }
+                '\r' | '\n' => self.confirm_preset_save(),
+                c if !c.is_control() => self.preset_name_buf.push(c),
+                _ => {}
+            }
             invalidate(self.hwnd);
         }
     }
@@ -1120,6 +1390,559 @@ impl NativeWindowState {
         let start_norm = target_norm(target, start_value);
         let norm = (start_norm + (start_y - y) * 0.006).clamp(0.0, 1.0);
         self.set_target_plain(target, value_from_norm(target, norm));
+    }
+
+    fn target_x(&self, target: ControlTarget, track: UiRect) -> f32 {
+        track.x + track.w * target_norm(target, self.target_value(target))
+    }
+
+    fn capture_snapshot(&self) -> ParamSnapshot {
+        ParamSnapshot {
+            threshold: self.params.threshold.value(),
+            max_reduction: self.params.max_reduction.value(),
+            min_freq: self.params.min_freq.value(),
+            max_freq: self.params.max_freq.value(),
+            mode_relative: self.params.mode_relative.value() > 0.5,
+            basis_mode: self.params.basis_mode.value().round() as i32,
+            use_wide_range: self.params.use_wide_range.value() > 0.5,
+            filter_solo: self.params.filter_solo.value() > 0.5,
+            lookahead_enabled: self.params.lookahead_enabled.value() > 0.5,
+            lookahead_ms: self.params.lookahead_ms.value(),
+            trigger_hear: self.params.trigger_hear.value() > 0.5,
+            stereo_link: self.params.stereo_link.value(),
+            stereo_mid_side: self.params.stereo_mid_side.value() > 0.5,
+            sidechain_external: self.params.sidechain_external.value() > 0.5,
+            vocal_mode: self.params.vocal_mode.value() > 0.5,
+            input_level: self.params.input_level.value(),
+            input_pan: self.params.input_pan.value(),
+            output_level: self.params.output_level.value(),
+            output_pan: self.params.output_pan.value(),
+            bypass: self.params.bypass.value() > 0.5,
+            oversampling: self.params.oversampling.value().round() as i32,
+            cut_width: self.params.cut_width.value(),
+            cut_depth: self.params.cut_depth.value(),
+            mix: self.params.mix.value(),
+            cut_slope: self.params.cut_slope.value(),
+        }
+    }
+
+    fn apply_snapshot(&self, snapshot: &ParamSnapshot) {
+        self.set_target_plain(ControlTarget::Threshold, snapshot.threshold);
+        self.set_target_plain(ControlTarget::MaxReduction, snapshot.max_reduction);
+        self.set_target_plain(ControlTarget::MinFreq, snapshot.min_freq);
+        self.set_target_plain(ControlTarget::MaxFreq, snapshot.max_freq);
+        self.set_target_plain(
+            ControlTarget::ModeRelative,
+            if snapshot.mode_relative { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(ControlTarget::BasisMode, snapshot.basis_mode as f32);
+        self.set_target_plain(
+            ControlTarget::UseWideRange,
+            if snapshot.use_wide_range { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(
+            ControlTarget::FilterSolo,
+            if snapshot.filter_solo { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(
+            ControlTarget::LookaheadEnabled,
+            if snapshot.lookahead_enabled { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(ControlTarget::LookaheadMs, snapshot.lookahead_ms);
+        self.set_target_plain(
+            ControlTarget::TriggerHear,
+            if snapshot.trigger_hear { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(ControlTarget::StereoLink, snapshot.stereo_link);
+        self.set_target_plain(
+            ControlTarget::StereoMidSide,
+            if snapshot.stereo_mid_side { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(
+            ControlTarget::SidechainExternal,
+            if snapshot.sidechain_external {
+                1.0
+            } else {
+                0.0
+            },
+        );
+        self.set_target_plain(
+            ControlTarget::VocalMode,
+            if snapshot.vocal_mode { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(ControlTarget::InputLevel, snapshot.input_level);
+        self.set_target_plain(ControlTarget::InputPan, snapshot.input_pan);
+        self.set_target_plain(ControlTarget::OutputLevel, snapshot.output_level);
+        self.set_target_plain(ControlTarget::OutputPan, snapshot.output_pan);
+        self.set_target_plain(
+            ControlTarget::Bypass,
+            if snapshot.bypass { 1.0 } else { 0.0 },
+        );
+        self.set_target_plain(ControlTarget::Oversampling, snapshot.oversampling as f32);
+        self.set_target_plain(ControlTarget::CutWidth, snapshot.cut_width);
+        self.set_target_plain(ControlTarget::CutDepth, snapshot.cut_depth);
+        self.set_target_plain(ControlTarget::Mix, snapshot.mix);
+        self.set_target_plain(ControlTarget::CutSlope, snapshot.cut_slope);
+    }
+
+    fn record_undo(&mut self, before: ParamSnapshot) {
+        if self.capture_snapshot() != before {
+            self.undo_stack.push(before);
+            self.undo_stack.truncate(50);
+            self.redo_stack.clear();
+        }
+    }
+
+    fn handle_command(&mut self, action: CommandAction) {
+        match action {
+            CommandAction::TogglePresetMenu => {
+                self.preset_menu_open = !self.preset_menu_open && !self.presets.is_empty();
+                self.numeric_input = None;
+                self.preset_save_open = false;
+                self.midi_popup_open = false;
+            }
+            CommandAction::OpenPresetSave => {
+                self.preset_save_open = true;
+                self.preset_menu_open = false;
+                self.midi_popup_open = false;
+                self.numeric_input = None;
+                self.preset_name_buf.clear();
+            }
+            CommandAction::DeletePreset => {
+                if !self.presets.is_empty() {
+                    self.presets
+                        .remove(self.selected_preset.min(self.presets.len() - 1));
+                    if self.selected_preset >= self.presets.len() && self.selected_preset > 0 {
+                        self.selected_preset -= 1;
+                    }
+                }
+                self.preset_menu_open = false;
+            }
+            CommandAction::Undo => self.undo(),
+            CommandAction::Redo => self.redo(),
+            CommandAction::ToggleAB => self.toggle_ab(),
+            CommandAction::MidiLearn => {
+                let learning = self.midi_learn.learning_target.load(Ordering::Relaxed) >= 0;
+                if learning {
+                    self.midi_learn.learning_target.store(-1, Ordering::Release);
+                } else {
+                    self.midi_popup_open = !self.midi_popup_open;
+                    self.preset_menu_open = false;
+                    self.preset_save_open = false;
+                    self.numeric_input = None;
+                }
+            }
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(snapshot) = self.undo_stack.pop() {
+            let current = self.capture_snapshot();
+            self.redo_stack.push(current);
+            self.redo_stack.truncate(50);
+            self.apply_snapshot(&snapshot);
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(snapshot) = self.redo_stack.pop() {
+            let current = self.capture_snapshot();
+            self.undo_stack.push(current);
+            self.undo_stack.truncate(50);
+            self.apply_snapshot(&snapshot);
+        }
+    }
+
+    fn toggle_ab(&mut self) {
+        let before = self.capture_snapshot();
+        match self.active_state {
+            'A' => self.state_a = Some(before.clone()),
+            'B' => self.state_b = Some(before.clone()),
+            _ => {}
+        }
+
+        self.active_state = if self.active_state == 'A' { 'B' } else { 'A' };
+        let target = match self.active_state {
+            'A' => self.state_a.clone(),
+            'B' => self.state_b.clone(),
+            _ => None,
+        };
+        if let Some(snapshot) = target {
+            self.apply_snapshot(&snapshot);
+            self.record_undo(before);
+        }
+    }
+
+    fn open_numeric_input(&mut self, target: ControlTarget) {
+        let (label, min, max) = numeric_spec(target);
+        self.numeric_input = Some(NumericInput {
+            target,
+            label: label.to_string(),
+            value: format!("{:.2}", self.target_value(target)),
+            min,
+            max,
+        });
+    }
+
+    fn confirm_numeric_input(&mut self) {
+        let Some(input) = self.numeric_input.take() else {
+            return;
+        };
+        if let Ok(value) = input.value.trim().parse::<f32>() {
+            let before = self.capture_snapshot();
+            self.set_target_gesture(input.target, value.clamp(input.min, input.max));
+            self.record_undo(before);
+        }
+    }
+
+    fn confirm_preset_save(&mut self) {
+        let name = self.preset_name_buf.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+
+        let snapshot = self.capture_snapshot();
+        if let Some(index) = self
+            .presets
+            .iter()
+            .position(|(preset_name, _)| preset_name == &name)
+        {
+            self.presets[index].1 = snapshot;
+            self.selected_preset = index;
+        } else {
+            self.presets.push((name, snapshot));
+            self.selected_preset = self.presets.len() - 1;
+        }
+        self.preset_save_open = false;
+        self.preset_menu_open = false;
+    }
+
+    fn handle_overlay_click(&mut self, x: f32, y: f32, layout: &Layout) -> bool {
+        if let Some(input) = self.numeric_input.as_ref() {
+            let popup = NumericPopupLayout::new(layout, input);
+            if popup.ok.contains(x, y) {
+                self.confirm_numeric_input();
+                return true;
+            }
+            if popup.cancel.contains(x, y) {
+                self.numeric_input = None;
+                return true;
+            }
+            return popup.dialog.contains(x, y) || layout.full.contains(x, y);
+        }
+
+        if self.preset_save_open {
+            let popup = PresetSavePopupLayout::new(layout);
+            if popup.ok.contains(x, y) {
+                self.confirm_preset_save();
+                return true;
+            }
+            if popup.cancel.contains(x, y) {
+                self.preset_save_open = false;
+                return true;
+            }
+            return popup.dialog.contains(x, y) || layout.full.contains(x, y);
+        }
+
+        if self.midi_popup_open {
+            let popup = MidiPopupLayout::new(layout, layout.s);
+            if popup.clear.contains(x, y) {
+                self.midi_learn.mappings.lock().clear();
+                self.midi_learn.sync_atomic_from_mutex();
+                self.midi_learn.learning_target.store(-1, Ordering::Release);
+                return true;
+            }
+            if popup.close.contains(x, y) {
+                self.midi_learn.learning_target.store(-1, Ordering::Release);
+                self.midi_popup_open = false;
+                return true;
+            }
+            if let Some(index) = popup.hit_row(x, y) {
+                let current = self.midi_learn.learning_target.load(Ordering::Relaxed);
+                let next = if current == index as i32 {
+                    -1
+                } else {
+                    index as i32
+                };
+                self.midi_learn
+                    .learning_target
+                    .store(next, Ordering::Release);
+                return true;
+            }
+            return popup.dialog.contains(x, y) || layout.full.contains(x, y);
+        }
+
+        if self.preset_menu_open {
+            let popup = PresetMenuLayout::new(layout, self.presets.len());
+            if let Some(index) = popup.hit_item(x, y) {
+                if let Some((_, snapshot)) = self.presets.get(index).cloned() {
+                    let before = self.capture_snapshot();
+                    self.selected_preset = index;
+                    self.apply_snapshot(&snapshot);
+                    self.record_undo(before);
+                }
+                self.preset_menu_open = false;
+                return true;
+            }
+            if !popup.rect.contains(x, y) {
+                self.preset_menu_open = false;
+            }
+        }
+
+        false
+    }
+
+    fn draw_numeric_popup(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        let Some(input) = self.numeric_input.as_ref() else {
+            return;
+        };
+        let popup = NumericPopupLayout::new(layout, input);
+        fill_rect(rt, layout.full, &brushes.mica_bot);
+        card(rt, popup.dialog, 10.0 * layout.s, brushes);
+        draw_text(
+            rt,
+            &input.label,
+            popup.title,
+            &formats.body,
+            &brushes.text_primary,
+            Align::Center,
+        );
+        fill_round(rt, popup.field, 4.0 * layout.s, &brushes.control);
+        stroke_round(rt, popup.field, 4.0 * layout.s, &brushes.accent, 1.0);
+        draw_text(
+            rt,
+            &input.value,
+            popup.field,
+            &formats.body,
+            &brushes.text_primary,
+            Align::Center,
+        );
+        self.draw_toolbar_button(rt, brushes, formats, popup.ok, "OK", true, false, layout.s);
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            popup.cancel,
+            "Cancel",
+            false,
+            false,
+            layout.s,
+        );
+    }
+
+    fn draw_preset_save_popup(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        if !self.preset_save_open {
+            return;
+        }
+        let popup = PresetSavePopupLayout::new(layout);
+        fill_rect(rt, layout.full, &brushes.mica_bot);
+        card(rt, popup.dialog, 10.0 * layout.s, brushes);
+        draw_text(
+            rt,
+            "Save Preset",
+            popup.title,
+            &formats.body,
+            &brushes.text_primary,
+            Align::Center,
+        );
+        fill_round(rt, popup.field, 4.0 * layout.s, &brushes.control);
+        stroke_round(rt, popup.field, 4.0 * layout.s, &brushes.accent, 1.0);
+        let text = if self.preset_name_buf.is_empty() {
+            "Preset name"
+        } else {
+            &self.preset_name_buf
+        };
+        draw_text(
+            rt,
+            text,
+            popup.field,
+            &formats.body,
+            if self.preset_name_buf.is_empty() {
+                &brushes.text_tertiary
+            } else {
+                &brushes.text_primary
+            },
+            Align::Center,
+        );
+        self.draw_toolbar_button(
+            rt, brushes, formats, popup.ok, "Save", true, false, layout.s,
+        );
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            popup.cancel,
+            "Cancel",
+            false,
+            false,
+            layout.s,
+        );
+    }
+
+    fn draw_preset_menu(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        if !self.preset_menu_open || self.presets.is_empty() {
+            return;
+        }
+        let popup = PresetMenuLayout::new(layout, self.presets.len());
+        card(rt, popup.rect, 8.0 * layout.s, brushes);
+        for (index, (name, _)) in self.presets.iter().enumerate() {
+            let row = popup.item_rect(index);
+            if index == self.selected_preset {
+                fill_round(
+                    rt,
+                    row.shrink(2.0 * layout.s),
+                    4.0 * layout.s,
+                    &brushes.accent_soft,
+                );
+                stroke_round(
+                    rt,
+                    row.shrink(2.0 * layout.s),
+                    4.0 * layout.s,
+                    &brushes.accent,
+                    1.0,
+                );
+            }
+            draw_text(
+                rt,
+                truncate_label(name, 18),
+                row,
+                &formats.body,
+                if index == self.selected_preset {
+                    &brushes.text_primary
+                } else {
+                    &brushes.text_secondary
+                },
+                Align::Center,
+            );
+        }
+    }
+
+    fn draw_midi_popup(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        if !self.midi_popup_open {
+            return;
+        }
+        self.midi_learn.sync_mutex_from_atomic_if_needed();
+        let popup = MidiPopupLayout::new(layout, layout.s);
+        fill_rect(rt, layout.full, &brushes.mica_bot);
+        card(rt, popup.dialog, 10.0 * layout.s, brushes);
+        draw_text(
+            rt,
+            "MIDI Learn",
+            popup.title,
+            &formats.body,
+            &brushes.text_primary,
+            Align::Center,
+        );
+        draw_text(
+            rt,
+            "Select a parameter, then move a MIDI CC",
+            popup.subtitle,
+            &formats.small,
+            &brushes.text_secondary,
+            Align::Center,
+        );
+
+        let learning = self.midi_learn.learning_target.load(Ordering::Relaxed);
+        let mappings = self.midi_learn.mappings.lock().clone();
+        for (index, label) in MIDI_PARAM_NAMES.iter().enumerate().take(MIDI_PARAM_COUNT) {
+            let row = popup.row_rect(index);
+            let selected = learning == index as i32;
+            fill_round(
+                rt,
+                row,
+                4.0 * layout.s,
+                if selected {
+                    &brushes.accent
+                } else {
+                    &brushes.control
+                },
+            );
+            stroke_round(
+                rt,
+                row,
+                4.0 * layout.s,
+                if selected {
+                    &brushes.accent_dark
+                } else {
+                    &brushes.border
+                },
+                1.0,
+            );
+            draw_text(
+                rt,
+                label,
+                UiRect::new(row.x + 8.0 * layout.s, row.y, row.w * 0.66, row.h),
+                &formats.tiny,
+                if selected {
+                    &brushes.text_light
+                } else {
+                    &brushes.text_primary
+                },
+                Align::Leading,
+            );
+            let cc_label = mappings
+                .iter()
+                .find(|(_, param)| **param == index as u8)
+                .map(|(cc, _)| format!("CC{cc}"))
+                .unwrap_or_else(|| "-".to_string());
+            draw_text(
+                rt,
+                &cc_label,
+                UiRect::new(row.right() - 52.0 * layout.s, row.y, 44.0 * layout.s, row.h),
+                &formats.tiny,
+                if selected {
+                    &brushes.text_light
+                } else {
+                    &brushes.text_tertiary
+                },
+                Align::Trailing,
+            );
+        }
+
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            popup.clear,
+            "Clear All",
+            true,
+            true,
+            layout.s,
+        );
+        self.draw_toolbar_button(
+            rt,
+            brushes,
+            formats,
+            popup.close,
+            "Close",
+            true,
+            false,
+            layout.s,
+        );
     }
 }
 
@@ -1276,7 +2099,6 @@ struct Layout {
     full: UiRect,
     header: UiRect,
     command_bar: UiRect,
-    bypass_rect: UiRect,
     left_panel: UiRect,
     right_panel: UiRect,
     controls: UiRect,
@@ -1308,12 +2130,10 @@ impl Layout {
         let spectrum_h = (center.h * 0.30).max(130.0 * s);
         let controls = UiRect::new(center.x, center.y, center.w, center.h - spectrum_h - gap);
         let spectrum = UiRect::new(center.x, controls.bottom() + gap, center.w, spectrum_h);
-        let bypass_rect = UiRect::new(w - 118.0 * s, 14.0 * s, 78.0 * s, 24.0 * s);
         Self {
             full,
             header,
             command_bar,
-            bypass_rect,
             left_panel,
             right_panel,
             controls,
@@ -1375,6 +2195,387 @@ impl UiRect {
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct ParamSnapshot {
+    threshold: f32,
+    max_reduction: f32,
+    min_freq: f32,
+    max_freq: f32,
+    mode_relative: bool,
+    basis_mode: i32,
+    use_wide_range: bool,
+    filter_solo: bool,
+    lookahead_enabled: bool,
+    lookahead_ms: f32,
+    trigger_hear: bool,
+    stereo_link: f32,
+    stereo_mid_side: bool,
+    sidechain_external: bool,
+    vocal_mode: bool,
+    input_level: f32,
+    input_pan: f32,
+    output_level: f32,
+    output_pan: f32,
+    bypass: bool,
+    oversampling: i32,
+    cut_width: f32,
+    cut_depth: f32,
+    mix: f32,
+    cut_slope: f32,
+}
+
+#[derive(Clone)]
+struct NumericInput {
+    target: ControlTarget,
+    label: String,
+    value: String,
+    min: f32,
+    max: f32,
+}
+
+#[derive(Clone, Copy)]
+struct NumericHitZone {
+    rect: UiRect,
+    target: ControlTarget,
+}
+
+#[derive(Clone, Copy)]
+enum CommandAction {
+    TogglePresetMenu,
+    OpenPresetSave,
+    DeletePreset,
+    Undo,
+    Redo,
+    ToggleAB,
+    MidiLearn,
+}
+
+#[derive(Clone, Copy)]
+struct MeterPanelLayout {
+    max_rect: UiRect,
+    meter_rect: UiRect,
+    slider_rect: UiRect,
+    value_rect: UiRect,
+}
+
+impl MeterPanelLayout {
+    fn new(rect: UiRect, detect: bool, s: f32) -> Self {
+        let max_rect = UiRect::new(
+            rect.x + 9.0 * s,
+            rect.y + 30.0 * s,
+            rect.w - 18.0 * s,
+            20.0 * s,
+        );
+        let top = rect.y + 62.0 * s;
+        let height = (rect.h - 112.0 * s).max(40.0 * s);
+        let meter_w = 16.0 * s;
+        let slider_w = 12.0 * s;
+        let gap = 6.0 * s;
+        let left = rect.center_x() - (meter_w + slider_w + gap) * 0.5;
+        let slider_rect = if detect {
+            UiRect::new(left + meter_w + gap, top, slider_w, height)
+        } else {
+            UiRect::new(left, top, slider_w, height)
+        };
+        let meter_rect = if detect {
+            UiRect::new(left, top, meter_w, height)
+        } else {
+            UiRect::new(left + slider_w + gap, top, meter_w, height)
+        };
+        let value_rect = UiRect::new(
+            rect.x + 4.0 * s,
+            rect.bottom() - 34.0 * s,
+            rect.w - 8.0 * s,
+            20.0 * s,
+        );
+        Self {
+            max_rect,
+            meter_rect,
+            slider_rect,
+            value_rect,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CommandBarRects {
+    bypass: UiRect,
+    preset: UiRect,
+    save: UiRect,
+    delete: UiRect,
+    undo: UiRect,
+    redo: UiRect,
+    ab: UiRect,
+    midi: UiRect,
+    status: UiRect,
+    os_rect: UiRect,
+    os_segments: [UiRect; 5],
+}
+
+impl CommandBarRects {
+    fn new(layout: &Layout) -> Self {
+        let s = layout.s;
+        let cy = layout.command_bar.center_y();
+        let button_h = 24.0 * s;
+        let y = cy - button_h * 0.5;
+        let mut x = layout.command_bar.x + 8.0 * s;
+
+        let bypass = UiRect::new(x, y, 84.0 * s, button_h);
+        x = bypass.right() + 8.0 * s;
+        let preset = UiRect::new(x, y, 144.0 * s, button_h);
+        x = preset.right() + 4.0 * s;
+        let save = UiRect::new(x, y, 40.0 * s, button_h);
+        x = save.right() + 4.0 * s;
+        let delete = UiRect::new(x, y, 48.0 * s, button_h);
+        x = delete.right() + 8.0 * s;
+        let undo = UiRect::new(x, y, 48.0 * s, button_h);
+        x = undo.right() + 4.0 * s;
+        let redo = UiRect::new(x, y, 48.0 * s, button_h);
+        x = redo.right() + 8.0 * s;
+        let ab = UiRect::new(x, y, 66.0 * s, button_h);
+        x = ab.right() + 4.0 * s;
+        let midi = UiRect::new(x, y, 90.0 * s, button_h);
+        x = midi.right() + 10.0 * s;
+
+        let os_rect = UiRect::new(
+            layout.command_bar.right() - 182.0 * s,
+            y,
+            174.0 * s,
+            button_h,
+        );
+        let status = UiRect::new(x, y, (os_rect.x - x - 8.0 * s).max(60.0 * s), button_h);
+        let seg_w = os_rect.w / 5.0;
+        let os_segments = std::array::from_fn(|idx| {
+            UiRect::new(os_rect.x + idx as f32 * seg_w, os_rect.y, seg_w, os_rect.h)
+        });
+
+        Self {
+            bypass,
+            preset,
+            save,
+            delete,
+            undo,
+            redo,
+            ab,
+            midi,
+            status,
+            os_rect,
+            os_segments,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NumericPopupLayout {
+    dialog: UiRect,
+    title: UiRect,
+    field: UiRect,
+    ok: UiRect,
+    cancel: UiRect,
+}
+
+impl NumericPopupLayout {
+    fn new(layout: &Layout, _input: &NumericInput) -> Self {
+        let s = layout.s;
+        let dialog = UiRect::new(
+            layout.full.center_x() - 130.0 * s,
+            layout.full.center_y() - 58.0 * s,
+            260.0 * s,
+            118.0 * s,
+        );
+        Self {
+            title: UiRect::new(
+                dialog.x + 16.0 * s,
+                dialog.y + 14.0 * s,
+                dialog.w - 32.0 * s,
+                18.0 * s,
+            ),
+            field: UiRect::new(
+                dialog.x + 20.0 * s,
+                dialog.y + 42.0 * s,
+                dialog.w - 40.0 * s,
+                26.0 * s,
+            ),
+            ok: UiRect::new(
+                dialog.x + 30.0 * s,
+                dialog.bottom() - 34.0 * s,
+                82.0 * s,
+                22.0 * s,
+            ),
+            cancel: UiRect::new(
+                dialog.right() - 112.0 * s,
+                dialog.bottom() - 34.0 * s,
+                82.0 * s,
+                22.0 * s,
+            ),
+            dialog,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PresetSavePopupLayout {
+    dialog: UiRect,
+    title: UiRect,
+    field: UiRect,
+    ok: UiRect,
+    cancel: UiRect,
+}
+
+impl PresetSavePopupLayout {
+    fn new(layout: &Layout) -> Self {
+        let s = layout.s;
+        let dialog = UiRect::new(
+            layout.full.center_x() - 130.0 * s,
+            layout.full.center_y() - 60.0 * s,
+            260.0 * s,
+            122.0 * s,
+        );
+        Self {
+            title: UiRect::new(
+                dialog.x + 16.0 * s,
+                dialog.y + 14.0 * s,
+                dialog.w - 32.0 * s,
+                18.0 * s,
+            ),
+            field: UiRect::new(
+                dialog.x + 20.0 * s,
+                dialog.y + 42.0 * s,
+                dialog.w - 40.0 * s,
+                28.0 * s,
+            ),
+            ok: UiRect::new(
+                dialog.x + 30.0 * s,
+                dialog.bottom() - 34.0 * s,
+                82.0 * s,
+                22.0 * s,
+            ),
+            cancel: UiRect::new(
+                dialog.right() - 112.0 * s,
+                dialog.bottom() - 34.0 * s,
+                82.0 * s,
+                22.0 * s,
+            ),
+            dialog,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PresetMenuLayout {
+    rect: UiRect,
+    item_h: f32,
+}
+
+impl PresetMenuLayout {
+    fn new(layout: &Layout, items: usize) -> Self {
+        let s = layout.s;
+        let bar = CommandBarRects::new(layout);
+        let item_h = 24.0 * s;
+        let count = items.max(1) as f32;
+        Self {
+            rect: UiRect::new(
+                bar.preset.x,
+                bar.preset.bottom() + 4.0 * s,
+                bar.preset.w,
+                count * item_h + 8.0 * s,
+            ),
+            item_h,
+        }
+    }
+
+    fn item_rect(self, index: usize) -> UiRect {
+        UiRect::new(
+            self.rect.x + 4.0,
+            self.rect.y + 4.0 + index as f32 * self.item_h,
+            self.rect.w - 8.0,
+            self.item_h - 2.0,
+        )
+    }
+
+    fn hit_item(self, x: f32, y: f32) -> Option<usize> {
+        if !self.rect.contains(x, y) {
+            return None;
+        }
+        let local = (y - self.rect.y - 4.0).max(0.0);
+        Some((local / self.item_h).floor() as usize)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MidiPopupLayout {
+    dialog: UiRect,
+    title: UiRect,
+    subtitle: UiRect,
+    rows: UiRect,
+    clear: UiRect,
+    close: UiRect,
+    row_h: f32,
+}
+
+impl MidiPopupLayout {
+    fn new(layout: &Layout, s: f32) -> Self {
+        let dialog = UiRect::new(
+            layout.full.center_x() - 150.0 * s,
+            layout.full.center_y() - 164.0 * s,
+            300.0 * s,
+            328.0 * s,
+        );
+        let row_h = 22.0 * s;
+        Self {
+            title: UiRect::new(
+                dialog.x + 16.0 * s,
+                dialog.y + 12.0 * s,
+                dialog.w - 32.0 * s,
+                18.0 * s,
+            ),
+            subtitle: UiRect::new(
+                dialog.x + 16.0 * s,
+                dialog.y + 28.0 * s,
+                dialog.w - 32.0 * s,
+                18.0 * s,
+            ),
+            rows: UiRect::new(
+                dialog.x + 10.0 * s,
+                dialog.y + 50.0 * s,
+                dialog.w - 20.0 * s,
+                MIDI_PARAM_COUNT as f32 * row_h,
+            ),
+            clear: UiRect::new(
+                dialog.x + 26.0 * s,
+                dialog.bottom() - 34.0 * s,
+                94.0 * s,
+                22.0 * s,
+            ),
+            close: UiRect::new(
+                dialog.right() - 120.0 * s,
+                dialog.bottom() - 34.0 * s,
+                94.0 * s,
+                22.0 * s,
+            ),
+            dialog,
+            row_h,
+        }
+    }
+
+    fn row_rect(self, index: usize) -> UiRect {
+        UiRect::new(
+            self.rows.x,
+            self.rows.y + index as f32 * self.row_h,
+            self.rows.w,
+            self.row_h - 2.0,
+        )
+    }
+
+    fn hit_row(self, x: f32, y: f32) -> Option<usize> {
+        if !self.rows.contains(x, y) {
+            return None;
+        }
+        let idx = ((y - self.rows.y) / self.row_h).floor() as usize;
+        (idx < MIDI_PARAM_COUNT).then_some(idx)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SegmentGroup {
     label: &'static str,
@@ -1426,6 +2627,7 @@ enum HitAction {
     Toggle(ControlTarget),
     ResetDetect,
     ResetReduction,
+    Command(CommandAction),
 }
 
 #[derive(Clone, Copy)]
@@ -1433,6 +2635,7 @@ struct DragState {
     target: ControlTarget,
     track: UiRect,
     mode: DragMode,
+    pointer_offset: f32,
     start_y: f32,
     start_value: f32,
 }
@@ -1495,12 +2698,12 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
     let s = layout.s;
     let inner = layout.controls.shrink(8.0 * s);
     let group_gap = 5.0 * s;
-    let group_w = (inner.w - group_gap * 5.0) / 6.0;
+    let group_w = (inner.w - group_gap * 4.0) / 5.0;
     let y = inner.y;
     let h = 58.0 * s;
 
-    let mut groups = Vec::with_capacity(6);
-    for i in 0..6 {
+    let mut groups = Vec::with_capacity(5);
+    for i in 0..5 {
         let x = inner.x + i as f32 * (group_w + group_gap);
         let rect = UiRect::new(x, y, group_w, h);
         let seg_y = y + 24.0 * s;
@@ -1621,41 +2824,7 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
                     ),
                 ),
             },
-            _ => {
-                let sw = (group_w - 12.0 * s) / 3.0;
-                let active = params.oversampling.value().round() as i32;
-                SegmentGroup {
-                    label: "OS",
-                    rect,
-                    segments: [
-                        SegmentSpec {
-                            label: "Off",
-                            rect: UiRect::new(x + 4.0 * s, seg_y, sw, seg_h),
-                            action: HitAction::Set(ControlTarget::Oversampling, 0.0),
-                            active: active == 0,
-                        },
-                        SegmentSpec {
-                            label: "2x",
-                            rect: UiRect::new(x + 6.0 * s + sw, seg_y, sw, seg_h),
-                            action: HitAction::Set(ControlTarget::Oversampling, 1.0),
-                            active: active == 1,
-                        },
-                        SegmentSpec {
-                            label: "4x+",
-                            rect: UiRect::new(x + 8.0 * s + sw * 2.0, seg_y, sw, seg_h),
-                            action: HitAction::Set(
-                                ControlTarget::Oversampling,
-                                if active >= 2 {
-                                    (active + 1).min(4) as f32
-                                } else {
-                                    2.0
-                                },
-                            ),
-                            active: active >= 2,
-                        },
-                    ],
-                }
-            }
+            _ => unreachable!(),
         };
         groups.push(group);
     }
@@ -1665,9 +2834,9 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
 fn knob_groups(layout: &Layout) -> Vec<KnobGroup> {
     let s = layout.s;
     let inner = layout.controls.shrink(8.0 * s);
-    let row_h = 70.0 * s;
-    let row_gap = 7.0 * s;
-    let mut y = inner.y + 72.0 * s;
+    let row_h = 76.0 * s;
+    let row_gap = 11.0 * s;
+    let mut y = inner.y + 80.0 * s;
 
     let main = knob_group(
         "Core",
@@ -1729,7 +2898,7 @@ fn knob_group(
             let slot = UiRect::new(rect.x + idx as f32 * slot_w, rect.y, slot_w, rect.h);
             let knob_rect = UiRect::new(
                 slot.center_x() - knob_size * 0.5,
-                slot.y + 19.0 * s,
+                slot.y + 23.0 * s,
                 knob_size,
                 knob_size,
             );
@@ -1744,6 +2913,30 @@ fn knob_group(
         .collect();
 
     KnobGroup { label, rect, knobs }
+}
+
+fn numeric_hit_zones(layout: &Layout) -> Vec<NumericHitZone> {
+    let s = layout.s;
+    let mut zones = Vec::new();
+    for group in knob_groups(layout) {
+        for knob in group.knobs {
+            let value_rect = UiRect::new(
+                knob.rect.x + 5.0 * s,
+                knob.rect.bottom() - 20.0 * s,
+                knob.rect.w - 10.0 * s,
+                16.0 * s,
+            );
+            zones.push(NumericHitZone {
+                rect: knob.knob_rect,
+                target: knob.target,
+            });
+            zones.push(NumericHitZone {
+                rect: value_rect,
+                target: knob.target,
+            });
+        }
+    }
+    zones
 }
 
 fn toggle_specs(layout: &Layout) -> Vec<ToggleSpec> {
@@ -1772,28 +2965,72 @@ fn toggle_specs(layout: &Layout) -> Vec<ToggleSpec> {
 
 fn hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<HitZone> {
     let mut zones = Vec::new();
+    let s = layout.s;
+    let bar = CommandBarRects::new(layout);
     zones.push(HitZone {
-        rect: layout.bypass_rect,
+        rect: bar.bypass,
         action: HitAction::Toggle(ControlTarget::Bypass),
     });
-    let s = layout.s;
     zones.push(HitZone {
-        rect: UiRect::new(
-            layout.left_panel.x + 9.0 * s,
-            layout.left_panel.y + 30.0 * s,
-            layout.left_panel.w - 18.0 * s,
-            20.0 * s,
-        ),
+        rect: bar.preset,
+        action: HitAction::Command(CommandAction::TogglePresetMenu),
+    });
+    zones.push(HitZone {
+        rect: bar.save,
+        action: HitAction::Command(CommandAction::OpenPresetSave),
+    });
+    zones.push(HitZone {
+        rect: bar.delete,
+        action: HitAction::Command(CommandAction::DeletePreset),
+    });
+    zones.push(HitZone {
+        rect: bar.undo,
+        action: HitAction::Command(CommandAction::Undo),
+    });
+    zones.push(HitZone {
+        rect: bar.redo,
+        action: HitAction::Command(CommandAction::Redo),
+    });
+    zones.push(HitZone {
+        rect: bar.ab,
+        action: HitAction::Command(CommandAction::ToggleAB),
+    });
+    zones.push(HitZone {
+        rect: bar.midi,
+        action: HitAction::Command(CommandAction::MidiLearn),
+    });
+    for (idx, rect) in bar.os_segments.into_iter().enumerate() {
+        zones.push(HitZone {
+            rect,
+            action: HitAction::Set(ControlTarget::Oversampling, idx as f32),
+        });
+    }
+
+    let left_panel = MeterPanelLayout::new(layout.left_panel, true, s);
+    let right_panel = MeterPanelLayout::new(layout.right_panel, false, s);
+    zones.push(HitZone {
+        rect: left_panel.max_rect,
         action: HitAction::ResetDetect,
     });
     zones.push(HitZone {
-        rect: UiRect::new(
-            layout.right_panel.x + 9.0 * s,
-            layout.right_panel.y + 30.0 * s,
-            layout.right_panel.w - 18.0 * s,
-            20.0 * s,
-        ),
+        rect: right_panel.max_rect,
         action: HitAction::ResetReduction,
+    });
+    zones.push(HitZone {
+        rect: left_panel.slider_rect,
+        action: HitAction::Drag(
+            ControlTarget::Threshold,
+            left_panel.slider_rect,
+            DragMode::Vertical,
+        ),
+    });
+    zones.push(HitZone {
+        rect: right_panel.slider_rect,
+        action: HitAction::Drag(
+            ControlTarget::MaxReduction,
+            right_panel.slider_rect,
+            DragMode::Vertical,
+        ),
     });
     for group in segment_groups(params, layout) {
         for segment in group.segments {
@@ -1823,7 +3060,12 @@ fn hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<HitZone> {
     let node_y = graph.y + graph.h * 0.5;
     let node_hit = 22.0 * s;
     zones.push(HitZone {
-        rect: UiRect::new(min_x - node_hit * 0.5, node_y - node_hit * 0.5, node_hit, node_hit),
+        rect: UiRect::new(
+            min_x - node_hit * 0.5,
+            node_y - node_hit * 0.5,
+            node_hit,
+            node_hit,
+        ),
         action: HitAction::Drag(
             ControlTarget::MinFreq,
             UiRect::new(graph.x, graph.y, graph.w, graph.h),
@@ -1831,27 +3073,18 @@ fn hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<HitZone> {
         ),
     });
     zones.push(HitZone {
-        rect: UiRect::new(max_x - node_hit * 0.5, node_y - node_hit * 0.5, node_hit, node_hit),
+        rect: UiRect::new(
+            max_x - node_hit * 0.5,
+            node_y - node_hit * 0.5,
+            node_hit,
+            node_hit,
+        ),
         action: HitAction::Drag(
             ControlTarget::MaxFreq,
             UiRect::new(graph.x, graph.y, graph.w, graph.h),
             DragMode::Horizontal,
         ),
     });
-    for idx in 0..5 {
-        let seg_w = 174.0 * s / 5.0;
-        let cy = layout.command_bar.center_y();
-        let os_rect = UiRect::new(
-            layout.command_bar.x + 8.0 * s + 84.0 * s + 20.0 * s + idx as f32 * seg_w,
-            cy - 12.0 * s,
-            seg_w,
-            24.0 * s,
-        );
-        zones.push(HitZone {
-            rect: os_rect,
-            action: HitAction::Set(ControlTarget::Oversampling, idx as f32),
-        });
-    }
     for toggle in toggle_specs(layout) {
         zones.push(HitZone {
             rect: toggle.rect,
@@ -1974,6 +3207,33 @@ fn format_value(target: ControlTarget, value: f32) -> String {
         }
         _ => format!("{value:.0}"),
     }
+}
+
+fn numeric_spec(target: ControlTarget) -> (&'static str, f32, f32) {
+    match target {
+        ControlTarget::Threshold => ("TKEO", 0.0, 100.0),
+        ControlTarget::MaxReduction => ("Max Reduction", -100.0, 0.0),
+        ControlTarget::MinFreq => ("Min Frequency", 1.0, 24_000.0),
+        ControlTarget::MaxFreq => ("Max Frequency", 1.0, 24_000.0),
+        ControlTarget::LookaheadMs => ("Lookahead", 0.0, 20.0),
+        ControlTarget::StereoLink => ("Stereo Link", 0.0, 1.0),
+        ControlTarget::InputLevel => ("Input Level", -100.0, 100.0),
+        ControlTarget::InputPan => ("Input Pan", -1.0, 1.0),
+        ControlTarget::OutputLevel => ("Output Level", -100.0, 100.0),
+        ControlTarget::OutputPan => ("Output Pan", -1.0, 1.0),
+        ControlTarget::CutWidth => ("Cut Width", 0.0, 1.0),
+        ControlTarget::CutDepth => ("Cut Depth", 0.0, 1.0),
+        ControlTarget::CutSlope => ("Cut Slope", 0.0, 100.0),
+        ControlTarget::Mix => ("Mix", 0.0, 1.0),
+        _ => ("Value", 0.0, 1.0),
+    }
+}
+
+fn truncate_label(text: &str, max_chars: usize) -> &str {
+    text.char_indices()
+        .nth(max_chars)
+        .map(|(idx, _)| &text[..idx])
+        .unwrap_or(text)
 }
 
 fn with_param<R>(
@@ -2191,7 +3451,16 @@ fn draw_knob(
         &brushes.card,
         1.4 * s,
     );
-    draw_arc(rt, cx, cy, radius * 0.73, start, start + sweep, &brushes.border, 3.4 * s);
+    draw_arc(
+        rt,
+        cx,
+        cy,
+        radius * 0.73,
+        start,
+        start + sweep,
+        &brushes.border,
+        3.4 * s,
+    );
     if norm > 0.004 {
         draw_arc(rt, cx, cy, radius * 0.73, start, angle, accent, 3.0 * s);
     }
@@ -2378,6 +3647,11 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 state.mouse_down(x, y);
                 LRESULT(0)
             }
+            WM_RBUTTONDOWN => {
+                let (x, y) = point_from_lparam(lparam);
+                state.mouse_right_down(x, y);
+                LRESULT(0)
+            }
             WM_MOUSEMOVE => {
                 if state.drag.is_some() {
                     let (x, y) = point_from_lparam(lparam);
@@ -2390,6 +3664,16 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             WM_LBUTTONUP => {
                 let (x, y) = point_from_lparam(lparam);
                 state.mouse_up(x, y);
+                LRESULT(0)
+            }
+            WM_CHAR => {
+                if let Some(ch) = char::from_u32(wparam.0 as u32) {
+                    state.char_input(ch);
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN => {
+                state.key_down(wparam.0 as u32);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
