@@ -187,6 +187,8 @@ struct NativeWindowState {
     preset_save_open: bool,
     preset_menu_open: bool,
     midi_popup_open: bool,
+    midi_context_menu_open: bool,
+    midi_cleanup_menu_open: bool,
     preset_name_buf: String,
     presets: Vec<(String, ParamSnapshot)>,
     selected_preset: usize,
@@ -225,6 +227,8 @@ impl NativeWindowState {
             preset_save_open: false,
             preset_menu_open: false,
             midi_popup_open: false,
+            midi_context_menu_open: false,
+            midi_cleanup_menu_open: false,
             preset_name_buf: String::new(),
             presets: Vec::new(),
             selected_preset: 0,
@@ -269,6 +273,8 @@ impl NativeWindowState {
         self.draw_spectrum(&rt, &brushes, &formats, &layout);
         self.draw_preset_menu(&rt, &brushes, &formats, &layout);
         self.draw_midi_popup(&rt, &brushes, &formats, &layout);
+        self.draw_midi_context_menu(&rt, &brushes, &formats, &layout);
+        self.draw_midi_cleanup_menu(&rt, &brushes, &formats, &layout);
         self.draw_preset_save_popup(&rt, &brushes, &formats, &layout);
         self.draw_numeric_popup(&rt, &brushes, &formats, &layout);
 
@@ -815,7 +821,7 @@ impl NativeWindowState {
                 group.label,
                 UiRect::new(
                     group.rect.x + 8.0 * s,
-                    group.rect.y - 12.0 * s,
+                    group.rect.y - 10.0 * s,
                     group.rect.w - 16.0 * s,
                     10.0 * s,
                 ),
@@ -1207,10 +1213,20 @@ impl NativeWindowState {
             return;
         };
         let layout = Layout::new(size.0 as f32, size.1 as f32, self.scale);
+        let bar = CommandBarRects::new(&layout);
+        if bar.midi.contains(x, y) {
+            self.midi_context_menu_open = !self.midi_context_menu_open;
+            self.midi_cleanup_menu_open = false;
+            self.preset_menu_open = false;
+            invalidate(self.hwnd);
+            return;
+        }
         for zone in numeric_hit_zones(&layout) {
             if zone.rect.contains(x, y) {
                 self.open_numeric_input(zone.target);
                 self.preset_menu_open = false;
+                self.midi_context_menu_open = false;
+                self.midi_cleanup_menu_open = false;
                 invalidate(self.hwnd);
                 break;
             }
@@ -1223,6 +1239,8 @@ impl NativeWindowState {
                 self.numeric_input = None;
                 self.preset_save_open = false;
                 self.preset_menu_open = false;
+                self.midi_context_menu_open = false;
+                self.midi_cleanup_menu_open = false;
                 if self.midi_popup_open {
                     self.midi_learn.learning_target.store(-1, Ordering::Release);
                 }
@@ -1500,12 +1518,16 @@ impl NativeWindowState {
                 self.numeric_input = None;
                 self.preset_save_open = false;
                 self.midi_popup_open = false;
+                self.midi_context_menu_open = false;
+                self.midi_cleanup_menu_open = false;
             }
             CommandAction::OpenPresetSave => {
                 self.preset_save_open = true;
                 self.preset_menu_open = false;
                 self.midi_popup_open = false;
                 self.numeric_input = None;
+                self.midi_context_menu_open = false;
+                self.midi_cleanup_menu_open = false;
                 self.preset_name_buf.clear();
             }
             CommandAction::DeletePreset => {
@@ -1517,6 +1539,8 @@ impl NativeWindowState {
                     }
                 }
                 self.preset_menu_open = false;
+                self.midi_context_menu_open = false;
+                self.midi_cleanup_menu_open = false;
             }
             CommandAction::Undo => self.undo(),
             CommandAction::Redo => self.redo(),
@@ -1530,6 +1554,8 @@ impl NativeWindowState {
                     self.preset_menu_open = false;
                     self.preset_save_open = false;
                     self.numeric_input = None;
+                    self.midi_context_menu_open = false;
+                    self.midi_cleanup_menu_open = false;
                 }
             }
         }
@@ -1617,6 +1643,12 @@ impl NativeWindowState {
         self.preset_menu_open = false;
     }
 
+    fn persist_midi_mapping(&self) {
+        self.midi_learn.sync_mutex_from_atomic_if_needed();
+        let current = self.midi_learn.mappings.lock().clone();
+        *self.midi_learn.saved_mappings.lock() = current;
+    }
+
     fn handle_overlay_click(&mut self, x: f32, y: f32, layout: &Layout) -> bool {
         if let Some(input) = self.numeric_input.as_ref() {
             let popup = NumericPopupLayout::new(layout, input);
@@ -1670,6 +1702,75 @@ impl NativeWindowState {
                 return true;
             }
             return popup.dialog.contains(x, y) || layout.full.contains(x, y);
+        }
+
+        if self.midi_context_menu_open {
+            self.midi_learn.sync_mutex_from_atomic_if_needed();
+            let menu = MidiContextMenuLayout::new(layout);
+            if self.midi_cleanup_menu_open {
+                let cleanup =
+                    MidiCleanupMenuLayout::new(layout, self.midi_learn.mappings.lock().len());
+                if cleanup.clear.contains(x, y) {
+                    self.midi_learn.mappings.lock().clear();
+                    self.midi_learn.sync_atomic_from_mutex();
+                    self.midi_learn.learning_target.store(-1, Ordering::Release);
+                    self.midi_cleanup_menu_open = false;
+                    self.midi_context_menu_open = false;
+                    return true;
+                }
+                if let Some(index) = cleanup.hit_mapping(x, y) {
+                    let mut sorted: Vec<u8> =
+                        self.midi_learn.mappings.lock().keys().copied().collect();
+                    sorted.sort_unstable();
+                    if let Some(cc) = sorted.get(index).copied() {
+                        self.midi_learn.mappings.lock().remove(&cc);
+                        self.midi_learn.sync_atomic_from_mutex();
+                    }
+                    return true;
+                }
+                if cleanup.rect.contains(x, y) {
+                    return true;
+                }
+            }
+
+            if let Some(index) = menu.hit_item(x, y) {
+                match index {
+                    0 => {
+                        let enabled = self.midi_learn.midi_enabled.load(Ordering::Relaxed);
+                        self.midi_learn
+                            .midi_enabled
+                            .store(!enabled, Ordering::Release);
+                        self.midi_context_menu_open = false;
+                    }
+                    1 => {
+                        self.midi_cleanup_menu_open = true;
+                    }
+                    2 => {
+                        let saved = self.midi_learn.saved_mappings.lock().clone();
+                        *self.midi_learn.mappings.lock() = saved;
+                        self.midi_learn.sync_atomic_from_mutex();
+                        self.midi_learn.learning_target.store(-1, Ordering::Release);
+                        self.midi_context_menu_open = false;
+                        self.midi_cleanup_menu_open = false;
+                    }
+                    3 => {
+                        let current = self.midi_learn.mappings.lock().clone();
+                        *self.midi_learn.saved_mappings.lock() = current;
+                        self.midi_context_menu_open = false;
+                        self.midi_cleanup_menu_open = false;
+                    }
+                    4 => {
+                        self.midi_context_menu_open = false;
+                        self.midi_cleanup_menu_open = false;
+                    }
+                    _ => {}
+                }
+                return true;
+            }
+
+            self.midi_context_menu_open = false;
+            self.midi_cleanup_menu_open = false;
+            return true;
         }
 
         if self.preset_menu_open {
@@ -1942,6 +2043,184 @@ impl NativeWindowState {
             true,
             false,
             layout.s,
+        );
+    }
+
+    fn draw_midi_context_menu(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        if !self.midi_context_menu_open {
+            return;
+        }
+
+        let s = layout.s;
+        let menu = MidiContextMenuLayout::new(layout);
+        let enabled = self.midi_learn.midi_enabled.load(Ordering::Relaxed);
+        let items = ["MIDI On/Off", "Clean Up...", "Roll Back", "Save", "Close"];
+
+        card(rt, menu.rect, 8.0 * s, brushes);
+        for (index, label) in items.iter().enumerate() {
+            let row = menu.item_rect(index);
+            let emphasized = (index == 0 && enabled) || (index == 1 && self.midi_cleanup_menu_open);
+            fill_round(
+                rt,
+                row,
+                4.0 * s,
+                if emphasized {
+                    &brushes.accent_soft
+                } else {
+                    &brushes.control
+                },
+            );
+            stroke_round(
+                rt,
+                row,
+                4.0 * s,
+                if emphasized {
+                    &brushes.accent
+                } else {
+                    &brushes.border
+                },
+                1.0,
+            );
+            draw_text(
+                rt,
+                label,
+                UiRect::new(row.x + 10.0 * s, row.y, row.w - 56.0 * s, row.h),
+                &formats.small,
+                if emphasized {
+                    &brushes.text_primary
+                } else {
+                    &brushes.text_secondary
+                },
+                Align::Leading,
+            );
+
+            match index {
+                0 => draw_text(
+                    rt,
+                    if enabled { "On" } else { "Off" },
+                    UiRect::new(row.right() - 40.0 * s, row.y, 28.0 * s, row.h),
+                    &formats.tiny,
+                    if enabled {
+                        &brushes.green
+                    } else {
+                        &brushes.red
+                    },
+                    Align::Trailing,
+                ),
+                1 => draw_text(
+                    rt,
+                    ">",
+                    UiRect::new(row.right() - 28.0 * s, row.y, 16.0 * s, row.h),
+                    &formats.body,
+                    &brushes.text_tertiary,
+                    Align::Trailing,
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    fn draw_midi_cleanup_menu(
+        &self,
+        rt: &ID2D1HwndRenderTarget,
+        brushes: &Brushes,
+        formats: &TextFormats,
+        layout: &Layout,
+    ) {
+        if !self.midi_context_menu_open || !self.midi_cleanup_menu_open {
+            return;
+        }
+
+        self.midi_learn.sync_mutex_from_atomic_if_needed();
+        let mappings = self.midi_learn.mappings.lock().clone();
+        let mut sorted: Vec<(u8, u8)> = mappings.iter().map(|(&cc, &param)| (cc, param)).collect();
+        sorted.sort_by_key(|&(cc, _)| cc);
+
+        let s = layout.s;
+        let menu = MidiCleanupMenuLayout::new(layout, sorted.len());
+        card(rt, menu.rect, 8.0 * s, brushes);
+
+        if sorted.is_empty() {
+            let row = menu.empty_rect();
+            fill_round(rt, row, 4.0 * s, &brushes.control);
+            stroke_round(rt, row, 4.0 * s, &brushes.border, 1.0);
+            draw_text(
+                rt,
+                "No mappings",
+                row,
+                &formats.small,
+                &brushes.text_secondary,
+                Align::Center,
+            );
+        } else {
+            for (index, (cc, param_index)) in sorted.iter().enumerate() {
+                let row = menu.mapping_rect(index);
+                let label = format!(
+                    "CC{cc} -> {}",
+                    MIDI_PARAM_NAMES
+                        .get(*param_index as usize)
+                        .copied()
+                        .unwrap_or("?")
+                );
+                fill_round(rt, row, 4.0 * s, &brushes.control);
+                stroke_round(rt, row, 4.0 * s, &brushes.border, 1.0);
+                draw_text(
+                    rt,
+                    &label,
+                    UiRect::new(row.x + 10.0 * s, row.y, row.w - 66.0 * s, row.h),
+                    &formats.tiny,
+                    &brushes.text_secondary,
+                    Align::Leading,
+                );
+                draw_text(
+                    rt,
+                    "Delete",
+                    UiRect::new(row.right() - 52.0 * s, row.y, 40.0 * s, row.h),
+                    &formats.tiny,
+                    &brushes.red,
+                    Align::Trailing,
+                );
+            }
+        }
+
+        fill_round(
+            rt,
+            menu.clear,
+            4.0 * s,
+            if sorted.is_empty() {
+                &brushes.control
+            } else {
+                &brushes.red_soft
+            },
+        );
+        stroke_round(
+            rt,
+            menu.clear,
+            4.0 * s,
+            if sorted.is_empty() {
+                &brushes.border
+            } else {
+                &brushes.red
+            },
+            1.0,
+        );
+        draw_text(
+            rt,
+            "Clear All",
+            menu.clear,
+            &formats.small,
+            if sorted.is_empty() {
+                &brushes.text_tertiary
+            } else {
+                &brushes.red
+            },
+            Align::Center,
         );
     }
 }
@@ -2577,6 +2856,100 @@ impl MidiPopupLayout {
 }
 
 #[derive(Clone, Copy)]
+struct MidiContextMenuLayout {
+    rect: UiRect,
+    item_h: f32,
+}
+
+impl MidiContextMenuLayout {
+    fn new(layout: &Layout) -> Self {
+        let s = layout.s;
+        let bar = CommandBarRects::new(layout);
+        let item_h = 24.0 * s;
+        Self {
+            rect: UiRect::new(
+                bar.midi.x,
+                bar.midi.bottom() + 4.0 * s,
+                172.0 * s,
+                item_h * 5.0 + 8.0 * s,
+            ),
+            item_h,
+        }
+    }
+
+    fn item_rect(self, index: usize) -> UiRect {
+        UiRect::new(
+            self.rect.x + 4.0,
+            self.rect.y + 4.0 + index as f32 * self.item_h,
+            self.rect.w - 8.0,
+            self.item_h - 2.0,
+        )
+    }
+
+    fn hit_item(self, x: f32, y: f32) -> Option<usize> {
+        if !self.rect.contains(x, y) {
+            return None;
+        }
+        let local = (y - self.rect.y - 4.0).max(0.0);
+        let idx = (local / self.item_h).floor() as usize;
+        (idx < 5).then_some(idx)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MidiCleanupMenuLayout {
+    rect: UiRect,
+    item_h: f32,
+    mapping_count: usize,
+    clear: UiRect,
+}
+
+impl MidiCleanupMenuLayout {
+    fn new(layout: &Layout, mapping_count: usize) -> Self {
+        let s = layout.s;
+        let context = MidiContextMenuLayout::new(layout);
+        let item_h = 24.0 * s;
+        let body_rows = mapping_count.max(1) + 1;
+        let rect = UiRect::new(
+            context.rect.right() + 2.0 * s,
+            context.rect.y + item_h,
+            210.0 * s,
+            body_rows as f32 * item_h + 8.0 * s,
+        );
+        let clear_y = rect.y + 4.0 + mapping_count.max(1) as f32 * item_h;
+        let clear = UiRect::new(rect.x + 4.0, clear_y, rect.w - 8.0, item_h - 2.0);
+        Self {
+            rect,
+            item_h,
+            mapping_count,
+            clear,
+        }
+    }
+
+    fn mapping_rect(self, index: usize) -> UiRect {
+        UiRect::new(
+            self.rect.x + 4.0,
+            self.rect.y + 4.0 + index as f32 * self.item_h,
+            self.rect.w - 8.0,
+            self.item_h - 2.0,
+        )
+    }
+
+    fn empty_rect(self) -> UiRect {
+        self.mapping_rect(0)
+    }
+
+    fn hit_mapping(self, x: f32, y: f32) -> Option<usize> {
+        if self.mapping_count == 0 || !self.rect.contains(x, y) {
+            return None;
+        }
+        let local = (y - self.rect.y - 4.0).max(0.0);
+        let idx = (local / self.item_h).floor() as usize;
+        (idx < self.mapping_count).then_some(idx)
+    }
+}
+
+#[derive(Clone, Copy)]
 struct SegmentGroup {
     label: &'static str,
     rect: UiRect,
@@ -2834,9 +3207,12 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
 fn knob_groups(layout: &Layout) -> Vec<KnobGroup> {
     let s = layout.s;
     let inner = layout.controls.shrink(8.0 * s);
-    let row_h = 76.0 * s;
-    let row_gap = 11.0 * s;
-    let mut y = inner.y + 80.0 * s;
+    let toggle_h = 34.0 * s;
+    let toggle_gap = 10.0 * s;
+    let row_gap = 14.0 * s;
+    let mut y = inner.y + 76.0 * s;
+    let rows_bottom = inner.bottom() - toggle_h - toggle_gap;
+    let row_h = ((rows_bottom - y - row_gap * 2.0) / 3.0).max(52.0 * s);
 
     let main = knob_group(
         "Core",
@@ -2890,7 +3266,10 @@ fn knob_group(
     s: f32,
 ) -> KnobGroup {
     let slot_w = rect.w / defs.len().max(1) as f32;
-    let knob_size = (slot_w * 0.46).min(33.0 * s).max(18.0 * s);
+    let knob_size = (slot_w * 0.46)
+        .min((rect.h - 44.0 * s).max(12.0 * s))
+        .min(33.0 * s)
+        .max(12.0 * s);
     let knobs = defs
         .iter()
         .enumerate()
@@ -3613,6 +3992,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         if msg == WM_NCDESTROY {
             let _ = KillTimer(Some(hwnd), TIMER_ID);
             if !state_ptr.is_null() {
+                (*state_ptr).persist_midi_mapping();
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 drop(Box::from_raw(state_ptr));
             }
