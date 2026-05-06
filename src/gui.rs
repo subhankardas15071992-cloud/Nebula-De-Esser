@@ -4,7 +4,10 @@
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
 use crate::analyzer::SpectrumData;
-use crate::{MidiLearnShared, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES};
+use crate::{
+    MidiLearnShared, PersistentStore, StoredPreset, StoredPresetSnapshot, MIDI_PARAM_COUNT,
+    MIDI_PARAM_NAMES,
+};
 use nih_plug_egui::egui::{
     self, Color32, Context, FontFamily, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
 };
@@ -134,6 +137,8 @@ pub struct ParamSnapshot {
     pub input_pan: f64,
     pub output_level: f64,
     pub output_pan: f64,
+    pub bypass: bool,
+    pub oversampling: u32,
     pub cut_width: f64,
     pub cut_depth: f64,
     pub cut_slope: f64,
@@ -161,6 +166,8 @@ impl ParamSnapshot {
             input_pan: p.input_pan,
             output_level: p.output_level,
             output_pan: p.output_pan,
+            bypass: p.bypass,
+            oversampling: p.oversampling,
             cut_width: p.cut_width,
             cut_depth: p.cut_depth,
             cut_slope: p.cut_slope,
@@ -187,10 +194,72 @@ impl ParamSnapshot {
         ch.input_pan = Some(self.input_pan);
         ch.output_level = Some(self.output_level);
         ch.output_pan = Some(self.output_pan);
+        ch.bypass = Some(self.bypass);
+        ch.oversampling = Some(self.oversampling);
         ch.cut_width = Some(self.cut_width);
         ch.cut_depth = Some(self.cut_depth);
         ch.cut_slope = Some(self.cut_slope);
         ch.mix = Some(self.mix);
+    }
+
+    pub fn from_stored(snapshot: &StoredPresetSnapshot) -> Self {
+        Self {
+            threshold: snapshot.threshold as f64,
+            max_reduction: snapshot.max_reduction as f64,
+            min_freq: snapshot.min_freq as f64,
+            max_freq: snapshot.max_freq as f64,
+            mode_relative: snapshot.mode_relative,
+            basis_mode: snapshot.basis_mode.clamp(0, 2) as u32,
+            use_wide_range: snapshot.use_wide_range,
+            filter_solo: snapshot.filter_solo,
+            lookahead_enabled: snapshot.lookahead_enabled,
+            lookahead_ms: snapshot.lookahead_ms as f64,
+            trigger_hear: snapshot.trigger_hear,
+            stereo_link: snapshot.stereo_link as f64,
+            stereo_mid_side: snapshot.stereo_mid_side,
+            sidechain_external: snapshot.sidechain_external,
+            vocal_mode: snapshot.vocal_mode,
+            input_level: snapshot.input_level as f64,
+            input_pan: snapshot.input_pan as f64,
+            output_level: snapshot.output_level as f64,
+            output_pan: snapshot.output_pan as f64,
+            bypass: snapshot.bypass,
+            oversampling: snapshot.oversampling.clamp(0, 4) as u32,
+            cut_width: snapshot.cut_width as f64,
+            cut_depth: snapshot.cut_depth as f64,
+            cut_slope: snapshot.cut_slope as f64,
+            mix: snapshot.mix as f64,
+        }
+    }
+
+    pub fn to_stored(&self) -> StoredPresetSnapshot {
+        StoredPresetSnapshot {
+            threshold: self.threshold as f32,
+            max_reduction: self.max_reduction as f32,
+            min_freq: self.min_freq as f32,
+            max_freq: self.max_freq as f32,
+            mode_relative: self.mode_relative,
+            basis_mode: self.basis_mode as i32,
+            use_wide_range: self.use_wide_range,
+            filter_solo: self.filter_solo,
+            lookahead_enabled: self.lookahead_enabled,
+            lookahead_ms: self.lookahead_ms as f32,
+            trigger_hear: self.trigger_hear,
+            stereo_link: self.stereo_link as f32,
+            stereo_mid_side: self.stereo_mid_side,
+            sidechain_external: self.sidechain_external,
+            vocal_mode: self.vocal_mode,
+            input_level: self.input_level as f32,
+            input_pan: self.input_pan as f32,
+            output_level: self.output_level as f32,
+            output_pan: self.output_pan as f32,
+            bypass: self.bypass,
+            oversampling: self.oversampling as i32,
+            cut_width: self.cut_width as f32,
+            cut_depth: self.cut_depth as f32,
+            mix: self.mix as f32,
+            cut_slope: self.cut_slope as f32,
+        }
     }
 }
 
@@ -227,6 +296,7 @@ pub struct NumInput {
 pub struct NebulaGui {
     pub spectrum: Arc<Mutex<SpectrumData>>,
     pub midi_learn: Arc<MidiLearnShared>,
+    pub storage: Arc<PersistentStore>,
     pub num_input: NumInput,
     pub time: f64,
     pub smooth_mags: Vec<f32>,
@@ -252,14 +322,24 @@ pub struct NebulaGui {
     pub preset_anchor: Pos2,
 }
 impl NebulaGui {
-    pub fn new(spectrum: Arc<Mutex<SpectrumData>>, midi_learn: Arc<MidiLearnShared>) -> Self {
+    pub fn new(
+        spectrum: Arc<Mutex<SpectrumData>>,
+        midi_learn: Arc<MidiLearnShared>,
+        storage: Arc<PersistentStore>,
+    ) -> Self {
+        let presets = storage
+            .presets()
+            .into_iter()
+            .map(|preset| (preset.name, ParamSnapshot::from_stored(&preset.snapshot)))
+            .collect();
         Self {
             spectrum,
             midi_learn,
+            storage,
             num_input: NumInput::default(),
             time: 0.0,
             smooth_mags: vec![-120.0_f32; 1025],
-            presets: Vec::new(),
+            presets,
             preset_name_buf: String::new(),
             preset_save_popup: false,
             preset_save_focus_pending: false,
@@ -280,6 +360,29 @@ impl NebulaGui {
             os_anchor: Pos2::ZERO,
             preset_anchor: Pos2::ZERO,
         }
+    }
+
+    fn persist_presets(&self) {
+        let presets = self
+            .presets
+            .iter()
+            .map(|(name, snapshot)| StoredPreset {
+                name: name.clone(),
+                snapshot: snapshot.to_stored(),
+            })
+            .collect();
+        self.storage.save_presets(presets);
+    }
+
+    fn persist_midi_state(&self) {
+        self.midi_learn.persist_as_saved(&self.storage);
+    }
+}
+
+impl Drop for NebulaGui {
+    fn drop(&mut self) {
+        self.persist_presets();
+        self.persist_midi_state();
     }
 }
 
@@ -678,6 +781,7 @@ fn draw_command_bar(
         if gui.selected_preset > 0 {
             gui.selected_preset -= 1;
         }
+        gui.persist_presets();
     }
     {
         let p = ui.painter_at(rect);
@@ -2240,21 +2344,23 @@ fn draw_content_dialog_preset(
                     TEXT_SEC,
                 );
             }
-            let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
-                .id_source("neb_prsave_input")
-                .font(FontId::new(11.5 * s, FontFamily::Proportional))
-                .text_color(TEXT_PRI)
-                .frame(false)
-                .desired_width(input_rect.width())
-                .hint_text("Preset name...");
-            let r = ui.put(input_rect, te);
-            if gui.preset_save_focus_pending {
-                r.request_focus();
-                gui.preset_save_focus_pending = false;
-            }
-            if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                do_save(gui, p);
-            }
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+                let te = egui::TextEdit::singleline(&mut gui.preset_name_buf)
+                    .id_source("neb_prsave_input")
+                    .font(FontId::new(11.5 * s, FontFamily::Proportional))
+                    .text_color(TEXT_PRI)
+                    .frame(false)
+                    .desired_width(input_rect.width())
+                    .hint_text("Preset name...");
+                let r = ui.add_sized(input_rect.size(), te);
+                if gui.preset_save_focus_pending {
+                    r.request_focus();
+                    gui.preset_save_focus_pending = false;
+                }
+                if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    do_save(gui, p);
+                }
+            });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 gui.preset_save_popup = false;
                 gui.preset_save_focus_pending = false;
@@ -2279,6 +2385,7 @@ fn do_save(gui: &mut NebulaGui, p: &GuiParams) {
         gui.presets.push((name, snap));
         gui.selected_preset = gui.presets.len() - 1;
     }
+    gui.persist_presets();
     gui.preset_save_popup = false;
     gui.preset_save_focus_pending = false;
 }
@@ -2515,6 +2622,7 @@ fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                             gui.midi_learn
                                 .midi_enabled
                                 .store(!cur, std::sync::atomic::Ordering::Release);
+                            gui.persist_midi_state();
                         }
                         1 => {
                             gui.midi_cleanup_menu = true;
@@ -2528,6 +2636,7 @@ fn draw_context_menu_midi(ctx: &Context, gui: &mut NebulaGui, s: f32) {
                         3 => {
                             let cur = gui.midi_learn.mappings.lock().clone();
                             *gui.midi_learn.saved_mappings.lock() = cur;
+                            gui.persist_midi_state();
                         }
                         4 => {
                             gui.midi_context_menu = false;
