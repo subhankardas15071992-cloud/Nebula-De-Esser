@@ -11,6 +11,9 @@ Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust wi
 
 Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control menu, enhanced preset manager, the plugin is now available in AUv2 format and Windows variant has not only been fixed but it's now the best variant of Nebula De-esser.
 
+**Note for Windows users:**
+- A small bugfix was released for Windows users on 7th May 2026 to fix the host UI scaling issues on some DAWs. So if you're facing this problem or simply you have installed the v2.9.0 of the plugin in your system prior to 7th May 2026, then please update to the new patched version.
+
 ---
 
 **Screenshot - macOS and Linux variant that uses EGUI:**
