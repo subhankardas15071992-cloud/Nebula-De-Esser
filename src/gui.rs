@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser v2.9.0 — Windows 11 WinUI 3 Dark Design Language
+// Nebula DeEsser — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,6 +15,13 @@ use nih_plug_egui::resizable_window::ResizableWindow;
 use nih_plug_egui::EguiState;
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+const VERSION_LABEL: &str = concat!(
+    "v",
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
 
 // ─── Nebula Sci-Fi Dark Palette — neon accents on deep black ─────────────────
 // WinUI layout structure preserved, sci-fi colour energy injected.
@@ -604,7 +611,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(bar.max.x - 12.0 * s, ty),
         egui::Align2::RIGHT_CENTER,
-        "v2.9",
+        VERSION_LABEL,
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
