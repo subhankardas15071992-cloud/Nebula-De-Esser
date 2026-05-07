@@ -36,11 +36,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
-    LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, ShowWindow, CREATESTRUCTW,
-    CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS, GWLP_USERDATA, HMENU, IDC_ARROW,
-    SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_ERASEBKGND, WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE,
-    WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS, GWLP_USERDATA, HMENU,
+    IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_ERASEBKGND,
+    WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
@@ -54,6 +55,19 @@ const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
 const TIMER_ID: usize = 7401;
 const TIMER_MS: u32 = 33;
+const VERSION_LABEL: &str = concat!(
+    "v",
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
+const SUBTITLE_LABEL: &str = concat!(
+    "Sibilance Processor  |  Native Direct2D  |  ",
+    "v",
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
 
 pub(super) fn create_editor(
     params: Arc<NebulaParams>,
@@ -95,8 +109,13 @@ impl Editor for NativeEditor {
         }
 
         let scale = f32::from_bits(self.scale_bits.load(Ordering::Acquire)).clamp(0.5, 3.0);
-        let width = (BASE_W * scale).round() as i32;
-        let height = (BASE_H * scale).round() as i32;
+        let parent_hwnd = HWND(parent_hwnd);
+        let scaled_width = (BASE_W * scale).round() as i32;
+        let scaled_height = (BASE_H * scale).round() as i32;
+        let (width, height) = client_size(parent_hwnd)
+            .filter(|(width, height)| *width > 100 && *height > 100)
+            .map(|(width, height)| (width as i32, height as i32))
+            .unwrap_or((scaled_width, scaled_height));
 
         let state = Box::new(NativeWindowState::new(
             self.params.clone(),
@@ -105,6 +124,7 @@ impl Editor for NativeEditor {
             self.midi_learn.clone(),
             self.storage.clone(),
             context,
+            parent_hwnd,
             scale,
         ));
         let state_ptr = Box::into_raw(state);
@@ -119,7 +139,7 @@ impl Editor for NativeEditor {
                 0,
                 width,
                 height,
-                Some(HWND(parent_hwnd)),
+                Some(parent_hwnd),
                 Option::<HMENU>::None,
                 module_instance(),
                 Some(state_ptr.cast::<c_void>()),
@@ -176,6 +196,7 @@ impl Drop for NativeWindowHandle {
 
 struct NativeWindowState {
     hwnd: HWND,
+    parent_hwnd: HWND,
     params: Arc<NebulaParams>,
     spectrum: Arc<Mutex<SpectrumData>>,
     meters: Arc<Meters>,
@@ -214,6 +235,7 @@ impl NativeWindowState {
         midi_learn: Arc<MidiLearnShared>,
         storage: Arc<PersistentStore>,
         context: Arc<dyn GuiContext>,
+        parent_hwnd: HWND,
         scale: f32,
     ) -> Self {
         let presets = storage
@@ -223,6 +245,7 @@ impl NativeWindowState {
             .collect();
         Self {
             hwnd: HWND::default(),
+            parent_hwnd,
             params,
             spectrum,
             meters,
@@ -255,12 +278,6 @@ impl NativeWindowState {
     }
 
     fn paint(&mut self) {
-        let Some(rt) = self.ensure_render_target() else {
-            return;
-        };
-        let Some(formats) = self.ensure_text_formats() else {
-            return;
-        };
         let Some(size) = client_size(self.hwnd) else {
             return;
         };
@@ -268,6 +285,12 @@ impl NativeWindowState {
         let h = size.1.max(1) as f32;
         let s = (w / BASE_W).min(h / BASE_H).max(0.45);
         let layout = Layout::new(w, h, s);
+        let Some(rt) = self.ensure_render_target() else {
+            return;
+        };
+        let Some(formats) = self.ensure_text_formats(layout.s) else {
+            return;
+        };
         let Some(brushes) = Brushes::new(&rt) else {
             return;
         };
@@ -350,8 +373,13 @@ impl NativeWindowState {
         );
         draw_text(
             rt,
-            "Sibilance Processor  |  Native Direct2D",
-            UiRect::new(44.0 * s, 30.0 * s, 260.0 * s, 18.0 * s),
+            SUBTITLE_LABEL,
+            UiRect::new(
+                44.0 * s,
+                30.0 * s,
+                (layout.full.right() - 300.0 * s).max(260.0 * s),
+                18.0 * s,
+            ),
             &formats.small,
             &brushes.text_tertiary,
             Align::Leading,
@@ -403,7 +431,7 @@ impl NativeWindowState {
 
         draw_text(
             rt,
-            "v2.9",
+            VERSION_LABEL,
             UiRect::new(layout.full.right() - 70.0 * s, 16.0 * s, 54.0 * s, 20.0 * s),
             &formats.body,
             &brushes.text_tertiary,
@@ -1335,7 +1363,7 @@ impl NativeWindowState {
         self.render_target.clone()
     }
 
-    fn ensure_text_formats(&mut self) -> Option<TextFormats> {
+    fn ensure_text_formats(&mut self, scale: f32) -> Option<TextFormats> {
         if self.text_formats.is_none() {
             if self.dwrite_factory.is_none() {
                 self.dwrite_factory = unsafe {
@@ -1343,10 +1371,36 @@ impl NativeWindowState {
                 };
             }
             let factory = self.dwrite_factory.as_ref()?;
-            let s = self.scale.max(0.5);
+            let s = scale.max(0.45);
             self.text_formats = Some(TextFormats::new(factory, s)?);
         }
         self.text_formats.clone()
+    }
+
+    fn resize_to_parent(&mut self) {
+        let Some((parent_width, parent_height)) = client_size(self.parent_hwnd) else {
+            return;
+        };
+        let Some((current_width, current_height)) = client_size(self.hwnd) else {
+            return;
+        };
+        if parent_width == current_width && parent_height == current_height {
+            return;
+        }
+
+        let _ = unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                0,
+                0,
+                parent_width.max(1) as i32,
+                parent_height.max(1) as i32,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        };
+        self.render_target = None;
+        self.text_formats = None;
     }
 
     fn target_value(&self, target: ControlTarget) -> f32 {
@@ -4128,10 +4182,12 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             WM_ERASEBKGND => LRESULT(1),
             WM_SIZE => {
                 state.render_target = None;
+                state.text_formats = None;
                 invalidate(hwnd);
                 LRESULT(0)
             }
             WM_TIMER => {
+                state.resize_to_parent();
                 invalidate(hwnd);
                 LRESULT(0)
             }
