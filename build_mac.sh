@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Nebula DeEsser v2.9.0 — macOS Universal Build (Native Apple Tools Only)
+# Nebula DeEsser v2.9 — macOS Universal Build (Native Apple Tools Only)
 # Builds Universal CLAP and AUv2 plugins (Apple Silicon ARM64 + Intel x86_64)
 # Uses only native Apple tools - no Homebrew or external dependencies
 # ─────────────────────────────────────────────────────────────────────────────
@@ -9,14 +9,15 @@ set -euo pipefail
 PLUGIN_NAME="nebula_desser"
 PLUGIN_DISPLAY="Nebula DeEsser"
 PLUGIN_VERSION="2.9.0"
+PLUGIN_VERSION_DISPLAY="2.9"
 BUNDLE_ID="audio.nebula.deesser"
 AUV2_TYPE="aufx"
 AUV2_SUBTYPE="NDeS"
 AUV2_MANUFACTURER="NbAu"
-AUV2_VERSION_INT="132096"
+AUV2_VERSION_INT="133376"
 
 echo "╔════════════════════════════════════════════════╗"
-echo "║  NEBULA DEESSER v2.9.0 — macOS Universal Build ║"
+echo "║  NEBULA DEESSER v2.9 — macOS Universal Build   ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
 
@@ -186,7 +187,7 @@ cat > "${AUV2_BUNDLE}/Contents/Info.plist" << PLIST
 PLIST
 
 echo ""
-echo "[✓] Build complete! — ${PLUGIN_DISPLAY} v${PLUGIN_VERSION}"
+echo "[✓] Build complete! — ${PLUGIN_DISPLAY} v${PLUGIN_VERSION_DISPLAY}"
 echo "[✓] Universal binary: ARM64 + x86_64"
 echo "[✓] CLAP bundle: ${CLAP_BUNDLE}"
 echo "[✓] AUv2 component: ${AUV2_BUNDLE}"
@@ -229,7 +230,7 @@ echo "• Intel Macs (x86_64) native"
 echo "• Universal binary: Runs natively on all supported Macs"
 echo "• Formats: CLAP + AUv2"
 echo ""
-echo "─── New in v2.9.0 ────────────────────────────────────────────────────"
+echo "─── New in v${PLUGIN_VERSION_DISPLAY} ──────────────────────────────────────────────────────"
 echo "• AUv2 export: macOS component builds through clap-wrapper"
 echo "• A/B State Comparison: Instant switching between two settings"
 echo "• Enhanced MIDI Control: Right-click menu with advanced options"
@@ -238,7 +239,7 @@ echo "• Native Apple Toolchain: No external dependencies required"
 echo "• Comprehensive Audio Tests: Validated DSP algorithms"
 echo ""
 echo "─── Industry Standard Features ────────���──────────────────────────────"
-echo "✓ Redesigned interface with visual feedback"
+echo "✓ FabFilter-style interface with visual feedback"
 echo "✓ Multiple detection modes (Relative/Absolute)"
 echo "✓ Frequency-range specific processing"
 echo "✓ Oversampling up to 8x for aliasing-free processing"
