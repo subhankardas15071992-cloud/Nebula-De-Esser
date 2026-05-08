@@ -275,7 +275,7 @@ Build directly with Cargo and the `xtask` bundle command (no helper scripts).
 #### **Linux (x86_64)**
 ```bash
 cargo build --release
-cargo run --release --package xtask -- bundle nebula-desser --release
+cargo run --release --package xtask -- bundle nebula_desser --release
 # Output: target/bundled/Nebula De-Esser.clap
 #         target/bundled/Nebula De-Esser.vst3
 ```
@@ -286,7 +286,7 @@ Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build To
 ```powershell
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
-cargo run --release --package xtask -- bundle nebula-desser --release
+cargo run --release --package xtask -- bundle nebula_desser --release
 # Output: target\bundled\Nebula De-Esser.clap
 #         target\bundled\Nebula De-Esser.vst3
 ```
@@ -295,7 +295,7 @@ cargo run --release --package xtask -- bundle nebula-desser --release
 ```bash
 cargo build --release --target aarch64-apple-darwin
 cargo build --release --target x86_64-apple-darwin
-cargo run --release --package xtask -- bundle nebula-desser --release
+cargo run --release --package xtask -- bundle nebula_desser --release
 # Output: target/bundled/Nebula De-Esser.clap
 #         target/bundled/Nebula De-Esser.vst3
 
