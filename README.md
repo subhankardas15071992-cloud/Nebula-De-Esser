@@ -9,10 +9,7 @@ Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Zer
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control menu, enhanced preset manager, the plugin is now available in AUv2 format and Windows variant has not only been fixed but it's now the best variant of Nebula De-esser.
-
-**Note for Windows users:**
-- A small bugfix was released for Windows users on 7th May 2026 to fix the host UI scaling issues on some DAWs. So if you're facing this problem or simply you have installed the v2.9.0 of the plugin in your system prior to 7th May 2026, then please update to the new patched version.
+Version 3.0.0 is a minor upgrade wherein the Bypass button is now hard bypass instead of the previous soft bypass, and the Windows variant gets DPI-awareness hardcoded into its GUI because it relies on Direct2D due to which unlike the macOS and Linux variants its GUI scaling is not abstracted from the OS, this fixes the scaling issues on DAWs like Reaper that don't employ internal graphics abstraction layer.
 
 ---
 
@@ -25,6 +22,16 @@ Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control 
 <img width="860" height="698" alt="Image" src="https://github.com/user-attachments/assets/46f6cfd2-2071-4346-b556-fb7746c713c0" />
 
 ---
+
+## ✨ **What's New in v3.0.0**
+
+### 🎛️ **Reprogrammed Bypass switch, and hardcoded DPI-awareness in the Windows variant**
+
+- **Reprogrammed Bypass Switch** The Bypass switch now programmed to hard bypass the plugin instead of soft bypass. So when toggled off it now completely removes the plugin from the signal path. This ensures easier comparison between the on and off state.
+- **Hardcoded DPI-awareness in the Windows variant** The Windows variant gets DPI-awareness hardcoded into its GUI because it relies on Direct2D due to which unlike the macOS and Linux variants its GUI scaling is not abstracted from the OS. This fixes the scaling issues on DAWs like Reaper that don't employ internal graphics abstraction layer. The Linux and macOS variant do not require it because all the scaling is taken care of by EGUI, which ensures perfect scaling regardless of the system DPI and scaling settings. EGUI is still not stable on Windows, that's why it will continue to use Direct2D.
+
+---
+
 ## ✨ **What's New in v2.9.0**
 
 ### 🎛️ **More DSP tuning and optimizations, new control menu and plugin now available in AUv2 format**
@@ -35,6 +42,7 @@ Version 2.9.0 brings in more advanced DSP tuning and optimizations, new control 
 - **Preset Manager Fixed** - The Preset Manager is now fully functional.
 - **AUv2 Format** - The plugin is now available in AUv2 format using clap-wrapper.
 - **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows variant EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula De-Esser.
+
 ---
 
 ## ✨ **What's New in v2.8.0**
