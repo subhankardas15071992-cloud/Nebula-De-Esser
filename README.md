@@ -14,12 +14,12 @@ Version 3.0.0 is a minor upgrade wherein the Bypass button is now hard bypass in
 ---
 
 **Screenshot - macOS and Linux variant that uses EGUI:**
-<img width="866" height="702" alt="Image" src="https://github.com/user-attachments/assets/2c68a617-86d1-46c2-8e36-5bd4e0ba723f" />
+<img width="866" height="675" alt="image" src="https://github.com/user-attachments/assets/ac2df1d5-bef2-4cff-906b-64ca0ab83b37" />
 
 ---
 
 **Screenshot - Windows variant that uses Direct2D:**
-<img width="860" height="698" alt="Image" src="https://github.com/user-attachments/assets/46f6cfd2-2071-4346-b556-fb7746c713c0" />
+<img width="860" height="698" alt="image" src="https://github.com/user-attachments/assets/0572ce0f-70ac-42f6-82e4-be86d93587aa" />
 
 ---
 
