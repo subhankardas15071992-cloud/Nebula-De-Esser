@@ -676,6 +676,41 @@ impl Plugin for NebulaDeEsser {
                 .store(f32_to_u32(0.0), Ordering::Relaxed);
         }
 
+        if self.params.bypass.value() > 0.5 {
+            if self.reported_latency != 0 {
+                context.set_latency_samples(0);
+                self.reported_latency = 0;
+            }
+
+            self.wet_mix.reset(self.params.mix.value() as f64);
+            self.meters
+                .det_bits
+                .store(f32_to_u32(-120.0), Ordering::Relaxed);
+            self.meters
+                .red_bits
+                .store(f32_to_u32(0.0), Ordering::Relaxed);
+
+            let samples = buffer.samples();
+            let channels = buffer.as_slice();
+            if channels.len() >= 2 {
+                let (left, right) = channels.split_at_mut(1);
+                let left_slice = &left[0];
+                let right_slice = &right[0];
+
+                for sample_index in 0..samples {
+                    let raw_l = left_slice[sample_index] as f64;
+                    let raw_r = right_slice[sample_index] as f64;
+                    self.analyzer.push((raw_l + raw_r) * 0.5);
+                    self.prev_main_l = raw_l;
+                    self.prev_main_r = raw_r;
+                    self.prev_sc_l = raw_l;
+                    self.prev_sc_r = raw_r;
+                }
+            }
+
+            return ProcessStatus::Normal;
+        }
+
         let threshold = self.params.threshold.value() as f64;
         let max_reduction = self.params.max_reduction.value() as f64;
         let min_freq = self.params.min_freq.value() as f64;
@@ -844,9 +879,7 @@ impl Plugin for NebulaDeEsser {
                     .process_frame(processed_in_l, processed_in_r, sc_in_l, sc_in_r, settings)
             };
 
-            let mix_target = if self.params.bypass.value() > 0.5 {
-                0.0
-            } else if trigger_hear || filter_solo {
+            let mix_target = if trigger_hear || filter_solo {
                 1.0
             } else {
                 self.params.mix.smoothed.next() as f64
