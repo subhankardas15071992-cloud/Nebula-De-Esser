@@ -31,6 +31,10 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, InvalidateRect, UpdateWindow, HBRUSH, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{
+    GetDpiForSystem, GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
 };
@@ -38,10 +42,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
     LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS, GWLP_USERDATA, HMENU,
-    IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_ERASEBKGND,
-    WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD,
-    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_DPICHANGED,
+    WM_DPICHANGED_AFTERPARENT, WM_DPICHANGED_BEFOREPARENT, WM_ERASEBKGND, WM_GETDLGCODE,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+    WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
@@ -53,6 +58,7 @@ use super::{
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
+const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 7401;
 const TIMER_MS: u32 = 33;
 const VERSION_LABEL: &str = concat!(
@@ -83,6 +89,7 @@ pub(super) fn create_editor(
         midi_learn,
         storage,
         scale_bits: AtomicU32::new(1.0_f32.to_bits()),
+        size_scale_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
     }))
 }
 
@@ -93,6 +100,7 @@ struct NativeEditor {
     midi_learn: Arc<MidiLearnShared>,
     storage: Arc<PersistentStore>,
     scale_bits: AtomicU32,
+    size_scale_bits: Arc<AtomicU32>,
 }
 
 impl Editor for NativeEditor {
@@ -108,24 +116,40 @@ impl Editor for NativeEditor {
             return Box::new(());
         }
 
-        let scale = f32::from_bits(self.scale_bits.load(Ordering::Acquire)).clamp(0.5, 3.0);
         let parent_hwnd = HWND(parent_hwnd);
-        let scaled_width = (BASE_W * scale).round() as i32;
-        let scaled_height = (BASE_H * scale).round() as i32;
+        let dpi_scope = DpiAwarenessScope::enter();
+        let host_scale = f32::from_bits(self.scale_bits.load(Ordering::Acquire)).clamp(0.5, 3.0);
+        let initial_dpi = dpi_for_window(parent_hwnd);
+        let render_scale = host_scale.max(dpi_scale(initial_dpi)).clamp(0.5, 3.0);
+        let size_scale = (render_scale / host_scale.max(0.5)).clamp(1.0, 3.0);
+        self.size_scale_bits
+            .store(size_scale.to_bits(), Ordering::Release);
+
+        let scaled_width = (BASE_W * render_scale).round() as i32;
+        let scaled_height = (BASE_H * render_scale).round() as i32;
         let (width, height) = client_size(parent_hwnd)
             .filter(|(width, height)| *width > 100 && *height > 100)
-            .map(|(width, height)| (width as i32, height as i32))
+            .map(|(width, height)| {
+                (
+                    (width as i32).max(scaled_width),
+                    (height as i32).max(scaled_height),
+                )
+            })
             .unwrap_or((scaled_width, scaled_height));
 
+        let request_host_resize = size_scale > 1.01;
+        let resize_context = context.clone();
         let state = Box::new(NativeWindowState::new(
             self.params.clone(),
             self.spectrum.clone(),
             self.meters.clone(),
             self.midi_learn.clone(),
             self.storage.clone(),
+            self.size_scale_bits.clone(),
             context,
             parent_hwnd,
-            scale,
+            host_scale,
+            initial_dpi,
         ));
         let state_ptr = Box::into_raw(state);
 
@@ -145,11 +169,15 @@ impl Editor for NativeEditor {
                 Some(state_ptr.cast::<c_void>()),
             )
         };
+        drop(dpi_scope);
 
         match hwnd {
             Ok(hwnd) => unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOW);
                 let _ = UpdateWindow(hwnd);
+                if request_host_resize {
+                    let _ = resize_context.request_resize();
+                }
                 Box::new(NativeWindowHandle {
                     hwnd: hwnd.0 as isize,
                 })
@@ -162,12 +190,19 @@ impl Editor for NativeEditor {
     }
 
     fn size(&self) -> (u32, u32) {
-        (BASE_W as u32, BASE_H as u32)
+        let size_scale =
+            f32::from_bits(self.size_scale_bits.load(Ordering::Acquire)).clamp(1.0, 3.0);
+        (
+            (BASE_W * size_scale).round() as u32,
+            (BASE_H * size_scale).round() as u32,
+        )
     }
 
     fn set_scale_factor(&self, factor: f32) -> bool {
         self.scale_bits
             .store(factor.max(0.5).to_bits(), Ordering::Release);
+        self.size_scale_bits
+            .store(1.0_f32.to_bits(), Ordering::Release);
         true
     }
 
@@ -202,6 +237,7 @@ struct NativeWindowState {
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
     storage: Arc<PersistentStore>,
+    size_scale_bits: Arc<AtomicU32>,
     context: Arc<dyn GuiContext>,
     d2d_factory: Option<ID2D1Factory>,
     dwrite_factory: Option<IDWriteFactory>,
@@ -224,7 +260,8 @@ struct NativeWindowState {
     active_state: char,
     undo_stack: Vec<ParamSnapshot>,
     redo_stack: Vec<ParamSnapshot>,
-    scale: f32,
+    host_scale: f32,
+    dpi: u32,
 }
 
 impl NativeWindowState {
@@ -234,9 +271,11 @@ impl NativeWindowState {
         meters: Arc<Meters>,
         midi_learn: Arc<MidiLearnShared>,
         storage: Arc<PersistentStore>,
+        size_scale_bits: Arc<AtomicU32>,
         context: Arc<dyn GuiContext>,
         parent_hwnd: HWND,
-        scale: f32,
+        host_scale: f32,
+        dpi: u32,
     ) -> Self {
         let presets = storage
             .presets()
@@ -251,6 +290,7 @@ impl NativeWindowState {
             meters,
             midi_learn,
             storage,
+            size_scale_bits,
             context,
             d2d_factory: None,
             dwrite_factory: None,
@@ -273,16 +313,16 @@ impl NativeWindowState {
             active_state: 'A',
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            scale,
+            host_scale,
+            dpi: dpi.max(DEFAULT_DPI),
         }
     }
 
     fn paint(&mut self) {
-        let Some(size) = client_size(self.hwnd) else {
+        self.refresh_dpi();
+        let Some((w, h)) = self.logical_client_size() else {
             return;
         };
-        let w = size.0.max(1) as f32;
-        let h = size.1.max(1) as f32;
         let s = (w / BASE_W).min(h / BASE_H).max(0.45);
         let layout = Layout::new(w, h, s);
         let Some(rt) = self.ensure_render_target() else {
@@ -1144,10 +1184,10 @@ impl NativeWindowState {
 
     fn mouse_down(&mut self, x: f32, y: f32) {
         let _ = unsafe { SetFocus(Some(self.hwnd)) };
-        let Some(size) = client_size(self.hwnd) else {
+        let Some((w, h)) = self.logical_client_size() else {
             return;
         };
-        let layout = Layout::new(size.0 as f32, size.1 as f32, self.scale);
+        let layout = Layout::new(w, h, self.render_scale());
         if self.handle_overlay_click(x, y, &layout) {
             invalidate(self.hwnd);
             return;
@@ -1245,10 +1285,10 @@ impl NativeWindowState {
             return;
         }
 
-        let Some(size) = client_size(self.hwnd) else {
+        let Some((w, h)) = self.logical_client_size() else {
             return;
         };
-        let layout = Layout::new(size.0 as f32, size.1 as f32, self.scale);
+        let layout = Layout::new(w, h, self.render_scale());
         let bar = CommandBarRects::new(&layout);
         if bar.midi.contains(x, y) {
             self.midi_context_menu_open = !self.midi_context_menu_open;
@@ -1344,8 +1384,8 @@ impl NativeWindowState {
                     format: DXGI_FORMAT_UNKNOWN,
                     alphaMode: D2D1_ALPHA_MODE_UNKNOWN,
                 },
-                dpiX: 0.0,
-                dpiY: 0.0,
+                dpiX: self.render_dpi(),
+                dpiY: self.render_dpi(),
                 usage: D2D1_RENDER_TARGET_USAGE_NONE,
                 minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
             };
@@ -1378,13 +1418,18 @@ impl NativeWindowState {
     }
 
     fn resize_to_parent(&mut self) {
+        let _dpi_scope = DpiAwarenessScope::enter();
+        self.refresh_dpi();
         let Some((parent_width, parent_height)) = client_size(self.parent_hwnd) else {
             return;
         };
         let Some((current_width, current_height)) = client_size(self.hwnd) else {
             return;
         };
-        if parent_width == current_width && parent_height == current_height {
+        let (desired_width, desired_height) = self.desired_pixel_size();
+        let target_width = parent_width.max(desired_width).max(1);
+        let target_height = parent_height.max(desired_height).max(1);
+        if target_width == current_width && target_height == current_height {
             return;
         }
 
@@ -1394,13 +1439,70 @@ impl NativeWindowState {
                 None,
                 0,
                 0,
-                parent_width.max(1) as i32,
-                parent_height.max(1) as i32,
+                target_width as i32,
+                target_height as i32,
                 SWP_NOZORDER | SWP_NOACTIVATE,
             )
         };
         self.render_target = None;
         self.text_formats = None;
+    }
+
+    fn refresh_dpi(&mut self) {
+        let dpi = dpi_for_window(self.hwnd);
+        if dpi != self.dpi {
+            self.dpi = dpi;
+            self.update_size_scale();
+            self.render_target = None;
+            self.text_formats = None;
+        }
+    }
+
+    fn handle_dpi_changed(&mut self, dpi: u32) {
+        self.dpi = dpi.max(DEFAULT_DPI);
+        self.update_size_scale();
+        self.render_target = None;
+        self.text_formats = None;
+        let _ = self.context.request_resize();
+        self.resize_to_parent();
+        invalidate(self.hwnd);
+    }
+
+    fn update_size_scale(&self) {
+        let size_scale = (self.render_scale() / self.host_scale.max(0.5)).clamp(1.0, 3.0);
+        self.size_scale_bits
+            .store(size_scale.to_bits(), Ordering::Release);
+    }
+
+    fn render_scale(&self) -> f32 {
+        self.host_scale.max(dpi_scale(self.dpi)).clamp(0.5, 3.0)
+    }
+
+    fn render_dpi(&self) -> f32 {
+        DEFAULT_DPI as f32 * self.render_scale()
+    }
+
+    fn desired_pixel_size(&self) -> (u32, u32) {
+        let scale = self.render_scale();
+        (
+            (BASE_W * scale).round().max(1.0) as u32,
+            (BASE_H * scale).round().max(1.0) as u32,
+        )
+    }
+
+    fn logical_client_size(&self) -> Option<(f32, f32)> {
+        let scale = self.render_scale();
+        client_size(self.hwnd).map(|(width, height)| {
+            (
+                (width as f32 / scale).max(1.0),
+                (height as f32 / scale).max(1.0),
+            )
+        })
+    }
+
+    fn logical_point(&self, x: f32, y: f32) -> (f32, f32) {
+        let scale = self.render_scale();
+        (x / scale, y / scale)
     }
 
     fn target_value(&self, target: ControlTarget) -> f32 {
@@ -4093,6 +4195,50 @@ fn client_size(hwnd: HWND) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
+struct DpiAwarenessScope {
+    previous: Option<DPI_AWARENESS_CONTEXT>,
+}
+
+impl DpiAwarenessScope {
+    fn enter() -> Self {
+        let previous =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        Self {
+            previous: (!previous.0.is_null()).then_some(previous),
+        }
+    }
+}
+
+impl Drop for DpiAwarenessScope {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous {
+            let _ = unsafe { SetThreadDpiAwarenessContext(previous) };
+        }
+    }
+}
+
+fn dpi_for_window(hwnd: HWND) -> u32 {
+    let dpi = if hwnd.0.is_null() {
+        0
+    } else {
+        unsafe { GetDpiForWindow(hwnd) }
+    };
+    if dpi == 0 {
+        unsafe { GetDpiForSystem() }.max(DEFAULT_DPI)
+    } else {
+        dpi.max(DEFAULT_DPI)
+    }
+}
+
+fn dpi_from_wparam(wparam: WPARAM) -> u32 {
+    let dpi_x = (wparam.0 as u32) & 0xffff;
+    dpi_x.max(DEFAULT_DPI)
+}
+
+fn dpi_scale(dpi: u32) -> f32 {
+    (dpi.max(DEFAULT_DPI) as f32 / DEFAULT_DPI as f32).clamp(0.5, 3.0)
+}
+
 fn invalidate(hwnd: HWND) {
     let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
 }
@@ -4147,6 +4293,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 let state = (*create).lpCreateParams.cast::<NativeWindowState>();
                 if !state.is_null() {
                     (*state).hwnd = hwnd;
+                    (*state).dpi = dpi_for_window(hwnd);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
                     let _ = SetTimer(Some(hwnd), TIMER_ID, TIMER_MS, None);
                     return LRESULT(1);
@@ -4186,6 +4333,15 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 invalidate(hwnd);
                 LRESULT(0)
             }
+            WM_DPICHANGED => {
+                state.handle_dpi_changed(dpi_from_wparam(wparam));
+                LRESULT(0)
+            }
+            WM_DPICHANGED_AFTERPARENT => {
+                state.handle_dpi_changed(dpi_for_window(hwnd));
+                LRESULT(0)
+            }
+            WM_DPICHANGED_BEFOREPARENT => LRESULT(0),
             WM_TIMER => {
                 state.resize_to_parent();
                 invalidate(hwnd);
@@ -4200,17 +4356,20 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = point_from_lparam(lparam);
+                let (x, y) = state.logical_point(x, y);
                 state.mouse_down(x, y);
                 LRESULT(0)
             }
             WM_RBUTTONDOWN => {
                 let (x, y) = point_from_lparam(lparam);
+                let (x, y) = state.logical_point(x, y);
                 state.mouse_right_down(x, y);
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
                 if state.drag.is_some() {
                     let (x, y) = point_from_lparam(lparam);
+                    let (x, y) = state.logical_point(x, y);
                     state.mouse_move(x, y);
                     LRESULT(0)
                 } else {
@@ -4219,6 +4378,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             }
             WM_LBUTTONUP => {
                 let (x, y) = point_from_lparam(lparam);
+                let (x, y) = state.logical_point(x, y);
                 state.mouse_up(x, y);
                 LRESULT(0)
             }
