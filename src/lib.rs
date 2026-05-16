@@ -393,6 +393,32 @@ const SHARED_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = &[
             aux_outputs: &[],
         },
     },
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(1),
+        main_output_channels: NonZeroU32::new(1),
+        aux_input_ports: &[],
+        aux_output_ports: &[],
+        names: PortNames {
+            layout: Some("Mono"),
+            main_input: Some("Input"),
+            main_output: Some("Output"),
+            aux_inputs: &[],
+            aux_outputs: &[],
+        },
+    },
+    AudioIOLayout {
+        main_input_channels: NonZeroU32::new(1),
+        main_output_channels: NonZeroU32::new(1),
+        aux_input_ports: &[new_nonzero_u32(1)],
+        aux_output_ports: &[],
+        names: PortNames {
+            layout: Some("Mono + Sidechain"),
+            main_input: Some("Input"),
+            main_output: Some("Output"),
+            aux_inputs: &["Sidechain"],
+            aux_outputs: &[],
+        },
+    },
 ];
 
 const ACTIVE_AUDIO_IO_LAYOUTS: &[AudioIOLayout] = SHARED_AUDIO_IO_LAYOUTS;
@@ -692,7 +718,18 @@ impl Plugin for NebulaDeEsser {
 
             let samples = buffer.samples();
             let channels = buffer.as_slice();
-            if channels.len() >= 2 {
+            if channels.len() == 1 {
+                let mono_slice = &channels[0];
+
+                for sample_index in 0..samples {
+                    let raw_mono = mono_slice[sample_index] as f64;
+                    self.analyzer.push(raw_mono);
+                    self.prev_main_l = raw_mono;
+                    self.prev_main_r = raw_mono;
+                    self.prev_sc_l = raw_mono;
+                    self.prev_sc_r = raw_mono;
+                }
+            } else if channels.len() >= 2 {
                 let (left, right) = channels.split_at_mut(1);
                 let left_slice = &left[0];
                 let right_slice = &right[0];
@@ -790,13 +827,18 @@ impl Plugin for NebulaDeEsser {
 
         let samples = buffer.samples();
         let channels = buffer.as_slice();
-        if channels.len() < 2 {
+        if channels.is_empty() {
             return ProcessStatus::Normal;
         }
 
-        let (left_slice, right_slice) = {
+        let (left_slice, mut right_slice) = {
             let (left, right) = channels.split_at_mut(1);
-            (&mut left[0], &mut right[0])
+            let right_slice = if right.is_empty() {
+                None
+            } else {
+                Some(&mut right[0])
+            };
+            (&mut left[0], right_slice)
         };
 
         let mut peak_det = -120.0_f32;
@@ -809,24 +851,21 @@ impl Plugin for NebulaDeEsser {
             let output_pan = self.params.output_pan.smoothed.next() as f64;
 
             let main_in_l = left_slice[sample_index] as f64;
-            let main_in_r = right_slice[sample_index] as f64;
+            let main_in_r = right_slice
+                .as_ref()
+                .map(|right| right[sample_index] as f64)
+                .unwrap_or(main_in_l);
             let input_gain = db_to_lin(input_level_db);
             let (input_gain_l, input_gain_r) = pan_gains(input_pan, input_gain);
             let processed_in_l = main_in_l * input_gain_l;
             let processed_in_r = main_in_r * input_gain_r;
 
-            let sc_in_l = sidechain_buffers
-                .and_then(|buffers| buffers.first())
-                .and_then(|channel| channel.get(sample_index))
-                .copied()
-                .map(f64::from)
-                .unwrap_or(processed_in_l);
-            let sc_in_r = sidechain_buffers
-                .and_then(|buffers| buffers.get(1))
-                .and_then(|channel| channel.get(sample_index))
-                .copied()
-                .map(f64::from)
-                .unwrap_or(processed_in_r);
+            let (sc_in_l, sc_in_r) = sidechain_frame(
+                sidechain_buffers,
+                sample_index,
+                processed_in_l,
+                processed_in_r,
+            );
 
             let ProcessFrame {
                 wet_l,
@@ -894,9 +933,15 @@ impl Plugin for NebulaDeEsser {
             let out_l = mixed_l * output_gain_l;
             let out_r = mixed_r * output_gain_r;
 
-            left_slice[sample_index] = out_l as f32;
-            right_slice[sample_index] = out_r as f32;
-            self.analyzer.push((out_l + out_r) * 0.5);
+            if let Some(right_slice) = right_slice.as_deref_mut() {
+                left_slice[sample_index] = out_l as f32;
+                right_slice[sample_index] = out_r as f32;
+                self.analyzer.push(fold_down_mono(out_l, out_r));
+            } else {
+                let out_mono = fold_down_mono(out_l, out_r);
+                left_slice[sample_index] = out_mono as f32;
+                self.analyzer.push(out_mono);
+            }
 
             peak_det = peak_det.max(detection_db as f32);
             peak_red = peak_red.min(reduction_db as f32);
@@ -938,6 +983,7 @@ impl ClapPlugin for NebulaDeEsser {
     const CLAP_SUPPORT_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::AudioEffect,
+        ClapFeature::Mono,
         ClapFeature::Stereo,
         ClapFeature::Deesser,
         ClapFeature::Filter,
@@ -956,6 +1002,10 @@ impl Vst3Plugin for NebulaDeEsser {
     ];
 }
 
+// The Windows Direct2D editor works through VST3. The upstream nih-plug CLAP
+// wrapper currently reports failure from its embedded GUI show/hide callbacks,
+// which causes strict Windows CLAP hosts to reject the editor.
+#[cfg(not(target_os = "windows"))]
 nih_export_clap!(NebulaDeEsser);
 nih_export_vst3!(NebulaDeEsser);
 #[cfg(target_os = "macos")]
@@ -1088,13 +1138,49 @@ fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
     (gain * angle.cos(), gain * angle.sin())
 }
 
+#[inline]
+fn fold_down_mono(left: f64, right: f64) -> f64 {
+    (left + right) * 0.5
+}
+
+#[inline]
+fn sidechain_sample<T: AsRef<[f32]>>(
+    sidechain_buffers: Option<&[T]>,
+    channel_index: usize,
+    sample_index: usize,
+) -> Option<f64> {
+    sidechain_buffers
+        .and_then(|buffers| buffers.get(channel_index))
+        .and_then(|channel| channel.as_ref().get(sample_index))
+        .copied()
+        .map(f64::from)
+}
+
+#[inline]
+fn sidechain_frame<T: AsRef<[f32]>>(
+    sidechain_buffers: Option<&[T]>,
+    sample_index: usize,
+    fallback_l: f64,
+    fallback_r: f64,
+) -> (f64, f64) {
+    let sidechain_l = sidechain_sample(sidechain_buffers, 0, sample_index);
+    let sidechain_r = sidechain_sample(sidechain_buffers, 1, sample_index).or(sidechain_l);
+
+    (
+        sidechain_l.unwrap_or(fallback_l),
+        sidechain_r.unwrap_or(fallback_r),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ACTIVE_AUDIO_IO_LAYOUTS, SHARED_AUDIO_IO_LAYOUTS};
+    use super::{
+        fold_down_mono, sidechain_frame, ACTIVE_AUDIO_IO_LAYOUTS, SHARED_AUDIO_IO_LAYOUTS,
+    };
 
     #[test]
-    fn shared_layouts_include_stereo_and_stereo_sidechain() {
-        assert_eq!(SHARED_AUDIO_IO_LAYOUTS.len(), 2);
+    fn shared_layouts_include_stereo_mono_and_sidechain_variants() {
+        assert_eq!(SHARED_AUDIO_IO_LAYOUTS.len(), 4);
 
         let stereo = &SHARED_AUDIO_IO_LAYOUTS[0];
         assert_eq!(stereo.main_input_channels.map(|c| c.get()), Some(2));
@@ -1112,6 +1198,20 @@ mod tests {
         );
         assert_eq!(stereo_sidechain.aux_input_ports.len(), 1);
         assert_eq!(stereo_sidechain.aux_input_ports[0].get(), 2);
+
+        let mono = &SHARED_AUDIO_IO_LAYOUTS[2];
+        assert_eq!(mono.main_input_channels.map(|c| c.get()), Some(1));
+        assert_eq!(mono.main_output_channels.map(|c| c.get()), Some(1));
+        assert!(mono.aux_input_ports.is_empty());
+
+        let mono_sidechain = &SHARED_AUDIO_IO_LAYOUTS[3];
+        assert_eq!(mono_sidechain.main_input_channels.map(|c| c.get()), Some(1));
+        assert_eq!(
+            mono_sidechain.main_output_channels.map(|c| c.get()),
+            Some(1)
+        );
+        assert_eq!(mono_sidechain.aux_input_ports.len(), 1);
+        assert_eq!(mono_sidechain.aux_input_ports[0].get(), 1);
     }
 
     #[test]
@@ -1127,5 +1227,22 @@ mod tests {
             assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS.len(), SHARED_AUDIO_IO_LAYOUTS.len());
             assert_eq!(ACTIVE_AUDIO_IO_LAYOUTS[1].aux_input_ports[0].get(), 2);
         }
+    }
+
+    #[test]
+    fn mono_fold_down_preserves_phase_aligned_channels() {
+        assert_eq!(fold_down_mono(0.25, 0.25), 0.25);
+        assert_eq!(fold_down_mono(-0.5, -0.5), -0.5);
+    }
+
+    #[test]
+    fn mono_sidechain_is_cloned_to_the_internal_right_channel() {
+        let mono_sidechain = [0.25_f32, -0.5, 0.75];
+        let sidechain_buffers: [&[f32]; 1] = [&mono_sidechain];
+
+        let (left, right) = sidechain_frame(Some(&sidechain_buffers), 1, 0.0, 1.0);
+
+        assert_eq!(left, -0.5);
+        assert_eq!(right, -0.5);
     }
 }
