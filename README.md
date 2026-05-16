@@ -23,12 +23,22 @@ Version 3.0.0 is a minor upgrade wherein the Bypass button is now hard bypass in
 
 ---
 
+## ✨ **What's New in v3.1.0**
+
+### 🎛️ **Mono mode, CLAP format is hereby discontinued for Windows variant, Return of pay what you want system**
+
+- **Mono Mode** - The plugin now features a mono mode, so henceforth it shall work with mono signals too. That being said due to the nature of its algorithm, internally it splits the signal into two signals and the processing is done in stereo. The two signals and then merged into the resultant output mono signal.
+- **Discontinuation of the CLAP format on the Windows variant** - Windows releases are VST3-only. The Windows Direct2D editor works through VST3, while the current upstream nih-plug CLAP wrapper reports failure from embedded GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly. There was only two options, one to discontinue the Windows variant all together, or drop the CLAP format.
+- **Return of pay what you want system** - The plugin now once again operates in pay what you want mode. The whole point of this plugin was to bring high quality de-essers to new studio start-ups. The pay what you want structure works better for that. That being said, any requests to simplify the features won't be entertained. This plugin is made for users who are either well versed with audio engineering concepts or are willing to learn, no request for hand holding or making it beginner friendly will be entertained.
+
+---
+
 ## ✨ **What's New in v3.0.0**
 
 ### 🎛️ **Reprogrammed Bypass switch, and hardcoded DPI-awareness in the Windows variant**
 
-- **Reprogrammed Bypass Switch** The Bypass switch now programmed to hard bypass the plugin instead of soft bypass. So when toggled off it now completely removes the plugin from the signal path. This ensures easier comparison between the on and off state.
-- **Hardcoded DPI-awareness in the Windows variant** The Windows variant gets DPI-awareness hardcoded into its GUI because it relies on Direct2D due to which unlike the macOS and Linux variants its GUI scaling is not abstracted from the OS. This fixes the scaling issues on DAWs like Reaper that don't employ internal graphics abstraction layer. The Linux and macOS variant do not require it because all the scaling is taken care of by EGUI, which ensures perfect scaling regardless of the system DPI and scaling settings. EGUI is still not stable on Windows, that's why it will continue to use Direct2D.
+- **Reprogrammed Bypass Switch** - The Bypass switch now programmed to hard bypass the plugin instead of soft bypass. So when toggled off it now completely removes the plugin from the signal path. This ensures easier comparison between the on and off state.
+- **Hardcoded DPI-awareness in the Windows variant** - The Windows variant gets DPI-awareness hardcoded into its GUI because it relies on Direct2D due to which unlike the macOS and Linux variants its GUI scaling is not abstracted from the OS. This fixes the scaling issues on DAWs like Reaper that don't employ internal graphics abstraction layer. The Linux and macOS variant do not require it because all the scaling is taken care of by EGUI, which ensures perfect scaling regardless of the system DPI and scaling settings. EGUI is still not stable on Windows, that's why it will continue to use Direct2D.
 
 ---
 
@@ -295,9 +305,12 @@ Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build To
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target\bundled\Nebula De-Esser.clap
-#         target\bundled\Nebula De-Esser.vst3
+# Output: target\bundled\Nebula De-Esser.vst3
 ```
+
+Windows releases are VST3-only. The Windows Direct2D editor works through VST3,
+while the current upstream nih-plug CLAP wrapper reports failure from embedded
+GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
 
 #### **macOS (Universal Binary: arm64 + x86_64)**
 ```bash
@@ -316,13 +329,14 @@ cargo run --release --package xtask -- bundle nebula_desser --release
 > AUv2 is exported through `clap-wrapper` on macOS, reusing the existing CLAP entrypoint.
 
 ---
-**Pre-built AUv2, CLAP and VST3 binaries can be bought from Gumroad:**
+**Pre-built binaries can be bought from Gumroad:**
 https://subhankar42.gumroad.com/l/adounr
 
 Note:
 For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
 
-The zip files contain AUv2, CLAP and VST3 plugins.
+The macOS zip contains AUv2, CLAP and VST3 plugins. The Linux zip contains CLAP
+and VST3 plugins. The Windows zip contains the VST3 plugin.
 
 Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
@@ -372,4 +386,4 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in all major DAWs supporting the CLAP and VST3 formats.**
+**Ready for professional use in major DAWs supporting VST3, plus CLAP on macOS and Linux.**
