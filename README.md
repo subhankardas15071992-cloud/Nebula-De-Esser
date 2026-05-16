@@ -9,7 +9,7 @@ Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Zer
 
 Nebula DeEsser is a professional-grade de-esser plugin built entirely in Rust with 64-bit double-precision processing. It delivers studio-quality results while maintaining zero compilation warnings and pure native builds across all platforms.
 
-Version 3.0.0 is a minor upgrade wherein the Bypass button is now hard bypass instead of the previous soft bypass, and the Windows variant gets DPI-awareness hardcoded into its GUI because it relies on Direct2D due to which unlike the macOS and Linux variants its GUI scaling is not abstracted from the OS, this fixes the scaling issues on DAWs like Reaper that don't employ internal graphics abstraction layer.
+Version 3.1.0 is a minor upgrade wherein the plugin now features a mono mode, so henceforth it shall work with mono signals too. Windows variant is now VST3 only, the CLAP format for Windows has been dropped due to compatibility issues, and the plugin now once again operates in pay what you want model
 
 ---
 
@@ -28,8 +28,8 @@ Version 3.0.0 is a minor upgrade wherein the Bypass button is now hard bypass in
 ### 🎛️ **Mono mode, CLAP format is hereby discontinued for Windows variant, Return of pay what you want system**
 
 - **Mono Mode** - The plugin now features a mono mode, so henceforth it shall work with mono signals too. That being said due to the nature of its algorithm, internally it splits the signal into two signals and the processing is done in stereo. The two signals and then merged into the resultant output mono signal.
-- **Discontinuation of the CLAP format on the Windows variant** - Windows releases are VST3-only. The Windows Direct2D editor works through VST3, while the current upstream nih-plug CLAP wrapper reports failure from embedded GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly. There was only two options, one to discontinue the Windows variant all together, or drop the CLAP format.
-- **Return of pay what you want system** - The plugin now once again operates in pay what you want mode. The whole point of this plugin was to bring high quality de-essers to new studio start-ups. The pay what you want structure works better for that. That being said, any requests to simplify the features won't be entertained. This plugin is made for users who are either well versed with audio engineering concepts or are willing to learn, no request for hand holding or making it beginner friendly will be entertained.
+- **Discontinuation of the CLAP format on the Windows variant** - Windows releases are now VST3-only. The Windows Direct2D editor works through VST3, while the current upstream nih-plug CLAP wrapper reports failure from embedded GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly. There was only two options, one to discontinue the Windows variant all together, or drop the CLAP format.
+- **Return of pay what you want system** - The plugin now once again operates in pay what you want model. The whole point of this plugin was to bring high quality de-essers to new studio start-ups. The pay what you want structure works better for that. That being said, any requests to simplify the features won't be entertained. This plugin is made for users who are either well versed with audio engineering concepts or are willing to learn, no request for hand holding or making it beginner friendly will be entertained.
 
 ---
 
