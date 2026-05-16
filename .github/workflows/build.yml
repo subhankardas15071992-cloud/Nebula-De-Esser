@@ -1,11 +1,12 @@
 ##############################################################################
 #  Nebula De-Esser — CI Build Pipeline
 #
-#  Produces CLAP + VST3 bundles for three platforms, plus AUv2 on macOS:
+#  Produces CLAP + VST3 bundles on macOS/Linux, VST3 on Windows,
+#  plus AUv2 on macOS:
 #    * macOS  — Universal Binary (Apple Silicon arm64 + Intel x86_64)
 #               CLAP + VST3 + AUv2 component
-#    * Windows — 64-bit  (x86_64-pc-windows-msvc)
-#    * Linux   — 64-bit  (x86_64-unknown-linux-gnu)
+#    * Windows — 64-bit  (x86_64-pc-windows-msvc), VST3 only
+#    * Linux   — 64-bit  (x86_64-unknown-linux-gnu), CLAP + VST3
 #
 #  Finished bundles are uploaded as GitHub Actions Artifacts (90-day
 #  retention). To download: Actions tab -> this run -> Artifacts section.
@@ -40,7 +41,7 @@
 #  See https://github.com/robbert-vdh/nih-plug#licensing
 ##############################################################################
 
-name: Build (CLAP + VST3 + AUv2)
+name: Build (CLAP + VST3 + AUv2, Windows VST3)
 
 on:
   push:
@@ -235,8 +236,17 @@ jobs:
         shell: pwsh
         run: echo "PYTHONUTF8=1" >> $env:GITHUB_ENV
 
-      - name: Build — Windows x86_64 (CLAP + VST3)
+      - name: Build — Windows x86_64 (VST3 only)
         run: cargo xtask bundle nebula_desser --release
+
+      - name: Keep Windows artifact VST3-only
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path target\bundled -Filter *.clap -Directory -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force
+          if (-not (Get-ChildItem -Path target\bundled -Filter *.vst3 -Directory -ErrorAction SilentlyContinue)) {
+            throw "Expected a VST3 bundle in target\bundled"
+          }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
