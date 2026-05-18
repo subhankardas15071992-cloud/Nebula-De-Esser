@@ -1,6 +1,6 @@
 # NEBULA DE-ESSER
 
-**Professional 64-bit AUv2, CLAP & VST3 De-esser Plugin**  
+**Professional 64-bit CLAP & VST3 De-esser Plugin**  
 Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Zero Warnings · Pure Native Builds
 
 ---
@@ -267,15 +267,6 @@ The plugin window is freely resizable. The entire UI scales proportionally. Mini
 - Accurate single-sided magnitude spectrum with correct Nyquist handling
 - Attack/release smoothing for stable visual display
 
-### **Performance**
-| Metric | Value |
-|--------|-------|
-| Latency | < 5ms typical |
-| CPU | < 1% per instance |
-| Memory | < 50MB |
-| Sample Rates | 44.1–192 kHz |
-| Oversampling | 1×–8× |
-
 ### Objective Metrics
 
 The Rust test suite includes deterministic objective audio metrics in `src/metrics.rs` and `tests/objective_metrics.rs`:
@@ -322,14 +313,9 @@ cargo build --release --target x86_64-apple-darwin
 cargo run --release --package xtask -- bundle nebula_desser --release
 # Output: target/bundled/Nebula De-Esser.clap
 #         target/bundled/Nebula De-Esser.vst3
-
-# To create the AUv2 .component bundle as well:
-./build_mac.sh
-# Additional output: target/bundled/Nebula DeEsser.component
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
-> AUv2 is exported through `clap-wrapper` on macOS, reusing the existing CLAP entrypoint.
 
 ---
 **Pre-built binaries can be bought from Gumroad:**
@@ -338,7 +324,7 @@ https://subhankar42.gumroad.com/l/adounr
 Note:
 For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
 
-The macOS zip contains AUv2, CLAP and VST3 plugins. The Linux zip contains CLAP
+The macOS zip contains CLAP and VST3 plugins. The Linux zip contains CLAP
 and VST3 plugins. The Windows zip contains the VST3 plugin.
 
 Note for macOS users:
@@ -347,7 +333,7 @@ macOS Gatekeeper blocks the binary because it has no code signature. Locally-bui
 To fix this problem after unzipping run the following command:
   xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 or Nebula De-Esser.component file]
 
-After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 or /Library/Audio/Plug-Ins/Component (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ or ~/Library/Audio/Plug-Ins/Component/ (if you want to install it for only the current user)
+After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
 
 ---
 
