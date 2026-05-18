@@ -1,10 +1,9 @@
 ##############################################################################
 #  Nebula De-Esser — CI Build Pipeline
 #
-#  Produces CLAP + VST3 bundles on macOS/Linux, VST3 on Windows,
-#  plus AUv2 on macOS:
+#  Produces CLAP + VST3 bundles on macOS/Linux, VST3 on Windows:
 #    * macOS  — Universal Binary (Apple Silicon arm64 + Intel x86_64)
-#               CLAP + VST3 + AUv2 component
+#               CLAP + VST3
 #    * Windows — 64-bit  (x86_64-pc-windows-msvc), VST3 only
 #    * Linux   — 64-bit  (x86_64-unknown-linux-gnu), CLAP + VST3
 #
@@ -27,13 +26,6 @@
 #
 #  All three files are included in this PR / commit alongside this workflow.
 #
-#  AUv2 support
-#  ------------
-#  clap-wrapper exports AUv2 entrypoints from the same dynamic library as the
-#  CLAP plugin. nih-plug's xtask currently bundles CLAP/VST3, so this workflow
-#  creates the macOS .component bundle explicitly after bundle-universal has
-#  produced both architecture builds.
-#
 #  LICENSE NOTE
 #  ------------
 #  NIH-plug's VST3 bindings link against the Steinberg VST3 SDK (GPLv3).
@@ -41,7 +33,7 @@
 #  See https://github.com/robbert-vdh/nih-plug#licensing
 ##############################################################################
 
-name: Build (CLAP + VST3 + AUv2, Windows VST3)
+name: Build (CLAP + VST3, Windows VST3)
 
 on:
   push:
@@ -98,102 +90,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "10.13"
         run: cargo xtask bundle-universal nebula_desser --release
 
-      # ── 5. AUv2 component ─────────────────────────────────────────────────
-      # clap-wrapper provides the AUv2 entrypoint symbols in the same dylib.
-      # The component bundle is the missing macOS packaging layer.
-      - name: Build — macOS Universal AUv2 component
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "10.13"
-        run: |
-          set -euo pipefail
-
-          PLUGIN_NAME="nebula_desser"
-          PLUGIN_DISPLAY="Nebula De-Esser"
-          PLUGIN_VERSION="$(python3 - <<'PY'
-          import re
-          from pathlib import Path
-          text = Path("Cargo.toml").read_text()
-          print(re.search(r'^version\s*=\s*"([^"]+)"', text, re.M).group(1))
-          PY
-          )"
-          BUNDLE_ID="audio.nebula.deesser"
-          AUV2_TYPE="aufx"
-          AUV2_SUBTYPE="NDeS"
-          AUV2_MANUFACTURER="NbAu"
-          AUV2_VERSION_INT="132096"
-
-          ARM_LIB="target/aarch64-apple-darwin/release/lib${PLUGIN_NAME}.dylib"
-          X86_LIB="target/x86_64-apple-darwin/release/lib${PLUGIN_NAME}.dylib"
-          COMPONENT="target/bundled/${PLUGIN_DISPLAY}.component"
-          COMPONENT_BIN="${COMPONENT}/Contents/MacOS/${PLUGIN_NAME}"
-
-          if [[ ! -f "$ARM_LIB" || ! -f "$X86_LIB" ]]; then
-            cargo build --release --target aarch64-apple-darwin
-            cargo build --release --target x86_64-apple-darwin
-          fi
-
-          test -f "$ARM_LIB"
-          test -f "$X86_LIB"
-
-          mkdir -p "${COMPONENT}/Contents/MacOS"
-          lipo -create "$ARM_LIB" "$X86_LIB" -output "$COMPONENT_BIN"
-
-          nm -gU "$COMPONENT_BIN" | grep -q "_GetPluginFactoryAUV2"
-
-          cat > "${COMPONENT}/Contents/Info.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>AudioComponents</key>
-              <array>
-                  <dict>
-                      <key>description</key>
-                      <string>${PLUGIN_DISPLAY}</string>
-                      <key>factoryFunction</key>
-                      <string>GetPluginFactoryAUV2</string>
-                      <key>manufacturer</key>
-                      <string>${AUV2_MANUFACTURER}</string>
-                      <key>name</key>
-                      <string>Nebula Audio: ${PLUGIN_DISPLAY}</string>
-                      <key>subtype</key>
-                      <string>${AUV2_SUBTYPE}</string>
-                      <key>type</key>
-                      <string>${AUV2_TYPE}</string>
-                      <key>version</key>
-                      <integer>${AUV2_VERSION_INT}</integer>
-                  </dict>
-              </array>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>en</string>
-              <key>CFBundleExecutable</key>
-              <string>${PLUGIN_NAME}</string>
-              <key>CFBundleIdentifier</key>
-              <string>${BUNDLE_ID}.auv2</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>${PLUGIN_DISPLAY}</string>
-              <key>CFBundlePackageType</key>
-              <string>BNDL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${PLUGIN_VERSION}</string>
-              <key>CFBundleSignature</key>
-              <string>${AUV2_MANUFACTURER}</string>
-              <key>CFBundleVersion</key>
-              <string>${PLUGIN_VERSION}</string>
-              <key>CSResourcesFileMapped</key>
-              <true/>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-          </dict>
-          </plist>
-          PLIST
-
-          lipo -info "$COMPONENT_BIN"
-          ls -la target/bundled/
-
-      # ── 6. Upload ──────────────────────────────────────────────────────────
+      # ── 5. Upload ──────────────────────────────────────────────────────────
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:

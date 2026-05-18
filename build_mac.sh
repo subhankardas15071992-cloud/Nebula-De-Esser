@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Nebula DeEsser v2.9 — macOS Universal Build (Native Apple Tools Only)
-# Builds Universal CLAP and AUv2 plugins (Apple Silicon ARM64 + Intel x86_64)
+# Builds a Universal CLAP plugin (Apple Silicon ARM64 + Intel x86_64)
 # Uses only native Apple tools - no Homebrew or external dependencies
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -11,10 +11,6 @@ PLUGIN_DISPLAY="Nebula DeEsser"
 PLUGIN_VERSION="2.9.0"
 PLUGIN_VERSION_DISPLAY="2.9"
 BUNDLE_ID="audio.nebula.deesser"
-AUV2_TYPE="aufx"
-AUV2_SUBTYPE="NDeS"
-AUV2_MANUFACTURER="NbAu"
-AUV2_VERSION_INT="133376"
 
 echo "╔════════════════════════════════════════════════╗"
 echo "║  NEBULA DEESSER v2.9 — macOS Universal Build   ║"
@@ -127,90 +123,25 @@ cat > "${CLAP_BUNDLE}/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 
-# Create AUv2 component bundle
-echo "[*] Creating AUv2 component..."
-AUV2_BUNDLE="target/bundled/${PLUGIN_DISPLAY}.component"
-mkdir -p "${AUV2_BUNDLE}/Contents/MacOS"
-
-cp "$UNIVERSAL_LIB" "${AUV2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}"
-
-cat > "${AUV2_BUNDLE}/Contents/Info.plist" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>AudioComponents</key>
-    <array>
-        <dict>
-            <key>description</key>
-            <string>${PLUGIN_DISPLAY}</string>
-            <key>factoryFunction</key>
-            <string>GetPluginFactoryAUV2</string>
-            <key>manufacturer</key>
-            <string>${AUV2_MANUFACTURER}</string>
-            <key>name</key>
-            <string>Nebula Audio: ${PLUGIN_DISPLAY}</string>
-            <key>subtype</key>
-            <string>${AUV2_SUBTYPE}</string>
-            <key>type</key>
-            <string>${AUV2_TYPE}</string>
-            <key>version</key>
-            <integer>${AUV2_VERSION_INT}</integer>
-        </dict>
-    </array>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>${PLUGIN_NAME}</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}.auv2</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>${PLUGIN_DISPLAY}</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${PLUGIN_VERSION}</string>
-    <key>CFBundleSignature</key>
-    <string>${AUV2_MANUFACTURER}</string>
-    <key>CFBundleVersion</key>
-    <string>${PLUGIN_VERSION}</string>
-    <key>CSResourcesFileMapped</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
-    <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2024 Nebula Audio. All rights reserved.</string>
-</dict>
-</plist>
-PLIST
-
 echo ""
 echo "[✓] Build complete! — ${PLUGIN_DISPLAY} v${PLUGIN_VERSION_DISPLAY}"
 echo "[✓] Universal binary: ARM64 + x86_64"
 echo "[✓] CLAP bundle: ${CLAP_BUNDLE}"
-echo "[✓] AUv2 component: ${AUV2_BUNDLE}"
 echo ""
 
 # Verify the bundle
-if [[ -d "$CLAP_BUNDLE" && -d "$AUV2_BUNDLE" ]]; then
+if [[ -d "$CLAP_BUNDLE" ]]; then
     echo "[✓] Bundle structure verified"
     echo "[✓] Binary architecture: $(lipo -info "${CLAP_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}")"
-    echo "[✓] AUv2 binary architecture: $(lipo -info "${AUV2_BUNDLE}/Contents/MacOS/${PLUGIN_NAME}")"
     
     echo ""
     echo "Install to user plugins folder:"
     echo "  mkdir -p ~/Library/Audio/Plug-Ins/CLAP"
-    echo "  mkdir -p ~/Library/Audio/Plug-Ins/Components"
     echo "  cp -r \"${CLAP_BUNDLE}\" ~/Library/Audio/Plug-Ins/CLAP/"
-    echo "  cp -r \"${AUV2_BUNDLE}\" ~/Library/Audio/Plug-Ins/Components/"
     echo ""
     echo "Or for all users (requires admin):"
     echo "  sudo mkdir -p /Library/Audio/Plug-Ins/CLAP"
-    echo "  sudo mkdir -p /Library/Audio/Plug-Ins/Components"
     echo "  sudo cp -r \"${CLAP_BUNDLE}\" /Library/Audio/Plug-Ins/CLAP/"
-    echo "  sudo cp -r \"${AUV2_BUNDLE}\" /Library/Audio/Plug-Ins/Components/"
 else
     echo "[!] Plugin bundle creation failed"
     exit 1
@@ -228,10 +159,9 @@ echo "• macOS 11.0 (Big Sur) or later"
 echo "• Apple Silicon (M1/M2/M3/M4) native"
 echo "• Intel Macs (x86_64) native"
 echo "• Universal binary: Runs natively on all supported Macs"
-echo "• Formats: CLAP + AUv2"
+echo "• Formats: CLAP"
 echo ""
 echo "─── New in v${PLUGIN_VERSION_DISPLAY} ──────────────────────────────────────────────────────"
-echo "• AUv2 export: macOS component builds through clap-wrapper"
 echo "• A/B State Comparison: Instant switching between two settings"
 echo "• Enhanced MIDI Control: Right-click menu with advanced options"
 echo "• Zero Compilation Warnings: Clean build with all issues addressed"

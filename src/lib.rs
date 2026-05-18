@@ -1008,8 +1008,6 @@ impl Vst3Plugin for NebulaDeEsser {
 #[cfg(not(target_os = "windows"))]
 nih_export_clap!(NebulaDeEsser);
 nih_export_vst3!(NebulaDeEsser);
-#[cfg(target_os = "macos")]
-clap_wrapper::export_auv2!();
 
 #[cfg(not(target_os = "windows"))]
 fn apply_midi_mapping(
