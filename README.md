@@ -331,7 +331,7 @@ Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
-  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 or Nebula De-Esser.component file]
+  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]
 
 After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
 
@@ -375,4 +375,4 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in major DAWs supporting VST3, plus CLAP on macOS and Linux.**
+**Ready for professional use in major DAWs supporting VST3 on Windows and VST3 and CLAP on macOS and Linux.**
