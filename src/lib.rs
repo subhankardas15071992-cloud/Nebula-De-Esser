@@ -471,6 +471,43 @@ impl WetMixSmoother {
     }
 }
 
+struct PanGainCache {
+    level_db: f64,
+    pan: f64,
+    left: f64,
+    right: f64,
+}
+
+impl Default for PanGainCache {
+    fn default() -> Self {
+        Self {
+            level_db: f64::NAN,
+            pan: f64::NAN,
+            left: 1.0,
+            right: 1.0,
+        }
+    }
+}
+
+impl PanGainCache {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn gains(&mut self, level_db: f64, pan: f64) -> (f64, f64) {
+        if self.level_db != level_db || self.pan != pan {
+            let gain = db_to_lin(level_db);
+            let (left, right) = pan_gains(pan, gain);
+            self.level_db = level_db;
+            self.pan = pan;
+            self.left = left;
+            self.right = right;
+        }
+
+        (self.left, self.right)
+    }
+}
+
 struct NebulaDeEsser {
     is_ready: std::sync::atomic::AtomicBool,
     params: Arc<NebulaParams>,
@@ -486,6 +523,8 @@ struct NebulaDeEsser {
     current_os_factor: u32,
     reported_latency: u32,
     wet_mix: WetMixSmoother,
+    input_gain_cache: PanGainCache,
+    output_gain_cache: PanGainCache,
     prev_main_l: f64,
     prev_main_r: f64,
     prev_sc_l: f64,
@@ -515,6 +554,8 @@ impl Default for NebulaDeEsser {
             current_os_factor: 1,
             reported_latency: 0,
             wet_mix: WetMixSmoother::new(sample_rate),
+            input_gain_cache: PanGainCache::default(),
+            output_gain_cache: PanGainCache::default(),
             prev_main_l: 0.0,
             prev_main_r: 0.0,
             prev_sc_l: 0.0,
@@ -691,6 +732,8 @@ impl Plugin for NebulaDeEsser {
         self.analyzer.set_sample_rate(self.sample_rate);
         self.wet_mix.set_sample_rate(self.sample_rate);
         self.wet_mix.reset(self.params.mix.value() as f64);
+        self.input_gain_cache.reset();
+        self.output_gain_cache.reset();
         self.prev_main_l = 0.0;
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
@@ -710,6 +753,8 @@ impl Plugin for NebulaDeEsser {
         self.prepared_os_settings = None;
         self.analyzer.reset();
         self.wet_mix.reset(self.params.mix.value() as f64);
+        self.input_gain_cache.reset();
+        self.output_gain_cache.reset();
         self.prev_main_l = 0.0;
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
@@ -783,6 +828,8 @@ impl Plugin for NebulaDeEsser {
             }
 
             self.wet_mix.reset(self.params.mix.value() as f64);
+            self.input_gain_cache.reset();
+            self.output_gain_cache.reset();
             self.silent_tail_samples = 0;
             self.meters
                 .det_bits
@@ -927,8 +974,8 @@ impl Plugin for NebulaDeEsser {
                 .as_ref()
                 .map(|right| right[sample_index] as f64)
                 .unwrap_or(main_in_l);
-            let input_gain = db_to_lin(input_level_db);
-            let (input_gain_l, input_gain_r) = pan_gains(input_pan, input_gain);
+            let (input_gain_l, input_gain_r) =
+                self.input_gain_cache.gains(input_level_db, input_pan);
             let processed_in_l = main_in_l * input_gain_l;
             let processed_in_r = main_in_r * input_gain_r;
 
@@ -1000,8 +1047,8 @@ impl Plugin for NebulaDeEsser {
             let mixed_l = wet_l * wet_mix + dry_l * dry_mix;
             let mixed_r = wet_r * wet_mix + dry_r * dry_mix;
 
-            let output_gain = db_to_lin(output_level_db);
-            let (output_gain_l, output_gain_r) = pan_gains(output_pan, output_gain);
+            let (output_gain_l, output_gain_r) =
+                self.output_gain_cache.gains(output_level_db, output_pan);
             let out_l = mixed_l * output_gain_l;
             let out_r = mixed_r * output_gain_r;
 
