@@ -15,6 +15,7 @@ use nih_plug_egui::resizable_window::ResizableWindow;
 use nih_plug_egui::EguiState;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::time::Duration;
 
 const VERSION_LABEL: &str = concat!(
     "v",
@@ -2132,7 +2133,7 @@ fn draw_spectrum(
         FontId::new(12.5 * s, FontFamily::Proportional),
         TEXT_TER,
     );
-    ui.ctx().request_repaint();
+    ui.ctx().request_repaint_after(Duration::from_millis(100));
 }
 
 fn freq_node(pa: &egui::Painter, c: Pos2, col: Color32, lbl: &str, s: f32) {

@@ -4,7 +4,7 @@ use std::f64::consts::PI;
 use std::sync::Arc;
 
 pub const FFT_SIZE: usize = 2048;
-pub const FFT_HOP: usize = 512;
+pub const FFT_HOP: usize = 2048;
 pub const NUM_BINS: usize = FFT_SIZE / 2 + 1;
 const MAG_SCALE: f64 = 4.0 / FFT_SIZE as f64;
 
@@ -63,6 +63,7 @@ impl SpectrumAnalyzer {
         self.write_pos = 0;
         self.hop_counter = 0;
         self.magnitude_scratch.fill(-120.0);
+        self.shared.lock().magnitudes.fill(-120.0);
     }
 
     #[inline]

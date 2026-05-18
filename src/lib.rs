@@ -27,6 +27,8 @@ use storage::{PersistentStore, StoredMidiState};
 pub(crate) use storage::{StoredPreset, StoredPresetSnapshot};
 
 const UNMAPPED_CC: i32 = -1;
+const SILENCE_EPSILON: f32 = 1.0e-8;
+const SILENCE_DRAIN_SAMPLES: usize = 8192;
 
 #[inline]
 fn f32_to_u32(value: f32) -> u32 {
@@ -36,6 +38,18 @@ fn f32_to_u32(value: f32) -> u32 {
 #[inline]
 fn u32_to_f32(value: u32) -> f32 {
     f32::from_bits(value)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct DspPrepareSettings {
+    min_freq: f64,
+    max_freq: f64,
+    cut_width: f64,
+    cut_depth: f64,
+    cut_slope: f64,
+    max_reduction: f64,
+    lookahead_ms: f64,
+    single_vocal: bool,
 }
 
 pub const MIDI_THRESHOLD: u8 = 0;
@@ -463,6 +477,8 @@ struct NebulaDeEsser {
     sample_rate: f64,
     dsp: DeEsserDsp,
     os_dsp: DeEsserDsp,
+    prepared_settings: Option<DspPrepareSettings>,
+    prepared_os_settings: Option<DspPrepareSettings>,
     analyzer: SpectrumAnalyzer,
     meters: Arc<Meters>,
     midi_learn: Arc<MidiLearnShared>,
@@ -474,6 +490,8 @@ struct NebulaDeEsser {
     prev_main_r: f64,
     prev_sc_l: f64,
     prev_sc_r: f64,
+    silent_tail_samples: usize,
+    silent_fast_path_active: bool,
 }
 
 impl Default for NebulaDeEsser {
@@ -488,6 +506,8 @@ impl Default for NebulaDeEsser {
             sample_rate,
             dsp: DeEsserDsp::new(sample_rate),
             os_dsp: DeEsserDsp::new(sample_rate),
+            prepared_settings: None,
+            prepared_os_settings: None,
             analyzer: SpectrumAnalyzer::new(),
             meters: Arc::new(Meters::default()),
             midi_learn,
@@ -499,7 +519,35 @@ impl Default for NebulaDeEsser {
             prev_main_r: 0.0,
             prev_sc_l: 0.0,
             prev_sc_r: 0.0,
+            silent_tail_samples: 0,
+            silent_fast_path_active: false,
             is_ready: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl NebulaDeEsser {
+    fn enter_silent_fast_path<T: AsMut<[f32]>>(&mut self, channels: &mut [T]) {
+        for channel in channels {
+            channel.as_mut().fill(0.0);
+        }
+
+        self.prev_main_l = 0.0;
+        self.prev_main_r = 0.0;
+        self.prev_sc_l = 0.0;
+        self.prev_sc_r = 0.0;
+        self.meters
+            .det_bits
+            .store(f32_to_u32(-120.0), Ordering::Relaxed);
+        self.meters
+            .red_bits
+            .store(f32_to_u32(0.0), Ordering::Relaxed);
+
+        if !self.silent_fast_path_active {
+            self.dsp.reset();
+            self.os_dsp.reset();
+            self.analyzer.reset();
+            self.silent_fast_path_active = true;
         }
     }
 }
@@ -635,6 +683,8 @@ impl Plugin for NebulaDeEsser {
         self.sample_rate = buffer_config.sample_rate as f64;
         self.dsp = DeEsserDsp::new(self.sample_rate);
         self.os_dsp = DeEsserDsp::new(self.sample_rate);
+        self.prepared_settings = None;
+        self.prepared_os_settings = None;
         self.current_os_factor = 1;
         self.reported_latency = 0;
         self.analyzer.reset();
@@ -645,6 +695,8 @@ impl Plugin for NebulaDeEsser {
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
+        self.silent_tail_samples = 0;
+        self.silent_fast_path_active = false;
         context.set_latency_samples(0);
         self.is_ready
             .store(true, std::sync::atomic::Ordering::Release);
@@ -654,12 +706,16 @@ impl Plugin for NebulaDeEsser {
     fn reset(&mut self) {
         self.dsp.reset();
         self.os_dsp.reset();
+        self.prepared_settings = None;
+        self.prepared_os_settings = None;
         self.analyzer.reset();
         self.wet_mix.reset(self.params.mix.value() as f64);
         self.prev_main_l = 0.0;
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
+        self.silent_tail_samples = 0;
+        self.silent_fast_path_active = false;
     }
 
     fn process(
@@ -702,6 +758,24 @@ impl Plugin for NebulaDeEsser {
                 .store(f32_to_u32(0.0), Ordering::Relaxed);
         }
 
+        let samples = buffer.samples();
+        let sidechain_external = self.params.sidechain_external.value() > 0.5;
+        let sidechain_buffers = if sidechain_external && !aux.inputs.is_empty() {
+            Some(aux.inputs[0].as_slice_immutable())
+        } else {
+            None
+        };
+
+        let channels = buffer.as_slice();
+        if channels.is_empty() {
+            return ProcessStatus::Normal;
+        }
+
+        let input_is_silent = buffers_are_silent(channels)
+            && sidechain_buffers
+                .map(|buffers| buffers_are_silent(buffers))
+                .unwrap_or(true);
+
         if self.params.bypass.value() > 0.5 {
             if self.reported_latency != 0 {
                 context.set_latency_samples(0);
@@ -709,6 +783,7 @@ impl Plugin for NebulaDeEsser {
             }
 
             self.wet_mix.reset(self.params.mix.value() as f64);
+            self.silent_tail_samples = 0;
             self.meters
                 .det_bits
                 .store(f32_to_u32(-120.0), Ordering::Relaxed);
@@ -716,8 +791,12 @@ impl Plugin for NebulaDeEsser {
                 .red_bits
                 .store(f32_to_u32(0.0), Ordering::Relaxed);
 
-            let samples = buffer.samples();
-            let channels = buffer.as_slice();
+            if input_is_silent {
+                self.enter_silent_fast_path(channels);
+                return ProcessStatus::Normal;
+            }
+
+            self.silent_fast_path_active = false;
             if channels.len() == 1 {
                 let mono_slice = &channels[0];
 
@@ -762,39 +841,33 @@ impl Plugin for NebulaDeEsser {
         let trigger_hear = self.params.trigger_hear.value() > 0.5;
         let stereo_link = self.params.stereo_link.value() as f64;
         let stereo_mid_side = self.params.stereo_mid_side.value() > 0.5;
-        let sidechain_external = self.params.sidechain_external.value() > 0.5;
         let single_vocal = self.params.vocal_mode.value() > 0.5;
         let lookahead_enabled = self.params.lookahead_enabled.value() > 0.5;
         let lookahead_ms = self.params.lookahead_ms.value() as f64;
         let oversampling = self.params.oversampling.value() as u32;
         let os_factor = oversampling_factor(oversampling);
-
-        prepare_dsp(
-            &mut self.dsp,
+        let prepare_settings = DspPrepareSettings {
             min_freq,
             max_freq,
             cut_width,
             cut_depth,
             cut_slope,
             max_reduction,
-            if lookahead_enabled { lookahead_ms } else { 0.0 },
+            lookahead_ms: if lookahead_enabled { lookahead_ms } else { 0.0 },
             single_vocal,
-        );
+        };
+
+        prepare_dsp_if_needed(&mut self.dsp, &mut self.prepared_settings, prepare_settings);
 
         if os_factor != self.current_os_factor {
             self.os_dsp = DeEsserDsp::new(self.sample_rate * os_factor as f64);
             self.current_os_factor = os_factor;
+            self.prepared_os_settings = None;
         }
-        prepare_dsp(
+        prepare_dsp_if_needed(
             &mut self.os_dsp,
-            min_freq,
-            max_freq,
-            cut_width,
-            cut_depth,
-            cut_slope,
-            max_reduction,
-            if lookahead_enabled { lookahead_ms } else { 0.0 },
-            single_vocal,
+            &mut self.prepared_os_settings,
+            prepare_settings,
         );
 
         let target_latency = if os_factor > 1 {
@@ -819,16 +892,15 @@ impl Plugin for NebulaDeEsser {
             stereo_mid_side,
         };
 
-        let sidechain_buffers = if sidechain_external && !aux.inputs.is_empty() {
-            Some(aux.inputs[0].as_slice_immutable())
-        } else {
-            None
-        };
-
-        let samples = buffer.samples();
-        let channels = buffer.as_slice();
-        if channels.is_empty() {
+        if input_is_silent && self.silent_tail_samples == 0 {
+            self.enter_silent_fast_path(channels);
             return ProcessStatus::Normal;
+        }
+        self.silent_fast_path_active = false;
+        if input_is_silent {
+            self.silent_tail_samples = self.silent_tail_samples.saturating_sub(samples);
+        } else {
+            self.silent_tail_samples = SILENCE_DRAIN_SAMPLES;
         }
 
         let (left_slice, mut right_slice) = {
@@ -1121,6 +1193,29 @@ fn prepare_dsp(
     dsp.update_vocal_mode(single_vocal);
 }
 
+fn prepare_dsp_if_needed(
+    dsp: &mut DeEsserDsp,
+    cache: &mut Option<DspPrepareSettings>,
+    settings: DspPrepareSettings,
+) {
+    if cache.is_some_and(|cached| cached == settings) {
+        return;
+    }
+
+    prepare_dsp(
+        dsp,
+        settings.min_freq,
+        settings.max_freq,
+        settings.cut_width,
+        settings.cut_depth,
+        settings.cut_slope,
+        settings.max_reduction,
+        settings.lookahead_ms,
+        settings.single_vocal,
+    );
+    *cache = Some(settings);
+}
+
 fn oversampling_factor(selection: u32) -> u32 {
     match selection {
         1 => 2,
@@ -1129,6 +1224,15 @@ fn oversampling_factor(selection: u32) -> u32 {
         4 => 8,
         _ => 1,
     }
+}
+
+fn buffers_are_silent<T: AsRef<[f32]>>(buffers: &[T]) -> bool {
+    buffers.iter().all(|buffer| {
+        buffer
+            .as_ref()
+            .iter()
+            .all(|sample| sample.abs() <= SILENCE_EPSILON)
+    })
 }
 
 fn pan_gains(pan: f64, gain: f64) -> (f64, f64) {
