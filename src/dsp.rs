@@ -4,13 +4,11 @@ use std::sync::Arc;
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 
 const SPECTRAL_OSP_FFT_SIZE: usize = 512;
-const SPECTRAL_OSP_HOP: usize = 256;
+const SPECTRAL_OSP_HOP: usize = 128;
 const SPECTRAL_OSP_BINS: usize = SPECTRAL_OSP_FFT_SIZE / 2 + 1;
 const SPECTRAL_OSP_BASIS: usize = 3;
 const SPECTRAL_OSP_COV_SIZE: usize = SPECTRAL_OSP_BINS * SPECTRAL_OSP_BINS;
-const SPECTRAL_OSP_POWER_ITERS: usize = 1;
-const SPECTRAL_OSP_LEARN_INTERVAL: usize = 8;
-const FORMANT_LOCK_UPDATE_INTERVAL: usize = 4;
+const SPECTRAL_OSP_POWER_ITERS: usize = 2;
 
 #[inline]
 pub fn db_to_lin(db: f64) -> f64 {
@@ -221,8 +219,6 @@ struct SpectralOspChannel {
     hop_counter: usize,
     filled: usize,
     basis_frame_counter: usize,
-    learning_frame_counter: usize,
-    last_bin_range: Option<(usize, usize)>,
     fft: Arc<dyn Fft<f64>>,
     ifft: Arc<dyn Fft<f64>>,
 }
@@ -247,8 +243,6 @@ impl SpectralOspChannel {
             hop_counter: 0,
             filled: 0,
             basis_frame_counter: 0,
-            learning_frame_counter: 0,
-            last_bin_range: None,
             fft: planner.plan_fft_forward(SPECTRAL_OSP_FFT_SIZE),
             ifft: planner.plan_fft_inverse(SPECTRAL_OSP_FFT_SIZE),
         }
@@ -278,8 +272,6 @@ impl SpectralOspChannel {
         self.hop_counter = 0;
         self.filled = 0;
         self.basis_frame_counter = 0;
-        self.learning_frame_counter = 0;
-        self.last_bin_range = None;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -350,7 +342,6 @@ impl SpectralOspChannel {
             .clamp(1, SPECTRAL_OSP_BINS - 1);
         let bin_max = ((max_freq * SPECTRAL_OSP_FFT_SIZE as f64 / sample_rate).ceil() as usize)
             .clamp(bin_min, SPECTRAL_OSP_BINS - 1);
-        self.reset_learning_if_band_changed(bin_min, bin_max);
 
         self.analysis_magnitudes.fill(0.0);
         self.spectral_vector.fill(0.0);
@@ -373,15 +364,7 @@ impl SpectralOspChannel {
             - 0.04 * training_gate.flux
             - 0.02 * training_gate.centroid)
             .clamp(0.75, 1.0);
-        let should_learn_mode = basis_mode.should_learn(self.basis_frame_counter);
-        let should_update_basis = if should_learn_mode {
-            let should_update = self.learning_frame_counter % SPECTRAL_OSP_LEARN_INTERVAL == 0;
-            self.learning_frame_counter = self.learning_frame_counter.wrapping_add(1);
-            should_update
-        } else {
-            false
-        };
-        let learn_rate = if should_update_basis {
+        let learn_rate = if basis_mode.should_learn(self.basis_frame_counter) {
             0.0035 * training_gate.voiced_confidence * diagnostic_veto
         } else {
             0.0
@@ -444,12 +427,19 @@ impl SpectralOspChannel {
 
         let alpha = learn_rate.clamp(0.0, 0.05);
         let decay = 1.0 - alpha;
+        for value in &mut self.covariance {
+            *value *= decay;
+        }
+
         for row in bin_min..=bin_max {
             let row_feature = self.spectral_vector[row];
+            if row_feature.abs() <= 1.0e-12 {
+                continue;
+            }
             let row_offset = row * SPECTRAL_OSP_BINS;
             for col in bin_min..=bin_max {
-                let value = &mut self.covariance[row_offset + col];
-                *value = *value * decay + alpha * row_feature * self.spectral_vector[col];
+                self.covariance[row_offset + col] +=
+                    alpha * row_feature * self.spectral_vector[col];
             }
         }
 
@@ -499,22 +489,6 @@ impl SpectralOspChannel {
         }
 
         orthonormalize(&mut self.basis);
-    }
-
-    fn reset_learning_if_band_changed(&mut self, bin_min: usize, bin_max: usize) {
-        if self.last_bin_range == Some((bin_min, bin_max)) {
-            return;
-        }
-
-        self.covariance.fill(0.0);
-        for basis in &mut self.basis {
-            basis.fill(0.0);
-        }
-        for basis in &mut self.basis_work {
-            basis.fill(0.0);
-        }
-        self.learning_frame_counter = 0;
-        self.last_bin_range = Some((bin_min, bin_max));
     }
 
     fn training_gate(&self, amount: f64, bin_min: usize, bin_max: usize) -> SpectralTrainingGate {
@@ -933,8 +907,6 @@ struct ChannelState {
     formant_trackers: [Kalman1D; 3],
     vowel_probs: [f64; 5],
     dominant_vowel: VowelClass,
-    formant_lock_counter: usize,
-    cached_formant_lock: f64,
     spectral_osp: SpectralOspChannel,
 }
 
@@ -959,8 +931,6 @@ impl ChannelState {
             formant_trackers: default_formant_trackers(),
             vowel_probs: [0.2; 5],
             dominant_vowel: VowelClass::A,
-            formant_lock_counter: 0,
-            cached_formant_lock: 1.0,
             spectral_osp: SpectralOspChannel::new(),
         }
     }
@@ -984,8 +954,6 @@ impl ChannelState {
         self.formant_trackers = default_formant_trackers();
         self.vowel_probs = [0.2; 5];
         self.dominant_vowel = VowelClass::A;
-        self.formant_lock_counter = 0;
-        self.cached_formant_lock = 1.0;
         self.spectral_osp.reset();
     }
 }
@@ -1418,12 +1386,6 @@ impl DeEsserDsp {
     #[inline]
     fn formant_preservation_lock(&mut self, input: f64, detected: f64, channel_idx: usize) -> f64 {
         let channel = &mut self.channels[channel_idx];
-        if channel.formant_lock_counter % FORMANT_LOCK_UPDATE_INTERVAL != 0 {
-            channel.formant_lock_counter = channel.formant_lock_counter.wrapping_add(1);
-            return channel.cached_formant_lock;
-        }
-        channel.formant_lock_counter = channel.formant_lock_counter.wrapping_add(1);
-
         let mut energies = [0.0; 3];
         for (index, (coeffs, state)) in self
             .formant_coeffs
@@ -1469,8 +1431,7 @@ impl DeEsserDsp {
         let effective_lock =
             lock_strength * vowel_confidence * band_overlap * (1.0 - 0.35 * sibilant_bias);
 
-        channel.cached_formant_lock = (1.0 - 0.55 * effective_lock).clamp(0.45, 1.0);
-        channel.cached_formant_lock
+        (1.0 - 0.55 * effective_lock).clamp(0.45, 1.0)
     }
 
     #[inline]
