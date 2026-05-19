@@ -60,7 +60,7 @@ const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 7401;
-const TIMER_MS: u32 = 100;
+const TIMER_MS: u32 = 33;
 const VERSION_LABEL: &str = concat!(
     "v",
     env!("CARGO_PKG_VERSION_MAJOR"),
