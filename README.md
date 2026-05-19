@@ -376,3 +376,8 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 ---
 
 **Ready for professional use in major DAWs supporting VST3 on Windows and VST3 and CLAP on macOS and Linux.**
+
+---
+
+**Reporting Issues:**
+For reporting any issues create an issue on the Github repository, and while creating the issue do mention your email ID in the issue. The issues of paid customers will be solved on priority basis. Free customers are expected to workout any issues on their own, no support will be provided to them.
