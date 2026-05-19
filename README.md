@@ -16,7 +16,7 @@ Version 3.1.0 is a minor upgrade wherein the plugin now features a mono mode, so
 ---
 
 **Screenshot - macOS and Linux variant that uses EGUI:**
-<img width="872" height="773" alt="image" src="https://github.com/user-attachments/assets/2124ead0-ecd5-41db-835d-c0112ccce8de" />
+<img width="863" height="673" alt="image" src="https://github.com/user-attachments/assets/7e2c0cc7-0064-46a9-941f-9ce7c2a8e33f" />
 
 ---
 
