@@ -1383,10 +1383,11 @@ fn draw_controls(
     let y2b = y2 + kh + gap;
     {
         let pa = ui.painter_at(rect);
+        let divider_y = y2b - 7.0 * s;
         pa.line_segment(
             [
-                Pos2::new(inner.min.x + 12.0 * s, y2b - s),
-                Pos2::new(inner.max.x - 12.0 * s, y2b - s),
+                Pos2::new(inner.min.x + 12.0 * s, divider_y),
+                Pos2::new(inner.max.x - 12.0 * s, divider_y),
             ],
             Stroke::new(1.0, DIVIDER),
         );
@@ -1414,10 +1415,11 @@ fn draw_controls(
     let y3 = y2b + kh + gap;
     {
         let pa = ui.painter_at(rect);
+        let divider_y = y3 - 7.0 * s;
         pa.line_segment(
             [
-                Pos2::new(inner.min.x + 12.0 * s, y3 - s),
-                Pos2::new(inner.max.x - 12.0 * s, y3 - s),
+                Pos2::new(inner.min.x + 12.0 * s, divider_y),
+                Pos2::new(inner.max.x - 12.0 * s, divider_y),
             ],
             Stroke::new(1.0, DIVIDER),
         );
