@@ -20,6 +20,9 @@ pub(crate) struct StoredPresetSnapshot {
     pub lookahead_ms: f32,
     pub trigger_hear: bool,
     pub stereo_link: f32,
+    #[serde(default)]
+    pub stereo_mode: i32,
+    #[serde(default)]
     pub stereo_mid_side: bool,
     #[serde(default)]
     pub sidechain_mode: i32,
@@ -45,6 +48,16 @@ pub(crate) struct StoredPreset {
 }
 
 impl StoredPresetSnapshot {
+    pub(crate) fn effective_stereo_mode(&self) -> i32 {
+        if self.stereo_mode != 0 {
+            self.stereo_mode.clamp(0, 2)
+        } else if self.stereo_mid_side {
+            2
+        } else {
+            0
+        }
+    }
+
     pub(crate) fn effective_sidechain_mode(&self) -> i32 {
         if self.sidechain_mode != 0 {
             self.sidechain_mode.clamp(0, 2)

@@ -874,7 +874,7 @@ pub struct ProcessSettings {
     pub trigger_hear: bool,
     pub filter_solo: bool,
     pub stereo_link: f64,
-    pub stereo_mid_side: bool,
+    pub stereo_mode: u32,
     pub midi_trigger: f64,
 }
 
@@ -1105,11 +1105,12 @@ impl DeEsserDsp {
         sidechain_r: f64,
         settings: ProcessSettings,
     ) -> ProcessFrame {
+        let stereo_mode = settings.stereo_mode.min(2);
         let stereo_link_raw = settings.stereo_link.clamp(0.0, 2.0);
         let stereo_link = stereo_link_raw.min(1.0);
         let ms_focus = (stereo_link_raw - 1.0).clamp(0.0, 1.0);
-        let process_ms_focus = ms_focus > 0.0;
-        let process_side_focus = settings.stereo_mid_side;
+        let process_ms_focus = stereo_mode != 0 && ms_focus > 0.0;
+        let process_side_focus = stereo_mode == 2;
         let max_reduction_db = settings.max_reduction_db.abs().max(1.0e-6);
 
         let (audio_l, audio_r) = if process_ms_focus {

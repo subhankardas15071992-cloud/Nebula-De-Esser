@@ -137,7 +137,7 @@ pub struct ParamSnapshot {
     pub lookahead_ms: f64,
     pub trigger_hear: bool,
     pub stereo_link: f64,
-    pub stereo_mid_side: bool,
+    pub stereo_mode: u32,
     pub sidechain_mode: u32,
     pub vocal_mode: bool,
     pub input_level: f64,
@@ -166,7 +166,7 @@ impl ParamSnapshot {
             lookahead_ms: p.lookahead_ms,
             trigger_hear: p.trigger_hear,
             stereo_link: p.stereo_link,
-            stereo_mid_side: p.stereo_mid_side,
+            stereo_mode: p.stereo_mode,
             sidechain_mode: p.sidechain_mode,
             vocal_mode: p.vocal_mode,
             input_level: p.input_level,
@@ -194,7 +194,7 @@ impl ParamSnapshot {
         ch.lookahead_ms = Some(self.lookahead_ms);
         ch.trigger_hear = Some(self.trigger_hear);
         ch.stereo_link = Some(self.stereo_link);
-        ch.stereo_mid_side = Some(self.stereo_mid_side);
+        ch.stereo_mode = Some(self.stereo_mode);
         ch.sidechain_mode = Some(self.sidechain_mode);
         ch.vocal_mode = Some(self.vocal_mode);
         ch.input_level = Some(self.input_level);
@@ -223,7 +223,7 @@ impl ParamSnapshot {
             lookahead_ms: snapshot.lookahead_ms as f64,
             trigger_hear: snapshot.trigger_hear,
             stereo_link: snapshot.stereo_link as f64,
-            stereo_mid_side: snapshot.stereo_mid_side,
+            stereo_mode: snapshot.effective_stereo_mode() as u32,
             sidechain_mode: snapshot.effective_sidechain_mode() as u32,
             vocal_mode: snapshot.vocal_mode,
             input_level: snapshot.input_level as f64,
@@ -253,7 +253,8 @@ impl ParamSnapshot {
             lookahead_ms: self.lookahead_ms as f32,
             trigger_hear: self.trigger_hear,
             stereo_link: self.stereo_link as f32,
-            stereo_mid_side: self.stereo_mid_side,
+            stereo_mode: self.stereo_mode.clamp(0, 2) as i32,
+            stereo_mid_side: self.stereo_mode == 2,
             sidechain_mode: self.sidechain_mode.clamp(0, 2) as i32,
             sidechain_external: self.sidechain_mode == 1,
             vocal_mode: self.vocal_mode,
@@ -410,7 +411,7 @@ pub struct GuiParams {
     pub lookahead_ms: f64,
     pub trigger_hear: bool,
     pub stereo_link: f64,
-    pub stereo_mid_side: bool,
+    pub stereo_mode: u32,
     pub sidechain_mode: u32,
     pub vocal_mode: bool,
     pub detection_db: f32,
@@ -442,7 +443,7 @@ pub struct GuiChanges {
     pub lookahead_ms: Option<f64>,
     pub trigger_hear: Option<bool>,
     pub stereo_link: Option<f64>,
-    pub stereo_mid_side: Option<bool>,
+    pub stereo_mode: Option<u32>,
     pub sidechain_mode: Option<u32>,
     pub vocal_mode: Option<bool>,
     pub detection_max_reset: bool,
@@ -1367,8 +1368,12 @@ fn draw_controls(
             "Stereo Lnk",
             p.stereo_link,
             0.0,
-            2.0,
-            "link",
+            if p.stereo_mode == 0 { 1.0 } else { 2.0 },
+            match p.stereo_mode {
+                1 => "midlink",
+                2 => "sidelink",
+                _ => "link",
+            },
             NumTarget::StereoLink,
         ),
     ];
@@ -1450,20 +1455,26 @@ fn draw_controls(
     );
     knob_row(ui, rect, io_inner, y3, kh, io_k, ch, gui, p, PURPLE, s);
 
-    // ── ToggleSwitches (4 boolean params) ────────────────────────────────────
+    // ── ToggleSwitches ───────────────────────────────────────────────────────
     let y4 = y3 + kh + gap;
-    let btns: &[(&str, bool)] = &[
-        ("Filter Solo", p.filter_solo),
-        ("Trigger Hear", p.trigger_hear),
-        ("Lookahead", p.lookahead_enabled),
-        ("Mid / Side", p.stereo_mid_side),
+    let stereo_mode = p.stereo_mode.min(2);
+    let stereo_label = match stereo_mode {
+        1 => "Mid",
+        2 => "Side",
+        _ => "Stereo",
+    };
+    let btns: &[(&str, bool, u32)] = &[
+        ("Filter Solo", p.filter_solo, 0),
+        ("Trigger Hear", p.trigger_hear, 0),
+        ("Lookahead", p.lookahead_enabled, 0),
+        (stereo_label, stereo_mode != 0, 1),
     ];
     let switch_gap = 4.0 * s;
     let bw =
         (inner.width() - switch_gap * (btns.len().saturating_sub(1)) as f32) / btns.len() as f32;
     let row_w = bw * btns.len() as f32 + switch_gap * (btns.len().saturating_sub(1)) as f32;
     let row_x = inner.center().x - row_w * 0.5;
-    for (i, (lbl, active)) in btns.iter().enumerate() {
+    for (i, (lbl, active, kind)) in btns.iter().enumerate() {
         let bx = row_x + (bw + switch_gap) * i as f32;
         let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(bw, btn_h));
         let r = ui.allocate_rect(br, Sense::click());
@@ -1518,7 +1529,17 @@ fn draw_controls(
                 "Filter Solo" => ch.filter_solo = Some(!active),
                 "Trigger Hear" => ch.trigger_hear = Some(!active),
                 "Lookahead" => ch.lookahead_enabled = Some(!active),
-                "Mid / Side" => ch.stereo_mid_side = Some(!active),
+                _ if *kind == 1 => {
+                    let next_mode = match stereo_mode {
+                        0 => 1,
+                        1 => 2,
+                        _ => 0,
+                    };
+                    ch.stereo_mode = Some(next_mode);
+                    if next_mode == 0 && p.stereo_link > 1.0 {
+                        ch.stereo_link = Some(1.0);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1835,11 +1856,15 @@ fn fmt_knob(v: f64, unit: &str) -> String {
             let pct = if v <= 1.0 { v * 100.0 } else { v };
             format!("{pct:.0}%")
         }
-        "link" => {
+        "link" | "midlink" | "sidelink" => {
             if v <= 1.0 {
                 format!("{:.0}%", v * 100.0)
+            } else if unit == "midlink" {
+                format!("Mid {:.0}%", (v - 1.0) * 100.0)
+            } else if unit == "sidelink" {
+                format!("Side {:.0}%", (v - 1.0) * 100.0)
             } else {
-                format!("MS {:.0}%", (v - 1.0) * 100.0)
+                "100%".into()
             }
         }
         "dB/oct" => format!("{:.1}", v),

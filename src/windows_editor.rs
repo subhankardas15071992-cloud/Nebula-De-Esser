@@ -910,7 +910,7 @@ impl NativeWindowState {
             );
             for spec in group.knobs {
                 let value = self.target_value(spec.target);
-                let norm = target_norm(spec.target, value);
+                let norm = self.target_norm(spec.target, value);
                 let disabled = spec.target == ControlTarget::LookaheadMs
                     && self.params.lookahead_enabled.value() <= 0.5;
                 let accent = if disabled {
@@ -945,7 +945,7 @@ impl NativeWindowState {
                 stroke_round(rt, value_rect, 3.0 * s, &brushes.border, 1.0);
                 draw_text(
                     rt,
-                    &format_value(spec.target, value),
+                    &self.format_value(spec.target, value),
                     value_rect,
                     &formats.small,
                     accent,
@@ -964,7 +964,17 @@ impl NativeWindowState {
     ) {
         let s = layout.s;
         for toggle in toggle_specs(layout) {
-            let active = self.target_value(toggle.target) > 0.5;
+            let value = self.target_value(toggle.target);
+            let active = value > 0.5;
+            let label = if toggle.target == ControlTarget::StereoMidSide {
+                match value.round().clamp(0.0, 2.0) as i32 {
+                    1 => "Mid",
+                    2 => "Side",
+                    _ => "Stereo",
+                }
+            } else {
+                toggle.label
+            };
             fill_round(
                 rt,
                 toggle.rect,
@@ -1015,7 +1025,7 @@ impl NativeWindowState {
             );
             draw_text(
                 rt,
-                toggle.label,
+                label,
                 UiRect::new(
                     toggle.rect.x + 48.0 * s,
                     toggle.rect.y,
@@ -1236,12 +1246,25 @@ impl NativeWindowState {
                 }
                 HitAction::Toggle(target) => {
                     let before = self.capture_snapshot();
-                    let next = if self.target_value(target) > 0.5 {
+                    let next = if target == ControlTarget::StereoMidSide {
+                        let current = self.target_value(target).round().clamp(0.0, 2.0) as i32;
+                        match current {
+                            0 => 1.0,
+                            1 => 2.0,
+                            _ => 0.0,
+                        }
+                    } else if self.target_value(target) > 0.5 {
                         0.0
                     } else {
                         1.0
                     };
                     self.set_target_gesture(target, next);
+                    if target == ControlTarget::StereoMidSide
+                        && next <= 0.0
+                        && self.params.stereo_link.value() > 1.0
+                    {
+                        self.set_target_gesture(ControlTarget::StereoLink, 1.0);
+                    }
                     self.record_undo(before);
                 }
                 HitAction::ResetDetect => {
@@ -1546,6 +1569,74 @@ impl NativeWindowState {
         }
     }
 
+    fn target_range(&self, target: ControlTarget) -> (f32, f32) {
+        let (min, max) = target_range(target);
+        if target == ControlTarget::StereoLink
+            && self.params.stereo_mid_side.value().round().clamp(0.0, 2.0) <= 0.0
+        {
+            (min, 1.0)
+        } else {
+            (min, max)
+        }
+    }
+
+    fn target_norm(&self, target: ControlTarget, value: f32) -> f32 {
+        let (min, max) = self.target_range(target);
+        if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
+            let min_l = min.log10();
+            let max_l = max.log10();
+            return ((value.max(min).log10() - min_l) / (max_l - min_l)).clamp(0.0, 1.0);
+        }
+        ((value - min) / (max - min)).clamp(0.0, 1.0)
+    }
+
+    fn value_from_norm(&self, target: ControlTarget, norm: f32) -> f32 {
+        let (min, max) = self.target_range(target);
+        if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
+            let min_l = min.log10();
+            let max_l = max.log10();
+            return 10.0_f32.powf(min_l + norm.clamp(0.0, 1.0) * (max_l - min_l));
+        }
+        min + norm.clamp(0.0, 1.0) * (max - min)
+    }
+
+    fn target_clamp(&self, target: ControlTarget, value: f32) -> f32 {
+        let (min, max) = self.target_range(target);
+        let value = value.clamp(min, max);
+        if matches!(
+            target,
+            ControlTarget::BasisMode
+                | ControlTarget::SidechainMode
+                | ControlTarget::StereoMidSide
+                | ControlTarget::Oversampling
+        ) {
+            value.round()
+        } else if is_bool_target(target) {
+            if value > 0.5 {
+                1.0
+            } else {
+                0.0
+            }
+        } else {
+            value
+        }
+    }
+
+    fn format_value(&self, target: ControlTarget, value: f32) -> String {
+        if target == ControlTarget::StereoLink {
+            let mode = self.params.stereo_mid_side.value().round().clamp(0.0, 2.0) as i32;
+            if value <= 1.0 || mode == 0 {
+                format!("{:.0}%", value.min(1.0) * 100.0)
+            } else if mode == 1 {
+                format!("Mid {:.0}%", (value - 1.0) * 100.0)
+            } else {
+                format!("Side {:.0}%", (value - 1.0) * 100.0)
+            }
+        } else {
+            format_value(target, value)
+        }
+    }
+
     fn begin_target(&self, target: ControlTarget) {
         let setter = ParamSetter::new(self.context.as_ref());
         with_param(target, &self.params, |param| {
@@ -1568,7 +1659,7 @@ impl NativeWindowState {
 
     fn set_target_plain(&self, target: ControlTarget, value: f32) {
         let setter = ParamSetter::new(self.context.as_ref());
-        let value = target_clamp(target, value);
+        let value = self.target_clamp(target, value);
         with_param(target, &self.params, |param| {
             setter.set_parameter(param, value)
         });
@@ -1576,17 +1667,17 @@ impl NativeWindowState {
 
     fn set_target_from_x(&self, target: ControlTarget, track: UiRect, x: f32) {
         let norm = ((x - track.x) / track.w).clamp(0.0, 1.0);
-        self.set_target_plain(target, value_from_norm(target, norm));
+        self.set_target_plain(target, self.value_from_norm(target, norm));
     }
 
     fn set_target_from_y(&self, target: ControlTarget, start_value: f32, start_y: f32, y: f32) {
-        let start_norm = target_norm(target, start_value);
+        let start_norm = self.target_norm(target, start_value);
         let norm = (start_norm + (start_y - y) * 0.006).clamp(0.0, 1.0);
-        self.set_target_plain(target, value_from_norm(target, norm));
+        self.set_target_plain(target, self.value_from_norm(target, norm));
     }
 
     fn target_x(&self, target: ControlTarget, track: UiRect) -> f32 {
-        track.x + track.w * target_norm(target, self.target_value(target))
+        track.x + track.w * self.target_norm(target, self.target_value(target))
     }
 
     fn capture_snapshot(&self) -> ParamSnapshot {
@@ -1603,7 +1694,7 @@ impl NativeWindowState {
             lookahead_ms: self.params.lookahead_ms.value(),
             trigger_hear: self.params.trigger_hear.value() > 0.5,
             stereo_link: self.params.stereo_link.value(),
-            stereo_mid_side: self.params.stereo_mid_side.value() > 0.5,
+            stereo_mode: self.params.stereo_mid_side.value().round().clamp(0.0, 2.0) as i32,
             sidechain_mode: self.params.sidechain_mode.value().round().clamp(0.0, 2.0) as i32,
             vocal_mode: self.params.vocal_mode.value() > 0.5,
             input_level: self.params.input_level.value(),
@@ -1647,10 +1738,7 @@ impl NativeWindowState {
             if snapshot.trigger_hear { 1.0 } else { 0.0 },
         );
         self.set_target_plain(ControlTarget::StereoLink, snapshot.stereo_link);
-        self.set_target_plain(
-            ControlTarget::StereoMidSide,
-            if snapshot.stereo_mid_side { 1.0 } else { 0.0 },
-        );
+        self.set_target_plain(ControlTarget::StereoMidSide, snapshot.stereo_mode as f32);
         self.set_target_plain(ControlTarget::SidechainMode, snapshot.sidechain_mode as f32);
         self.set_target_plain(
             ControlTarget::VocalMode,
@@ -2666,7 +2754,7 @@ struct ParamSnapshot {
     lookahead_ms: f32,
     trigger_hear: bool,
     stereo_link: f32,
-    stereo_mid_side: bool,
+    stereo_mode: i32,
     sidechain_mode: i32,
     vocal_mode: bool,
     input_level: f32,
@@ -2696,7 +2784,7 @@ impl ParamSnapshot {
             lookahead_ms: snapshot.lookahead_ms,
             trigger_hear: snapshot.trigger_hear,
             stereo_link: snapshot.stereo_link,
-            stereo_mid_side: snapshot.stereo_mid_side,
+            stereo_mode: snapshot.effective_stereo_mode(),
             sidechain_mode: snapshot.effective_sidechain_mode(),
             vocal_mode: snapshot.vocal_mode,
             input_level: snapshot.input_level,
@@ -2726,7 +2814,8 @@ impl ParamSnapshot {
             lookahead_ms: self.lookahead_ms,
             trigger_hear: self.trigger_hear,
             stereo_link: self.stereo_link,
-            stereo_mid_side: self.stereo_mid_side,
+            stereo_mode: self.stereo_mode.clamp(0, 2),
+            stereo_mid_side: self.stereo_mode == 2,
             sidechain_mode: self.sidechain_mode.clamp(0, 2),
             sidechain_external: self.sidechain_mode == 1,
             vocal_mode: self.vocal_mode,
@@ -3764,54 +3853,15 @@ fn target_range(target: ControlTarget) -> (f32, f32) {
         | ControlTarget::FilterSolo
         | ControlTarget::LookaheadEnabled
         | ControlTarget::TriggerHear
-        | ControlTarget::StereoMidSide
         | ControlTarget::VocalMode
         | ControlTarget::Bypass => (0.0, 1.0),
+        ControlTarget::StereoMidSide => (0.0, 2.0),
         ControlTarget::InputLevel | ControlTarget::OutputLevel => (-100.0, 100.0),
         ControlTarget::InputPan | ControlTarget::OutputPan => (-1.0, 1.0),
         ControlTarget::BasisMode => (0.0, 2.0),
         ControlTarget::SidechainMode => (0.0, 2.0),
         ControlTarget::Oversampling => (0.0, 4.0),
         ControlTarget::CutSlope => (0.0, 100.0),
-    }
-}
-
-fn target_norm(target: ControlTarget, value: f32) -> f32 {
-    let (min, max) = target_range(target);
-    if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
-        let min_l = min.log10();
-        let max_l = max.log10();
-        return ((value.max(min).log10() - min_l) / (max_l - min_l)).clamp(0.0, 1.0);
-    }
-    ((value - min) / (max - min)).clamp(0.0, 1.0)
-}
-
-fn value_from_norm(target: ControlTarget, norm: f32) -> f32 {
-    let (min, max) = target_range(target);
-    if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
-        let min_l = min.log10();
-        let max_l = max.log10();
-        return 10.0_f32.powf(min_l + norm.clamp(0.0, 1.0) * (max_l - min_l));
-    }
-    min + norm.clamp(0.0, 1.0) * (max - min)
-}
-
-fn target_clamp(target: ControlTarget, value: f32) -> f32 {
-    let (min, max) = target_range(target);
-    let value = value.clamp(min, max);
-    if matches!(
-        target,
-        ControlTarget::BasisMode | ControlTarget::SidechainMode | ControlTarget::Oversampling
-    ) {
-        value.round()
-    } else if is_bool_target(target) {
-        if value > 0.5 {
-            1.0
-        } else {
-            0.0
-        }
-    } else {
-        value
     }
 }
 
@@ -3823,7 +3873,6 @@ fn is_bool_target(target: ControlTarget) -> bool {
             | ControlTarget::FilterSolo
             | ControlTarget::LookaheadEnabled
             | ControlTarget::TriggerHear
-            | ControlTarget::StereoMidSide
             | ControlTarget::VocalMode
             | ControlTarget::Bypass
     )
@@ -3844,7 +3893,7 @@ fn format_value(target: ControlTarget, value: f32) -> String {
             if value <= 1.0 {
                 format!("{:.0}%", value * 100.0)
             } else {
-                format!("MS {:.0}%", (value - 1.0) * 100.0)
+                format!("Focus {:.0}%", (value - 1.0) * 100.0)
             }
         }
         ControlTarget::CutWidth | ControlTarget::CutDepth | ControlTarget::Mix => {

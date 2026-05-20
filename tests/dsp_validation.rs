@@ -57,7 +57,7 @@ fn mid_side_path_remains_transparent_below_threshold() {
             ProcessSettings {
                 threshold_db: 100.0,
                 max_reduction_db: 12.0,
-                stereo_mid_side: true,
+                stereo_mode: 1,
                 ..ProcessSettings::default()
             },
         );

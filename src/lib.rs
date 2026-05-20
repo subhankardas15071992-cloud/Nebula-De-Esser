@@ -279,7 +279,19 @@ impl Default for NebulaParams {
                 FloatRange::Linear { min: 0.0, max: 2.0 },
             )
             .with_step_size(0.01),
-            stereo_mid_side: bool_param("Mid/Side", false),
+            stereo_mid_side: FloatParam::new(
+                "Stereo Mode",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(1.0)
+            .with_value_to_string(Arc::new(|value| {
+                match value.round().clamp(0.0, 2.0) as u32 {
+                    1 => "Mid".to_string(),
+                    2 => "Side".to_string(),
+                    _ => "Stereo".to_string(),
+                }
+            })),
             sidechain_mode: FloatParam::new(
                 "Sidechain",
                 0.0,
@@ -630,7 +642,7 @@ impl Plugin for NebulaDeEsser {
                         lookahead_ms: params.lookahead_ms.value() as f64,
                         trigger_hear: params.trigger_hear.value() > 0.5,
                         stereo_link: params.stereo_link.value() as f64,
-                        stereo_mid_side: params.stereo_mid_side.value() > 0.5,
+                        stereo_mode: params.stereo_mid_side.value().round().clamp(0.0, 2.0) as u32,
                         sidechain_mode: params.sidechain_mode.value().round().clamp(0.0, 2.0)
                             as u32,
                         vocal_mode: params.vocal_mode.value() > 0.5,
@@ -843,7 +855,7 @@ impl Plugin for NebulaDeEsser {
         let filter_solo = self.params.filter_solo.value() > 0.5;
         let trigger_hear = self.params.trigger_hear.value() > 0.5;
         let stereo_link = self.params.stereo_link.value() as f64;
-        let stereo_mid_side = self.params.stereo_mid_side.value() > 0.5;
+        let stereo_mode = self.params.stereo_mid_side.value().round().clamp(0.0, 2.0) as u32;
         let sidechain_mode = SidechainMode::from_param(self.params.sidechain_mode.value());
         let single_vocal = self.params.vocal_mode.value() > 0.5;
         let lookahead_enabled = self.params.lookahead_enabled.value() > 0.5;
@@ -898,7 +910,7 @@ impl Plugin for NebulaDeEsser {
             trigger_hear,
             filter_solo,
             stereo_link,
-            stereo_mid_side,
+            stereo_mode,
             midi_trigger: 0.0,
         };
 
@@ -1126,7 +1138,11 @@ fn apply_midi_mapping(
     match parameter_index {
         MIDI_THRESHOLD => set_param!(params.threshold, value * 100.0),
         MIDI_MAX_RED => set_param!(params.max_reduction, -100.0 + value * 100.0),
-        MIDI_STEREO_LINK => set_param!(params.stereo_link, value * 2.0),
+        MIDI_STEREO_LINK => {
+            let stereo_mode = params.stereo_mid_side.value().round().clamp(0.0, 2.0);
+            let max_link = if stereo_mode > 0.0 { 2.0 } else { 1.0 };
+            set_param!(params.stereo_link, value * max_link)
+        }
         MIDI_INPUT_LEVEL => set_param!(params.input_level, -100.0 + value * 200.0),
         MIDI_INPUT_PAN => set_param!(params.input_pan, value * 2.0 - 1.0),
         MIDI_OUTPUT_LEVEL => set_param!(params.output_level, -100.0 + value * 200.0),
@@ -1175,8 +1191,20 @@ fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, sett
     set_bool!(changes.lookahead_enabled, params.lookahead_enabled);
     set_float!(changes.lookahead_ms, params.lookahead_ms);
     set_bool!(changes.trigger_hear, params.trigger_hear);
-    set_float!(changes.stereo_link, params.stereo_link);
-    set_bool!(changes.stereo_mid_side, params.stereo_mid_side);
+    if let Some(stereo_link) = changes.stereo_link {
+        let stereo_mode = changes
+            .stereo_mode
+            .unwrap_or_else(|| params.stereo_mid_side.value().round().clamp(0.0, 2.0) as u32);
+        let max_link = if stereo_mode == 0 { 1.0 } else { 2.0 };
+        setter.begin_set_parameter(&params.stereo_link);
+        setter.set_parameter(&params.stereo_link, stereo_link.clamp(0.0, max_link) as f32);
+        setter.end_set_parameter(&params.stereo_link);
+    }
+    if let Some(stereo_mode) = changes.stereo_mode {
+        setter.begin_set_parameter(&params.stereo_mid_side);
+        setter.set_parameter(&params.stereo_mid_side, stereo_mode.clamp(0, 2) as f32);
+        setter.end_set_parameter(&params.stereo_mid_side);
+    }
     if let Some(sidechain_mode) = changes.sidechain_mode {
         setter.begin_set_parameter(&params.sidechain_mode);
         setter.set_parameter(&params.sidechain_mode, sidechain_mode.clamp(0, 2) as f32);
