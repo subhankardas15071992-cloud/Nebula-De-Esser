@@ -1176,27 +1176,27 @@ impl NativeWindowState {
                 &brushes.orange,
                 1.5 * s,
             );
-            draw_freq_node(
-                rt,
-                min_x,
-                node_y,
-                "Min",
-                &brushes.teal,
-                &brushes.card,
-                formats,
-                s,
-            );
-            draw_freq_node(
-                rt,
-                max_x,
-                node_y,
-                "Max",
-                &brushes.orange,
-                &brushes.card,
-                formats,
-                s,
-            );
         }
+        draw_freq_node(
+            rt,
+            min_x,
+            node_y,
+            "Min",
+            &brushes.teal,
+            &brushes.card,
+            formats,
+            s,
+        );
+        draw_freq_node(
+            rt,
+            max_x,
+            node_y,
+            "Max",
+            &brushes.orange,
+            &brushes.card,
+            formats,
+            s,
+        );
 
         let (mags, sample_rate) = {
             let spec = self.spectrum.lock();
@@ -1719,6 +1719,20 @@ impl NativeWindowState {
     }
 
     fn set_target_from_x(&self, target: ControlTarget, track: UiRect, x: f32) {
+        if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
+            let local_x = (x - track.x).clamp(0.0, track.w);
+            let raw = x_to_freq(local_x, track.w);
+            let value = if target == ControlTarget::MinFreq {
+                raw.max(1.0)
+                    .min((self.params.max_freq.value() - 1.0).max(1.0))
+            } else {
+                raw.max((self.params.min_freq.value() + 1.0).min(24_000.0))
+                    .min(24_000.0)
+            };
+            self.set_target_plain(target, value);
+            return;
+        }
+
         let norm = ((x - track.x) / track.w).clamp(0.0, 1.0);
         self.set_target_plain(target, self.value_from_norm(target, norm));
     }
@@ -1730,6 +1744,10 @@ impl NativeWindowState {
     }
 
     fn target_x(&self, target: ControlTarget, track: UiRect) -> f32 {
+        if matches!(target, ControlTarget::MinFreq | ControlTarget::MaxFreq) {
+            return track.x + freq_to_x(self.target_value(target), track.w);
+        }
+
         track.x + track.w * self.target_norm(target, self.target_value(target))
     }
 
