@@ -611,10 +611,10 @@ impl NativeWindowState {
             s,
         );
 
-        let status = if self.params.sidechain_external.value() > 0.5 {
-            "External sidechain"
-        } else {
-            "Internal detector"
+        let status = match self.params.sidechain_mode.value().round().clamp(0.0, 2.0) as u32 {
+            1 => "External sidechain",
+            2 => "MIDI sidechain",
+            _ => "Internal detector",
         };
         draw_text(
             rt,
@@ -911,12 +911,23 @@ impl NativeWindowState {
             for spec in group.knobs {
                 let value = self.target_value(spec.target);
                 let norm = target_norm(spec.target, value);
+                let disabled = spec.target == ControlTarget::LookaheadMs
+                    && self.params.lookahead_enabled.value() <= 0.5;
+                let accent = if disabled {
+                    &brushes.text_tertiary
+                } else {
+                    spec.accent.brush(brushes)
+                };
                 draw_text(
                     rt,
                     spec.label,
                     UiRect::new(spec.rect.x, spec.rect.y + 2.0 * s, spec.rect.w, 10.0 * s),
                     &formats.small,
-                    &brushes.text_tertiary,
+                    if disabled {
+                        &brushes.text_tertiary
+                    } else {
+                        &brushes.text_secondary
+                    },
                     Align::Center,
                 );
                 draw_knob(
@@ -925,7 +936,7 @@ impl NativeWindowState {
                     spec.knob_rect.center_y(),
                     spec.knob_rect.w.min(spec.knob_rect.h) * 0.5,
                     norm,
-                    spec.accent,
+                    accent,
                     brushes,
                     s,
                 );
@@ -937,7 +948,7 @@ impl NativeWindowState {
                     &format_value(spec.target, value),
                     value_rect,
                     &formats.small,
-                    spec.accent.brush(brushes),
+                    accent,
                     Align::Center,
                 );
             }
@@ -1297,7 +1308,7 @@ impl NativeWindowState {
             invalidate(self.hwnd);
             return;
         }
-        for zone in numeric_hit_zones(&layout) {
+        for zone in numeric_hit_zones(&self.params, &layout) {
             if zone.rect.contains(x, y) {
                 self.open_numeric_input(zone.target);
                 self.preset_menu_open = false;
@@ -1520,7 +1531,7 @@ impl NativeWindowState {
             ControlTarget::TriggerHear => self.params.trigger_hear.value(),
             ControlTarget::StereoLink => self.params.stereo_link.value(),
             ControlTarget::StereoMidSide => self.params.stereo_mid_side.value(),
-            ControlTarget::SidechainExternal => self.params.sidechain_external.value(),
+            ControlTarget::SidechainMode => self.params.sidechain_mode.value(),
             ControlTarget::VocalMode => self.params.vocal_mode.value(),
             ControlTarget::InputLevel => self.params.input_level.value(),
             ControlTarget::InputPan => self.params.input_pan.value(),
@@ -1593,7 +1604,7 @@ impl NativeWindowState {
             trigger_hear: self.params.trigger_hear.value() > 0.5,
             stereo_link: self.params.stereo_link.value(),
             stereo_mid_side: self.params.stereo_mid_side.value() > 0.5,
-            sidechain_external: self.params.sidechain_external.value() > 0.5,
+            sidechain_mode: self.params.sidechain_mode.value().round().clamp(0.0, 2.0) as i32,
             vocal_mode: self.params.vocal_mode.value() > 0.5,
             input_level: self.params.input_level.value(),
             input_pan: self.params.input_pan.value(),
@@ -1640,14 +1651,7 @@ impl NativeWindowState {
             ControlTarget::StereoMidSide,
             if snapshot.stereo_mid_side { 1.0 } else { 0.0 },
         );
-        self.set_target_plain(
-            ControlTarget::SidechainExternal,
-            if snapshot.sidechain_external {
-                1.0
-            } else {
-                0.0
-            },
-        );
+        self.set_target_plain(ControlTarget::SidechainMode, snapshot.sidechain_mode as f32);
         self.set_target_plain(
             ControlTarget::VocalMode,
             if snapshot.vocal_mode { 1.0 } else { 0.0 },
@@ -2663,7 +2667,7 @@ struct ParamSnapshot {
     trigger_hear: bool,
     stereo_link: f32,
     stereo_mid_side: bool,
-    sidechain_external: bool,
+    sidechain_mode: i32,
     vocal_mode: bool,
     input_level: f32,
     input_pan: f32,
@@ -2693,7 +2697,7 @@ impl ParamSnapshot {
             trigger_hear: snapshot.trigger_hear,
             stereo_link: snapshot.stereo_link,
             stereo_mid_side: snapshot.stereo_mid_side,
-            sidechain_external: snapshot.sidechain_external,
+            sidechain_mode: snapshot.effective_sidechain_mode(),
             vocal_mode: snapshot.vocal_mode,
             input_level: snapshot.input_level,
             input_pan: snapshot.input_pan,
@@ -2723,7 +2727,8 @@ impl ParamSnapshot {
             trigger_hear: self.trigger_hear,
             stereo_link: self.stereo_link,
             stereo_mid_side: self.stereo_mid_side,
-            sidechain_external: self.sidechain_external,
+            sidechain_mode: self.sidechain_mode.clamp(0, 2),
+            sidechain_external: self.sidechain_mode == 1,
             vocal_mode: self.vocal_mode,
             input_level: self.input_level,
             input_pan: self.input_pan,
@@ -3282,7 +3287,7 @@ enum ControlTarget {
     TriggerHear,
     StereoLink,
     StereoMidSide,
-    SidechainExternal,
+    SidechainMode,
     VocalMode,
     InputLevel,
     InputPan,
@@ -3413,22 +3418,34 @@ fn segment_groups(params: &NebulaParams, layout: &Layout) -> Vec<SegmentGroup> {
                     ],
                 }
             }
-            3 => SegmentGroup {
-                label: "Sidechain",
-                rect,
-                segments: make_two(
-                    (
-                        "Int",
-                        HitAction::Set(ControlTarget::SidechainExternal, 0.0),
-                        params.sidechain_external.value() <= 0.5,
-                    ),
-                    (
-                        "Ext",
-                        HitAction::Set(ControlTarget::SidechainExternal, 1.0),
-                        params.sidechain_external.value() > 0.5,
-                    ),
-                ),
-            },
+            3 => {
+                let sw = (group_w - 12.0 * s) / 3.0;
+                let active = params.sidechain_mode.value().round().clamp(0.0, 2.0) as i32;
+                SegmentGroup {
+                    label: "Sidechain",
+                    rect,
+                    segments: [
+                        SegmentSpec {
+                            label: "Int",
+                            rect: UiRect::new(x + 4.0 * s, seg_y, sw, seg_h),
+                            action: HitAction::Set(ControlTarget::SidechainMode, 0.0),
+                            active: active == 0,
+                        },
+                        SegmentSpec {
+                            label: "Ext",
+                            rect: UiRect::new(x + 6.0 * s + sw, seg_y, sw, seg_h),
+                            action: HitAction::Set(ControlTarget::SidechainMode, 1.0),
+                            active: active == 1,
+                        },
+                        SegmentSpec {
+                            label: "MIDI",
+                            rect: UiRect::new(x + 8.0 * s + sw * 2.0, seg_y, sw, seg_h),
+                            action: HitAction::Set(ControlTarget::SidechainMode, 2.0),
+                            active: active == 2,
+                        },
+                    ],
+                }
+            }
             4 => SegmentGroup {
                 label: "Vocal",
                 rect,
@@ -3551,10 +3568,14 @@ fn knob_value_rect(rect: UiRect, s: f32) -> UiRect {
     )
 }
 
-fn numeric_hit_zones(layout: &Layout) -> Vec<NumericHitZone> {
+fn numeric_hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<NumericHitZone> {
     let mut zones = Vec::new();
     for group in knob_groups(layout) {
         for knob in group.knobs {
+            if knob.target == ControlTarget::LookaheadMs && params.lookahead_enabled.value() <= 0.5
+            {
+                continue;
+            }
             let value_rect = knob_value_rect(knob.rect, layout.s);
             zones.push(NumericHitZone {
                 rect: knob.knob_rect,
@@ -3674,6 +3695,10 @@ fn hit_zones(params: &NebulaParams, layout: &Layout) -> Vec<HitZone> {
     }
     for group in knob_groups(layout) {
         for knob in group.knobs {
+            if knob.target == ControlTarget::LookaheadMs && params.lookahead_enabled.value() <= 0.5
+            {
+                continue;
+            }
             zones.push(HitZone {
                 rect: knob.rect,
                 action: HitAction::Drag(knob.target, knob.knob_rect, DragMode::Vertical),
@@ -3730,8 +3755,8 @@ fn target_range(target: ControlTarget) -> (f32, f32) {
         ControlTarget::MaxReduction => (-100.0, 0.0),
         ControlTarget::MinFreq | ControlTarget::MaxFreq => (1.0, 24_000.0),
         ControlTarget::LookaheadMs => (0.0, 20.0),
-        ControlTarget::StereoLink
-        | ControlTarget::CutWidth
+        ControlTarget::StereoLink => (0.0, 2.0),
+        ControlTarget::CutWidth
         | ControlTarget::CutDepth
         | ControlTarget::Mix
         | ControlTarget::ModeRelative
@@ -3740,12 +3765,12 @@ fn target_range(target: ControlTarget) -> (f32, f32) {
         | ControlTarget::LookaheadEnabled
         | ControlTarget::TriggerHear
         | ControlTarget::StereoMidSide
-        | ControlTarget::SidechainExternal
         | ControlTarget::VocalMode
         | ControlTarget::Bypass => (0.0, 1.0),
         ControlTarget::InputLevel | ControlTarget::OutputLevel => (-100.0, 100.0),
         ControlTarget::InputPan | ControlTarget::OutputPan => (-1.0, 1.0),
         ControlTarget::BasisMode => (0.0, 2.0),
+        ControlTarget::SidechainMode => (0.0, 2.0),
         ControlTarget::Oversampling => (0.0, 4.0),
         ControlTarget::CutSlope => (0.0, 100.0),
     }
@@ -3776,7 +3801,7 @@ fn target_clamp(target: ControlTarget, value: f32) -> f32 {
     let value = value.clamp(min, max);
     if matches!(
         target,
-        ControlTarget::BasisMode | ControlTarget::Oversampling
+        ControlTarget::BasisMode | ControlTarget::SidechainMode | ControlTarget::Oversampling
     ) {
         value.round()
     } else if is_bool_target(target) {
@@ -3799,7 +3824,6 @@ fn is_bool_target(target: ControlTarget) -> bool {
             | ControlTarget::LookaheadEnabled
             | ControlTarget::TriggerHear
             | ControlTarget::StereoMidSide
-            | ControlTarget::SidechainExternal
             | ControlTarget::VocalMode
             | ControlTarget::Bypass
     )
@@ -3816,10 +3840,14 @@ fn format_value(target: ControlTarget, value: f32) -> String {
         }
         ControlTarget::Threshold => format!("{value:.0}%"),
         ControlTarget::CutSlope => format!("{value:.1}"),
-        ControlTarget::StereoLink
-        | ControlTarget::CutWidth
-        | ControlTarget::CutDepth
-        | ControlTarget::Mix => {
+        ControlTarget::StereoLink => {
+            if value <= 1.0 {
+                format!("{:.0}%", value * 100.0)
+            } else {
+                format!("MS {:.0}%", (value - 1.0) * 100.0)
+            }
+        }
+        ControlTarget::CutWidth | ControlTarget::CutDepth | ControlTarget::Mix => {
             format!("{:.0}%", value * 100.0)
         }
         ControlTarget::MaxReduction | ControlTarget::InputLevel | ControlTarget::OutputLevel => {
@@ -3846,7 +3874,7 @@ fn numeric_spec(target: ControlTarget) -> (&'static str, f32, f32) {
         ControlTarget::MinFreq => ("Min Frequency", 1.0, 24_000.0),
         ControlTarget::MaxFreq => ("Max Frequency", 1.0, 24_000.0),
         ControlTarget::LookaheadMs => ("Lookahead", 0.0, 20.0),
-        ControlTarget::StereoLink => ("Stereo Link", 0.0, 1.0),
+        ControlTarget::StereoLink => ("Stereo Link", 0.0, 2.0),
         ControlTarget::InputLevel => ("Input Level", -100.0, 100.0),
         ControlTarget::InputPan => ("Input Pan", -1.0, 1.0),
         ControlTarget::OutputLevel => ("Output Level", -100.0, 100.0),
@@ -3903,7 +3931,7 @@ fn with_param<R>(
         ControlTarget::TriggerHear => f(&params.trigger_hear),
         ControlTarget::StereoLink => f(&params.stereo_link),
         ControlTarget::StereoMidSide => f(&params.stereo_mid_side),
-        ControlTarget::SidechainExternal => f(&params.sidechain_external),
+        ControlTarget::SidechainMode => f(&params.sidechain_mode),
         ControlTarget::VocalMode => f(&params.vocal_mode),
         ControlTarget::InputLevel => f(&params.input_level),
         ControlTarget::InputPan => f(&params.input_pan),
@@ -4076,12 +4104,11 @@ fn draw_knob(
     cy: f32,
     radius: f32,
     norm: f32,
-    accent: AccentBrush,
+    accent: &ID2D1SolidColorBrush,
     brushes: &Brushes,
     s: f32,
 ) {
     let norm = norm.clamp(0.0, 1.0);
-    let accent = accent.brush(brushes);
     let start = std::f32::consts::PI * 0.75;
     let sweep = std::f32::consts::PI * 1.5;
     let angle = start + sweep * norm;

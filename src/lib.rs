@@ -63,6 +63,23 @@ pub const MIDI_PARAM_NAMES: &[&str] = &[
     "Lookahead",
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidechainMode {
+    Internal,
+    External,
+    Midi,
+}
+
+impl SidechainMode {
+    fn from_param(value: f32) -> Self {
+        match value.round().clamp(0.0, 2.0) as u32 {
+            1 => Self::External,
+            2 => Self::Midi,
+            _ => Self::Internal,
+        }
+    }
+}
+
 pub struct MidiLearnShared {
     pub learning_target: AtomicI32,
     pub mappings: Mutex<HashMap<u8, u8>>,
@@ -177,7 +194,7 @@ struct NebulaParams {
     #[id = "stereo_mid_side"]
     pub stereo_mid_side: FloatParam,
     #[id = "sidechain_external"]
-    pub sidechain_external: FloatParam,
+    pub sidechain_mode: FloatParam,
     #[id = "vocal_mode"]
     pub vocal_mode: FloatParam,
     #[id = "input_level"]
@@ -259,11 +276,16 @@ impl Default for NebulaParams {
             stereo_link: FloatParam::new(
                 "Stereo Link",
                 1.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
+                FloatRange::Linear { min: 0.0, max: 2.0 },
             )
             .with_step_size(0.01),
             stereo_mid_side: bool_param("Mid/Side", false),
-            sidechain_external: bool_param("Sidechain", false),
+            sidechain_mode: FloatParam::new(
+                "Sidechain",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(1.0),
             vocal_mode: bool_param("Vocal Mode", true),
             input_level: FloatParam::new(
                 "Input Level",
@@ -474,6 +496,9 @@ struct NebulaDeEsser {
     prev_main_r: f64,
     prev_sc_l: f64,
     prev_sc_r: f64,
+    midi_sidechain_active_notes: u32,
+    midi_sidechain_velocity: f64,
+    midi_sidechain_env: f64,
 }
 
 impl Default for NebulaDeEsser {
@@ -499,6 +524,9 @@ impl Default for NebulaDeEsser {
             prev_main_r: 0.0,
             prev_sc_l: 0.0,
             prev_sc_r: 0.0,
+            midi_sidechain_active_notes: 0,
+            midi_sidechain_velocity: 0.0,
+            midi_sidechain_env: 0.0,
             is_ready: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -507,6 +535,29 @@ impl Default for NebulaDeEsser {
 impl Drop for NebulaDeEsser {
     fn drop(&mut self) {
         self.midi_learn.persist_as_saved(&self.storage);
+    }
+}
+
+impl NebulaDeEsser {
+    fn next_midi_sidechain_trigger(&mut self) -> f64 {
+        let target = if self.midi_sidechain_active_notes > 0 {
+            self.midi_sidechain_velocity
+                .clamp(0.0, 1.0)
+                .max(1.0 / 127.0)
+        } else {
+            0.0
+        };
+        let time_ms = if target > self.midi_sidechain_env {
+            0.25
+        } else {
+            18.0
+        };
+        let coeff = (-1.0 / ((time_ms * 0.001) * self.sample_rate.max(1.0))).exp();
+        self.midi_sidechain_env = target + coeff * (self.midi_sidechain_env - target);
+        if self.midi_sidechain_env.abs() < 1.0e-6 {
+            self.midi_sidechain_env = 0.0;
+        }
+        self.midi_sidechain_env.clamp(0.0, 1.0)
     }
 }
 
@@ -580,7 +631,8 @@ impl Plugin for NebulaDeEsser {
                         trigger_hear: params.trigger_hear.value() > 0.5,
                         stereo_link: params.stereo_link.value() as f64,
                         stereo_mid_side: params.stereo_mid_side.value() > 0.5,
-                        sidechain_external: params.sidechain_external.value() > 0.5,
+                        sidechain_mode: params.sidechain_mode.value().round().clamp(0.0, 2.0)
+                            as u32,
                         vocal_mode: params.vocal_mode.value() > 0.5,
                         detection_db: det_db,
                         detection_max_db: det_max,
@@ -645,6 +697,9 @@ impl Plugin for NebulaDeEsser {
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
+        self.midi_sidechain_active_notes = 0;
+        self.midi_sidechain_velocity = 0.0;
+        self.midi_sidechain_env = 0.0;
         context.set_latency_samples(0);
         self.is_ready
             .store(true, std::sync::atomic::Ordering::Release);
@@ -660,6 +715,9 @@ impl Plugin for NebulaDeEsser {
         self.prev_main_r = 0.0;
         self.prev_sc_l = 0.0;
         self.prev_sc_r = 0.0;
+        self.midi_sidechain_active_notes = 0;
+        self.midi_sidechain_velocity = 0.0;
+        self.midi_sidechain_env = 0.0;
     }
 
     fn process(
@@ -672,22 +730,46 @@ impl Plugin for NebulaDeEsser {
             return ProcessStatus::Normal;
         }
         while let Some(event) = context.next_event() {
-            if let NoteEvent::MidiCC { cc, value, .. } = event {
-                if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
-                    continue;
-                }
+            match event {
+                NoteEvent::MidiCC { cc, value, .. } => {
+                    if !self.midi_learn.midi_enabled.load(Ordering::Relaxed) {
+                        continue;
+                    }
 
-                let cc_index = (cc as usize).min(127);
-                self.midi_learn.cc_values[cc_index].store(f32_to_u32(value), Ordering::Relaxed);
-                self.midi_learn.cc_dirty[cc_index].store(true, Ordering::Release);
+                    let cc_index = (cc as usize).min(127);
+                    self.midi_learn.cc_values[cc_index].store(f32_to_u32(value), Ordering::Relaxed);
+                    self.midi_learn.cc_dirty[cc_index].store(true, Ordering::Release);
 
-                let learning_target = self.midi_learn.learning_target.load(Ordering::Acquire);
-                if learning_target >= 0 {
-                    self.midi_learn
-                        .learning_target
-                        .store(UNMAPPED_CC, Ordering::Release);
-                    self.midi_learn.learn_cc(cc, learning_target as u8);
+                    let learning_target = self.midi_learn.learning_target.load(Ordering::Acquire);
+                    if learning_target >= 0 {
+                        self.midi_learn
+                            .learning_target
+                            .store(UNMAPPED_CC, Ordering::Release);
+                        self.midi_learn.learn_cc(cc, learning_target as u8);
+                    }
                 }
+                NoteEvent::NoteOn { velocity, .. } => {
+                    if velocity > 0.0 {
+                        self.midi_sidechain_active_notes =
+                            self.midi_sidechain_active_notes.saturating_add(1);
+                        self.midi_sidechain_velocity =
+                            self.midi_sidechain_velocity.max(velocity as f64);
+                    } else {
+                        self.midi_sidechain_active_notes =
+                            self.midi_sidechain_active_notes.saturating_sub(1);
+                        if self.midi_sidechain_active_notes == 0 {
+                            self.midi_sidechain_velocity = 0.0;
+                        }
+                    }
+                }
+                NoteEvent::NoteOff { .. } | NoteEvent::Choke { .. } => {
+                    self.midi_sidechain_active_notes =
+                        self.midi_sidechain_active_notes.saturating_sub(1);
+                    if self.midi_sidechain_active_notes == 0 {
+                        self.midi_sidechain_velocity = 0.0;
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -762,7 +844,7 @@ impl Plugin for NebulaDeEsser {
         let trigger_hear = self.params.trigger_hear.value() > 0.5;
         let stereo_link = self.params.stereo_link.value() as f64;
         let stereo_mid_side = self.params.stereo_mid_side.value() > 0.5;
-        let sidechain_external = self.params.sidechain_external.value() > 0.5;
+        let sidechain_mode = SidechainMode::from_param(self.params.sidechain_mode.value());
         let single_vocal = self.params.vocal_mode.value() > 0.5;
         let lookahead_enabled = self.params.lookahead_enabled.value() > 0.5;
         let lookahead_ms = self.params.lookahead_ms.value() as f64;
@@ -817,13 +899,15 @@ impl Plugin for NebulaDeEsser {
             filter_solo,
             stereo_link,
             stereo_mid_side,
+            midi_trigger: 0.0,
         };
 
-        let sidechain_buffers = if sidechain_external && !aux.inputs.is_empty() {
-            Some(aux.inputs[0].as_slice_immutable())
-        } else {
-            None
-        };
+        let sidechain_buffers =
+            if sidechain_mode == SidechainMode::External && !aux.inputs.is_empty() {
+                Some(aux.inputs[0].as_slice_immutable())
+            } else {
+                None
+            };
 
         let samples = buffer.samples();
         let channels = buffer.as_slice();
@@ -866,6 +950,16 @@ impl Plugin for NebulaDeEsser {
                 processed_in_l,
                 processed_in_r,
             );
+            let midi_trigger = if sidechain_mode == SidechainMode::Midi {
+                self.next_midi_sidechain_trigger()
+            } else {
+                self.midi_sidechain_env = 0.0;
+                0.0
+            };
+            let sample_settings = ProcessSettings {
+                midi_trigger,
+                ..settings
+            };
 
             let ProcessFrame {
                 wet_l,
@@ -894,7 +988,7 @@ impl Plugin for NebulaDeEsser {
                         interp_r,
                         interp_sc_l,
                         interp_sc_r,
-                        settings,
+                        sample_settings,
                     );
                     wet_l_acc += frame.wet_l;
                     wet_r_acc += frame.wet_r;
@@ -914,8 +1008,13 @@ impl Plugin for NebulaDeEsser {
                     reduction_db: red_acc,
                 }
             } else {
-                self.dsp
-                    .process_frame(processed_in_l, processed_in_r, sc_in_l, sc_in_r, settings)
+                self.dsp.process_frame(
+                    processed_in_l,
+                    processed_in_r,
+                    sc_in_l,
+                    sc_in_r,
+                    sample_settings,
+                )
             };
 
             let mix_target = if trigger_hear || filter_solo {
@@ -1027,7 +1126,7 @@ fn apply_midi_mapping(
     match parameter_index {
         MIDI_THRESHOLD => set_param!(params.threshold, value * 100.0),
         MIDI_MAX_RED => set_param!(params.max_reduction, -100.0 + value * 100.0),
-        MIDI_STEREO_LINK => set_param!(params.stereo_link, value),
+        MIDI_STEREO_LINK => set_param!(params.stereo_link, value * 2.0),
         MIDI_INPUT_LEVEL => set_param!(params.input_level, -100.0 + value * 200.0),
         MIDI_INPUT_PAN => set_param!(params.input_pan, value * 2.0 - 1.0),
         MIDI_OUTPUT_LEVEL => set_param!(params.output_level, -100.0 + value * 200.0),
@@ -1078,7 +1177,11 @@ fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, sett
     set_bool!(changes.trigger_hear, params.trigger_hear);
     set_float!(changes.stereo_link, params.stereo_link);
     set_bool!(changes.stereo_mid_side, params.stereo_mid_side);
-    set_bool!(changes.sidechain_external, params.sidechain_external);
+    if let Some(sidechain_mode) = changes.sidechain_mode {
+        setter.begin_set_parameter(&params.sidechain_mode);
+        setter.set_parameter(&params.sidechain_mode, sidechain_mode.clamp(0, 2) as f32);
+        setter.end_set_parameter(&params.sidechain_mode);
+    }
     set_bool!(changes.vocal_mode, params.vocal_mode);
     set_float!(changes.input_level, params.input_level);
     set_float!(changes.input_pan, params.input_pan);

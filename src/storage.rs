@@ -21,6 +21,9 @@ pub(crate) struct StoredPresetSnapshot {
     pub trigger_hear: bool,
     pub stereo_link: f32,
     pub stereo_mid_side: bool,
+    #[serde(default)]
+    pub sidechain_mode: i32,
+    #[serde(default)]
     pub sidechain_external: bool,
     pub vocal_mode: bool,
     pub input_level: f32,
@@ -39,6 +42,18 @@ pub(crate) struct StoredPresetSnapshot {
 pub(crate) struct StoredPreset {
     pub name: String,
     pub snapshot: StoredPresetSnapshot,
+}
+
+impl StoredPresetSnapshot {
+    pub(crate) fn effective_sidechain_mode(&self) -> i32 {
+        if self.sidechain_mode != 0 {
+            self.sidechain_mode.clamp(0, 2)
+        } else if self.sidechain_external {
+            1
+        } else {
+            0
+        }
+    }
 }
 
 #[derive(Clone)]

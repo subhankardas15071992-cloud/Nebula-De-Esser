@@ -875,6 +875,7 @@ pub struct ProcessSettings {
     pub filter_solo: bool,
     pub stereo_link: f64,
     pub stereo_mid_side: bool,
+    pub midi_trigger: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1104,15 +1105,19 @@ impl DeEsserDsp {
         sidechain_r: f64,
         settings: ProcessSettings,
     ) -> ProcessFrame {
-        let stereo_link = settings.stereo_link.clamp(0.0, 1.0);
+        let stereo_link_raw = settings.stereo_link.clamp(0.0, 2.0);
+        let stereo_link = stereo_link_raw.min(1.0);
+        let ms_focus = (stereo_link_raw - 1.0).clamp(0.0, 1.0);
+        let process_ms_focus = ms_focus > 0.0;
+        let process_side_focus = settings.stereo_mid_side;
         let max_reduction_db = settings.max_reduction_db.abs().max(1.0e-6);
 
-        let (audio_l, audio_r) = if settings.stereo_mid_side {
+        let (audio_l, audio_r) = if process_ms_focus {
             lr_to_ms(input_l, input_r)
         } else {
             (input_l, input_r)
         };
-        let (sc_l, sc_r) = if settings.stereo_mid_side {
+        let (sc_l, sc_r) = if process_ms_focus {
             lr_to_ms(sidechain_l, sidechain_r)
         } else {
             (sidechain_l, sidechain_r)
@@ -1208,8 +1213,27 @@ impl DeEsserDsp {
             transparency_shaping(subspace_l.orthogonal_ratio, psycho_l, formant_lock_l);
         let transparency_r =
             transparency_shaping(subspace_r.orthogonal_ratio, psycho_r, formant_lock_r);
-        let reduction_target_l = (osp_target_l * transparency_l).clamp(0.0, 1.0);
-        let reduction_target_r = (osp_target_r * transparency_r).clamp(0.0, 1.0);
+        let midi_trigger = settings.midi_trigger.clamp(0.0, 1.0);
+        let mut reduction_target_l = if midi_trigger > 0.0 {
+            midi_trigger
+        } else {
+            osp_target_l * transparency_l
+        }
+        .clamp(0.0, 1.0);
+        let mut reduction_target_r = if midi_trigger > 0.0 {
+            midi_trigger
+        } else {
+            osp_target_r * transparency_r
+        }
+        .clamp(0.0, 1.0);
+
+        if process_ms_focus {
+            if process_side_focus {
+                reduction_target_l *= 1.0 - ms_focus;
+            } else {
+                reduction_target_r *= 1.0 - ms_focus;
+            }
+        }
 
         let amount_l = self.channels[0].reduction.process(reduction_target_l);
         let amount_r = self.channels[1].reduction.process(reduction_target_r);
@@ -1255,12 +1279,12 @@ impl DeEsserDsp {
             spectral_wet_r
         };
 
-        let (wet_l, wet_r) = if settings.stereo_mid_side {
+        let (wet_l, wet_r) = if process_ms_focus {
             ms_to_lr(wet_l, wet_r)
         } else {
             (wet_l, wet_r)
         };
-        let (dry_l, dry_r) = if settings.stereo_mid_side {
+        let (dry_l, dry_r) = if process_ms_focus {
             ms_to_lr(spectral_dry_l, spectral_dry_r)
         } else {
             (spectral_dry_l, spectral_dry_r)
@@ -1671,6 +1695,27 @@ mod tests {
         );
 
         assert!(frame.reduction_db > -0.1);
+    }
+
+    #[test]
+    fn midi_trigger_can_drive_reduction_without_detector_audio() {
+        let mut dsp = DeEsserDsp::new(48_000.0);
+        dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let settings = ProcessSettings {
+            threshold_db: 100.0,
+            max_reduction_db: -12.0,
+            midi_trigger: 1.0,
+            ..ProcessSettings::default()
+        };
+
+        let mut frame = ProcessFrame::default();
+        for _ in 0..1024 {
+            frame = dsp.process_frame(0.5, 0.5, 0.0, 0.0, settings);
+        }
+
+        assert!(frame.reduction_db < -1.0);
+        assert!(frame.wet_l.is_finite());
+        assert!(frame.wet_r.is_finite());
     }
 
     #[test]

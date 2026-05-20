@@ -138,7 +138,7 @@ pub struct ParamSnapshot {
     pub trigger_hear: bool,
     pub stereo_link: f64,
     pub stereo_mid_side: bool,
-    pub sidechain_external: bool,
+    pub sidechain_mode: u32,
     pub vocal_mode: bool,
     pub input_level: f64,
     pub input_pan: f64,
@@ -167,7 +167,7 @@ impl ParamSnapshot {
             trigger_hear: p.trigger_hear,
             stereo_link: p.stereo_link,
             stereo_mid_side: p.stereo_mid_side,
-            sidechain_external: p.sidechain_external,
+            sidechain_mode: p.sidechain_mode,
             vocal_mode: p.vocal_mode,
             input_level: p.input_level,
             input_pan: p.input_pan,
@@ -195,7 +195,7 @@ impl ParamSnapshot {
         ch.trigger_hear = Some(self.trigger_hear);
         ch.stereo_link = Some(self.stereo_link);
         ch.stereo_mid_side = Some(self.stereo_mid_side);
-        ch.sidechain_external = Some(self.sidechain_external);
+        ch.sidechain_mode = Some(self.sidechain_mode);
         ch.vocal_mode = Some(self.vocal_mode);
         ch.input_level = Some(self.input_level);
         ch.input_pan = Some(self.input_pan);
@@ -224,7 +224,7 @@ impl ParamSnapshot {
             trigger_hear: snapshot.trigger_hear,
             stereo_link: snapshot.stereo_link as f64,
             stereo_mid_side: snapshot.stereo_mid_side,
-            sidechain_external: snapshot.sidechain_external,
+            sidechain_mode: snapshot.effective_sidechain_mode() as u32,
             vocal_mode: snapshot.vocal_mode,
             input_level: snapshot.input_level as f64,
             input_pan: snapshot.input_pan as f64,
@@ -254,7 +254,8 @@ impl ParamSnapshot {
             trigger_hear: self.trigger_hear,
             stereo_link: self.stereo_link as f32,
             stereo_mid_side: self.stereo_mid_side,
-            sidechain_external: self.sidechain_external,
+            sidechain_mode: self.sidechain_mode.clamp(0, 2) as i32,
+            sidechain_external: self.sidechain_mode == 1,
             vocal_mode: self.vocal_mode,
             input_level: self.input_level as f32,
             input_pan: self.input_pan as f32,
@@ -410,7 +411,7 @@ pub struct GuiParams {
     pub trigger_hear: bool,
     pub stereo_link: f64,
     pub stereo_mid_side: bool,
-    pub sidechain_external: bool,
+    pub sidechain_mode: u32,
     pub vocal_mode: bool,
     pub detection_db: f32,
     pub detection_max_db: f32,
@@ -442,7 +443,7 @@ pub struct GuiChanges {
     pub trigger_hear: Option<bool>,
     pub stereo_link: Option<f64>,
     pub stereo_mid_side: Option<bool>,
-    pub sidechain_external: Option<bool>,
+    pub sidechain_mode: Option<u32>,
     pub vocal_mode: Option<bool>,
     pub detection_max_reset: bool,
     pub reduction_max_reset: bool,
@@ -1300,12 +1301,12 @@ fn draw_controls(
         ui,
         cols[3],
         "Sidechain",
-        &["Internal", "External"],
-        if p.sidechain_external { 1 } else { 0 },
+        &["Internal", "External", "MIDI"],
+        p.sidechain_mode.min(2) as usize,
         s,
     ) {
         push_undo(gui, p);
-        ch.sidechain_external = Some(i == 1);
+        ch.sidechain_mode = Some(i as u32);
     }
     if let Some(i) = radio_group(
         ui,
@@ -1366,8 +1367,8 @@ fn draw_controls(
             "Stereo Lnk",
             p.stereo_link,
             0.0,
-            1.0,
-            "%",
+            2.0,
+            "link",
             NumTarget::StereoLink,
         ),
     ];
@@ -1553,10 +1554,14 @@ fn radio_group(
         );
     }
 
-    let item_h = 16.0 * s;
+    let compact = labs.len() > 2;
+    let item_h = if compact { 13.0 * s } else { 16.0 * s };
+    let item_gap = if compact { 0.5 * s } else { 2.0 * s };
+    let top_y = if compact { 17.0 * s } else { 18.0 * s };
+    let font_size = if compact { 10.0 * s } else { 11.5 * s };
     let mut res = None;
     for (i, lbl) in labs.iter().enumerate() {
-        let iy = rect.min.y + 18.0 * s + i as f32 * (item_h + 2.0 * s);
+        let iy = rect.min.y + top_y + i as f32 * (item_h + item_gap);
         let item_r = Rect::from_min_size(
             Pos2::new(rect.min.x + 4.0 * s, iy),
             Vec2::new(rect.width() - 8.0 * s, item_h),
@@ -1594,7 +1599,7 @@ fn radio_group(
                 Pos2::new(radio_c.x + radio_r + 5.0 * s, item_r.center().y),
                 egui::Align2::LEFT_CENTER,
                 *lbl,
-                FontId::new(11.5 * s, FontFamily::Proportional),
+                FontId::new(font_size, FontFamily::Proportional),
                 if ia {
                     TEXT_PRI
                 } else if hov {
@@ -1729,6 +1734,7 @@ fn knob_row(
     let kw = inner.width() / n as f32;
     let ks = (kw * 0.62).min(34.0 * s);
     for (i, (lbl, val, min, max, unit, tgt)) in defs.iter().enumerate() {
+        let disabled = matches!(tgt, NumTarget::Lookahead) && !p.lookahead_enabled;
         let kx = inner.min.x + kw * i as f32 + kw * 0.5;
         let kc = Pos2::new(kx, y + 12.0 * s + ks * 0.5);
         let kr = Rect::from_center_size(kc, Vec2::splat(ks));
@@ -1743,63 +1749,75 @@ fn knob_row(
                 egui::Align2::CENTER_CENTER,
                 *lbl,
                 FontId::new(12.5 * s, FontFamily::Proportional),
-                TEXT_TER,
+                if disabled { TEXT_DIS } else { TEXT_TER },
             );
         }
-        let resp = ui.allocate_rect(kr, Sense::drag().union(Sense::click()));
-        if resp.drag_started() {
-            gui.drag_snap = Some(ParamSnapshot::from_params(p));
-        }
-        if resp.dragged() {
-            let n = ((*val - *min) / (*max - *min)) as f32;
-            let nv = (*min
-                + (n - resp.drag_delta().y * 0.006).clamp(0.0, 1.0) as f64 * (*max - *min))
-                .clamp(*min, *max);
-            apply_ch(tgt, nv, ch);
-        }
-        if resp.drag_stopped() {
-            if let Some(snap) = gui.drag_snap.take() {
-                gui.undo_stack.push(snap);
-                gui.undo_stack.truncate(50);
-                gui.redo_stack.clear();
+        let resp = ui.allocate_rect(
+            kr,
+            if disabled {
+                Sense::hover()
+            } else {
+                Sense::drag().union(Sense::click())
+            },
+        );
+        if !disabled {
+            if resp.drag_started() {
+                gui.drag_snap = Some(ParamSnapshot::from_params(p));
             }
-        }
-        if resp.hovered() {
-            let sc = ui.input(|i| i.smooth_scroll_delta.y);
-            if sc != 0.0 {
+            if resp.dragged() {
                 let n = ((*val - *min) / (*max - *min)) as f32;
-                let nv = (*min + (n + sc * 0.008).clamp(0.0, 1.0) as f64 * (*max - *min))
+                let nv = (*min
+                    + (n - resp.drag_delta().y * 0.006).clamp(0.0, 1.0) as f64 * (*max - *min))
                     .clamp(*min, *max);
                 apply_ch(tgt, nv, ch);
             }
-        }
-        if resp.secondary_clicked() {
-            gui.num_input = NumInput {
-                open: true,
-                label: lbl.to_string(),
-                value_str: format!("{:.2}", val),
-                target: tgt.clone(),
-                min: *min,
-                max: *max,
-            };
-            gui.num_input_focus_pending = true;
-        }
-        if ui.allocate_rect(fr, Sense::click()).secondary_clicked() {
-            gui.num_input = NumInput {
-                open: true,
-                label: lbl.to_string(),
-                value_str: format!("{:.2}", val),
-                target: tgt.clone(),
-                min: *min,
-                max: *max,
-            };
-            gui.num_input_focus_pending = true;
+            if resp.drag_stopped() {
+                if let Some(snap) = gui.drag_snap.take() {
+                    gui.undo_stack.push(snap);
+                    gui.undo_stack.truncate(50);
+                    gui.redo_stack.clear();
+                }
+            }
+            if resp.hovered() {
+                let sc = ui.input(|i| i.smooth_scroll_delta.y);
+                if sc != 0.0 {
+                    let n = ((*val - *min) / (*max - *min)) as f32;
+                    let nv = (*min + (n + sc * 0.008).clamp(0.0, 1.0) as f64 * (*max - *min))
+                        .clamp(*min, *max);
+                    apply_ch(tgt, nv, ch);
+                }
+            }
+            if resp.secondary_clicked() {
+                gui.num_input = NumInput {
+                    open: true,
+                    label: lbl.to_string(),
+                    value_str: format!("{:.2}", val),
+                    target: tgt.clone(),
+                    min: *min,
+                    max: *max,
+                };
+                gui.num_input_focus_pending = true;
+            }
+            if ui.allocate_rect(fr, Sense::click()).secondary_clicked() {
+                gui.num_input = NumInput {
+                    open: true,
+                    label: lbl.to_string(),
+                    value_str: format!("{:.2}", val),
+                    target: tgt.clone(),
+                    min: *min,
+                    max: *max,
+                };
+                gui.num_input_focus_pending = true;
+            }
+        } else {
+            ui.allocate_rect(fr, Sense::hover());
         }
         {
             let pa = ui.painter_at(rect);
-            draw_knob(&pa, kc, ks * 0.5, *val, *min, *max, col, s);
+            let draw_col = if disabled { TEXT_DIS } else { col };
+            draw_knob(&pa, kc, ks * 0.5, *val, *min, *max, draw_col, s);
             let disp = fmt_knob(*val, *unit);
-            draw_value_field(&pa, fr, &disp, col, s);
+            draw_value_field(&pa, fr, &disp, draw_col, s);
         }
     }
 }
@@ -1816,6 +1834,13 @@ fn fmt_knob(v: f64, unit: &str) -> String {
         "%" => {
             let pct = if v <= 1.0 { v * 100.0 } else { v };
             format!("{pct:.0}%")
+        }
+        "link" => {
+            if v <= 1.0 {
+                format!("{:.0}%", v * 100.0)
+            } else {
+                format!("MS {:.0}%", (v - 1.0) * 100.0)
+            }
         }
         "dB/oct" => format!("{:.1}", v),
         "pan" => {
