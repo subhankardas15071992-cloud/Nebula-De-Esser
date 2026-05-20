@@ -700,24 +700,6 @@ impl BiquadCoeffs {
             a2: (1.0 - alpha) / a0,
         }
     }
-
-    #[inline]
-    pub fn bell(freq_hz: f64, q: f64, gain_db: f64, sample_rate: f64) -> Self {
-        let omega = 2.0 * PI * freq_hz / sample_rate;
-        let sin = omega.sin();
-        let cos = omega.cos();
-        let a = 10.0_f64.powf(gain_db / 40.0);
-        let alpha = sin / (2.0 * q.max(1.0e-6));
-        let a0 = 1.0 + alpha / a;
-
-        Self {
-            b0: (1.0 + alpha * a) / a0,
-            b1: (-2.0 * cos) / a0,
-            b2: (1.0 - alpha * a) / a0,
-            a1: (-2.0 * cos) / a0,
-            a2: (1.0 - alpha / a) / a0,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -893,7 +875,6 @@ struct ChannelState {
     detect_hp: [BiquadState; 3],
     detect_lp: [BiquadState; 3],
     split_lp: [BiquadState; 3],
-    bell: [BiquadState; 2],
     detect_env: EnvelopeFollower,
     full_env: EnvelopeFollower,
     reduction: ReductionSmoother,
@@ -917,7 +898,6 @@ impl ChannelState {
             detect_hp: [BiquadState::default(); 3],
             detect_lp: [BiquadState::default(); 3],
             split_lp: [BiquadState::default(); 3],
-            bell: [BiquadState::default(); 2],
             detect_env: EnvelopeFollower::new(0.2, 70.0, sample_rate),
             full_env: EnvelopeFollower::new(0.5, 120.0, sample_rate),
             reduction: ReductionSmoother::new(0.2, 6.0, 85.0, sample_rate),
@@ -940,7 +920,6 @@ impl ChannelState {
         self.detect_hp = [BiquadState::default(); 3];
         self.detect_lp = [BiquadState::default(); 3];
         self.split_lp = [BiquadState::default(); 3];
-        self.bell = [BiquadState::default(); 2];
         self.detect_env.reset();
         self.full_env.reset();
         self.reduction.reset();
@@ -964,7 +943,6 @@ pub struct DeEsserDsp {
     detect_hp: [BiquadCoeffs; 3],
     detect_lp: [BiquadCoeffs; 3],
     split_lp: [BiquadCoeffs; 3],
-    bell: [BiquadCoeffs; 2],
     formant_coeffs: [BiquadCoeffs; 3],
     detection_center_hz: f64,
     spectral_min_hz: f64,
@@ -984,7 +962,6 @@ impl DeEsserDsp {
             detect_hp: [BiquadCoeffs::default(); 3],
             detect_lp: [BiquadCoeffs::default(); 3],
             split_lp: [BiquadCoeffs::default(); 3],
-            bell: [BiquadCoeffs::default(); 2],
             formant_coeffs: [BiquadCoeffs::default(); 3],
             detection_center_hz: 6_900.0,
             spectral_min_hz: 4_000.0,
@@ -1068,8 +1045,6 @@ impl DeEsserDsp {
         }
 
         let center_freq = (min_freq * max_freq).sqrt().clamp(20.0, nyquist_guard);
-        let bell_q = (0.4 + cut_width.clamp(0.0, 1.0) * 11.6).clamp(0.4, 12.0);
-        let slope = (cut_slope / 100.0).clamp(0.0, 1.0);
 
         self.detect_hp = Self::make_hp(min_freq, self.sample_rate);
         self.detect_lp = Self::make_lp(max_freq, self.sample_rate);
@@ -1081,14 +1056,6 @@ impl DeEsserDsp {
         self.spectral_cut_slope = cut_slope.clamp(0.0, 100.0);
 
         self.full_cut_depth_db = max_reduction_db.abs() * cut_depth.clamp(0.0, 1.0);
-        let stage_1_depth = -(self.full_cut_depth_db * (0.65 + 0.2 * (1.0 - slope)));
-        let stage_2_depth = -(self.full_cut_depth_db - stage_1_depth.abs());
-        let bell_q_2 = (bell_q * (1.0 + slope * 1.75)).clamp(0.4, 16.0);
-
-        self.bell = [
-            BiquadCoeffs::bell(center_freq, bell_q, stage_1_depth, self.sample_rate),
-            BiquadCoeffs::bell(center_freq, bell_q_2, stage_2_depth, self.sample_rate),
-        ];
         self.formant_coeffs = [
             BiquadCoeffs::bandpass_peak(730.0, 2.4, self.sample_rate),
             BiquadCoeffs::bandpass_peak(1090.0, 2.8, self.sample_rate),
