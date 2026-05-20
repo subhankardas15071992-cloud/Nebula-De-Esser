@@ -966,15 +966,68 @@ impl NativeWindowState {
         for toggle in toggle_specs(layout) {
             let value = self.target_value(toggle.target);
             let active = value > 0.5;
-            let label = if toggle.target == ControlTarget::StereoMidSide {
-                match value.round().clamp(0.0, 2.0) as i32 {
-                    1 => "Mid",
-                    2 => "Side",
-                    _ => "Stereo",
+            if toggle.target == ControlTarget::StereoMidSide {
+                let mode = value.round().clamp(0.0, 2.0) as i32;
+                let radius = 7.0 * s;
+                let track = UiRect::new(
+                    toggle.rect.x + 4.0 * s,
+                    toggle.rect.y + 5.0 * s,
+                    toggle.rect.w - 8.0 * s,
+                    toggle.rect.h - 10.0 * s,
+                );
+                fill_round(
+                    rt,
+                    track,
+                    radius,
+                    if active {
+                        &brushes.accent_soft
+                    } else {
+                        &brushes.control
+                    },
+                );
+                stroke_round(
+                    rt,
+                    track,
+                    radius,
+                    if active {
+                        &brushes.accent
+                    } else {
+                        &brushes.border
+                    },
+                    1.0,
+                );
+
+                let segment_w = track.w / 3.0;
+                let selected = UiRect::new(
+                    track.x + segment_w * mode as f32 + 2.0 * s,
+                    track.y + 2.0 * s,
+                    segment_w - 4.0 * s,
+                    track.h - 4.0 * s,
+                );
+                fill_round(rt, selected, 6.0 * s, &brushes.accent);
+
+                for (idx, label) in ["Stereo", "Mid", "Side"].iter().enumerate() {
+                    let selected = idx as i32 == mode;
+                    draw_text(
+                        rt,
+                        *label,
+                        UiRect::new(
+                            track.x + segment_w * idx as f32,
+                            track.y,
+                            segment_w,
+                            track.h,
+                        ),
+                        &formats.small,
+                        if selected {
+                            &brushes.text_light
+                        } else {
+                            &brushes.text_secondary
+                        },
+                        Align::Center,
+                    );
                 }
-            } else {
-                toggle.label
-            };
+                continue;
+            }
             fill_round(
                 rt,
                 toggle.rect,
@@ -1025,7 +1078,7 @@ impl NativeWindowState {
             );
             draw_text(
                 rt,
-                label,
+                toggle.label,
                 UiRect::new(
                     toggle.rect.x + 48.0 * s,
                     toggle.rect.y,
@@ -3690,15 +3743,27 @@ fn toggle_specs(layout: &Layout) -> Vec<ToggleSpec> {
     ];
     let gap = 6.0 * s;
     let h = 34.0 * s;
-    let w = (inner.w - gap * 3.0) / 4.0;
+    let mode_w = (inner.w * 0.27)
+        .clamp(126.0 * s, 170.0 * s)
+        .min(inner.w * 0.36);
+    let w = ((inner.w - mode_w - gap * 3.0) / 3.0).max(60.0 * s);
     let y = inner.bottom() - h;
+    let mut x = inner.x;
     labels
         .iter()
-        .enumerate()
-        .map(|(idx, (label, target))| ToggleSpec {
-            label,
-            target: *target,
-            rect: UiRect::new(inner.x + idx as f32 * (w + gap), y, w, h),
+        .map(|(label, target)| {
+            let rect_w = if *target == ControlTarget::StereoMidSide {
+                mode_w
+            } else {
+                w
+            };
+            let spec = ToggleSpec {
+                label: *label,
+                target: *target,
+                rect: UiRect::new(x, y, rect_w, h),
+            };
+            x += rect_w + gap;
+            spec
         })
         .collect()
 }

@@ -1470,58 +1470,96 @@ fn draw_controls(
         (stereo_label, stereo_mode != 0, 1),
     ];
     let switch_gap = 4.0 * s;
-    let bw =
-        (inner.width() - switch_gap * (btns.len().saturating_sub(1)) as f32) / btns.len() as f32;
-    let row_w = bw * btns.len() as f32 + switch_gap * (btns.len().saturating_sub(1)) as f32;
+    let mode_w = (inner.width() * 0.27)
+        .clamp(124.0 * s, 164.0 * s)
+        .min(inner.width() * 0.36);
+    let bw = ((inner.width() - mode_w - switch_gap * 3.0) / 3.0).max(60.0 * s);
+    let row_w = bw * 3.0 + mode_w + switch_gap * 3.0;
     let row_x = inner.center().x - row_w * 0.5;
-    for (i, (lbl, active, kind)) in btns.iter().enumerate() {
-        let bx = row_x + (bw + switch_gap) * i as f32;
-        let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(bw, btn_h));
+    let mut bx = row_x;
+    for (lbl, active, kind) in btns.iter() {
+        let item_w = if *kind == 1 { mode_w } else { bw };
+        let br = Rect::from_min_size(Pos2::new(bx, y4), Vec2::new(item_w, btn_h));
         let r = ui.allocate_rect(br, Sense::click());
         let hov = r.hovered();
         {
             let pa = ui.painter_at(rect);
-            // WinUI ToggleSwitch — pill track + sliding thumb
-            let track_w = 36.0 * s;
-            let track_h = 18.0 * s;
-            let visible_w = track_w + 6.0 * s + 64.0 * s;
-            let track_x = br.min.x + ((br.width() - visible_w) * 0.5).max(4.0 * s);
-            let track_y = br.center().y - track_h * 0.5;
-            let track =
-                Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
-            let track_col = if *active {
-                ACCENT
-            } else if hov {
-                CTRL_HOVER
+            if *kind == 1 {
+                let track = br.shrink2(Vec2::new(4.0 * s, 5.0 * s));
+                let radius = 7.0 * s;
+                pa.rect_filled(track, radius, if hov { CTRL_HOVER } else { CTRL_DEFAULT });
+                pa.rect_stroke(
+                    track,
+                    radius,
+                    Stroke::new(1.0, if hov { ACCENT_BORDER } else { STROKE_DEF }),
+                    egui::StrokeKind::Outside,
+                );
+
+                let segment_w = track.width() / 3.0;
+                let selected = Rect::from_min_size(
+                    Pos2::new(track.min.x + segment_w * stereo_mode as f32, track.min.y),
+                    Vec2::new(segment_w, track.height()),
+                )
+                .shrink(2.0 * s);
+                pa.rect_filled(selected, 6.0 * s, ACCENT);
+
+                for (idx, label) in ["Stereo", "Mid", "Side"].iter().enumerate() {
+                    let cell = Rect::from_min_size(
+                        Pos2::new(track.min.x + segment_w * idx as f32, track.min.y),
+                        Vec2::new(segment_w, track.height()),
+                    );
+                    let selected = idx as u32 == stereo_mode;
+                    pa.text(
+                        cell.center(),
+                        egui::Align2::CENTER_CENTER,
+                        *label,
+                        FontId::new(8.5 * s, FontFamily::Proportional),
+                        if selected { MICA_BASE } else { TEXT_SEC },
+                    );
+                }
             } else {
-                CTRL_DEFAULT
-            };
-            pa.rect_filled(track, track_h * 0.5, track_col);
-            pa.rect_stroke(
-                track,
-                track_h * 0.5,
-                Stroke::new(1.0, if *active { ACCENT_DARK } else { STROKE_DEF }),
-                egui::StrokeKind::Outside,
-            );
-            // Thumb — white circle, shifts right when on
-            let thumb_x = if *active {
-                track.max.x - track_h * 0.5
-            } else {
-                track.min.x + track_h * 0.5
-            };
-            pa.circle_filled(
-                Pos2::new(thumb_x, track.center().y),
-                track_h * 0.35,
-                Color32::from_rgb(230, 230, 230),
-            );
-            // Label
-            pa.text(
-                Pos2::new(track.max.x + 6.0 * s, br.center().y),
-                egui::Align2::LEFT_CENTER,
-                *lbl,
-                FontId::new(9.0 * s, FontFamily::Proportional),
-                if *active { TEXT_PRI } else { TEXT_SEC },
-            );
+                // WinUI ToggleSwitch — pill track + sliding thumb
+                let track_w = 36.0 * s;
+                let track_h = 18.0 * s;
+                let visible_w = track_w + 6.0 * s + 64.0 * s;
+                let track_x = br.min.x + ((br.width() - visible_w) * 0.5).max(4.0 * s);
+                let track_y = br.center().y - track_h * 0.5;
+                let track =
+                    Rect::from_min_size(Pos2::new(track_x, track_y), Vec2::new(track_w, track_h));
+                let track_col = if *active {
+                    ACCENT
+                } else if hov {
+                    CTRL_HOVER
+                } else {
+                    CTRL_DEFAULT
+                };
+                pa.rect_filled(track, track_h * 0.5, track_col);
+                pa.rect_stroke(
+                    track,
+                    track_h * 0.5,
+                    Stroke::new(1.0, if *active { ACCENT_DARK } else { STROKE_DEF }),
+                    egui::StrokeKind::Outside,
+                );
+                // Thumb — white circle, shifts right when on
+                let thumb_x = if *active {
+                    track.max.x - track_h * 0.5
+                } else {
+                    track.min.x + track_h * 0.5
+                };
+                pa.circle_filled(
+                    Pos2::new(thumb_x, track.center().y),
+                    track_h * 0.35,
+                    Color32::from_rgb(230, 230, 230),
+                );
+                // Label
+                pa.text(
+                    Pos2::new(track.max.x + 6.0 * s, br.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    *lbl,
+                    FontId::new(9.0 * s, FontFamily::Proportional),
+                    if *active { TEXT_PRI } else { TEXT_SEC },
+                );
+            }
         }
         if r.clicked() {
             push_undo(gui, p);
@@ -1543,6 +1581,7 @@ fn draw_controls(
                 _ => {}
             }
         }
+        bx += item_w + switch_gap;
     }
 }
 
