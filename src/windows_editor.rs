@@ -52,8 +52,8 @@ use windows_numerics::Vector2;
 
 use super::analyzer::SpectrumData;
 use super::{
-    u32_to_f32, Meters, MidiLearnShared, NebulaParams, PersistentStore, StoredPreset,
-    StoredPresetSnapshot, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
+    u32_to_f32, Meters, MidiLearnShared, NebulaParams, PersistentStore, StoredEditorSize,
+    StoredPreset, StoredPresetSnapshot, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
 };
 
 const BASE_W: f32 = 860.0;
@@ -85,6 +85,7 @@ pub(super) fn create_editor(
     midi_learn: Arc<MidiLearnShared>,
     storage: Arc<PersistentStore>,
 ) -> Option<Box<dyn Editor>> {
+    let editor_size = storage.editor_size();
     Some(Box::new(NativeEditor {
         params,
         spectrum,
@@ -93,8 +94,8 @@ pub(super) fn create_editor(
         storage,
         scale_bits: AtomicU32::new(1.0_f32.to_bits()),
         size_scale_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
-        window_width_bits: Arc::new(AtomicU32::new(BASE_W.to_bits())),
-        window_height_bits: Arc::new(AtomicU32::new(BASE_H.to_bits())),
+        window_width_bits: Arc::new(AtomicU32::new(editor_size.width.to_bits())),
+        window_height_bits: Arc::new(AtomicU32::new(editor_size.height.to_bits())),
     }))
 }
 
@@ -1393,6 +1394,7 @@ impl NativeWindowState {
 
     fn mouse_up(&mut self, x: f32, y: f32) {
         if self.resize_drag.take().is_some() {
+            self.persist_editor_size();
             let _ = unsafe { ReleaseCapture() };
             self.resize_to_parent();
             invalidate(self.hwnd);
@@ -1428,6 +1430,13 @@ impl NativeWindowState {
             .store(next_h.to_bits(), Ordering::Release);
         let _ = self.context.request_resize();
         self.resize_to_parent();
+    }
+
+    fn persist_editor_size(&self) {
+        let width = f32::from_bits(self.window_width_bits.load(Ordering::Acquire));
+        let height = f32::from_bits(self.window_height_bits.load(Ordering::Acquire));
+        self.storage
+            .save_editor_size(StoredEditorSize { width, height });
     }
 
     fn mouse_right_down(&mut self, x: f32, y: f32) {

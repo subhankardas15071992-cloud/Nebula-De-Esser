@@ -6,6 +6,11 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+const DEFAULT_EDITOR_WIDTH: f32 = 860.0;
+const DEFAULT_EDITOR_HEIGHT: f32 = 640.0;
+const MIN_EDITOR_SCALE: f32 = 0.65;
+const MAX_EDITOR_SCALE: f32 = 3.0;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredPresetSnapshot {
     pub threshold: f32,
@@ -84,12 +89,53 @@ impl Default for StoredMidiState {
     }
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct StoredEditorSize {
+    #[serde(default = "default_editor_width")]
+    pub width: f32,
+    #[serde(default = "default_editor_height")]
+    pub height: f32,
+}
+
+impl Default for StoredEditorSize {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_EDITOR_WIDTH,
+            height: DEFAULT_EDITOR_HEIGHT,
+        }
+    }
+}
+
+impl StoredEditorSize {
+    pub(crate) fn clamped(self) -> Self {
+        Self {
+            width: self.width.clamp(
+                DEFAULT_EDITOR_WIDTH * MIN_EDITOR_SCALE,
+                DEFAULT_EDITOR_WIDTH * MAX_EDITOR_SCALE,
+            ),
+            height: self.height.clamp(
+                DEFAULT_EDITOR_HEIGHT * MIN_EDITOR_SCALE,
+                DEFAULT_EDITOR_HEIGHT * MAX_EDITOR_SCALE,
+            ),
+        }
+    }
+}
+
+fn default_editor_width() -> f32 {
+    DEFAULT_EDITOR_WIDTH
+}
+
+fn default_editor_height() -> f32 {
+    DEFAULT_EDITOR_HEIGHT
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct StoredStateFile {
     presets: Vec<StoredPreset>,
     midi_mappings: HashMap<u8, u8>,
     midi_enabled: bool,
+    editor_size: StoredEditorSize,
 }
 
 impl Default for StoredStateFile {
@@ -98,6 +144,7 @@ impl Default for StoredStateFile {
             presets: Vec::new(),
             midi_mappings: HashMap::new(),
             midi_enabled: true,
+            editor_size: StoredEditorSize::default(),
         }
     }
 }
@@ -159,6 +206,16 @@ impl PersistentStore {
         self.update(|state| {
             state.midi_mappings = midi_state.mappings;
             state.midi_enabled = midi_state.midi_enabled;
+        });
+    }
+
+    pub(crate) fn editor_size(&self) -> StoredEditorSize {
+        self.state.lock().editor_size.clamped()
+    }
+
+    pub(crate) fn save_editor_size(&self, editor_size: StoredEditorSize) {
+        self.update(|state| {
+            state.editor_size = editor_size.clamped();
         });
     }
 

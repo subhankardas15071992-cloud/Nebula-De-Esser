@@ -24,7 +24,7 @@ use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
 #[cfg(not(target_os = "windows"))]
 use gui::{draw, GuiParams, NebulaGui};
 use storage::{PersistentStore, StoredMidiState};
-pub(crate) use storage::{StoredPreset, StoredPresetSnapshot};
+pub(crate) use storage::{StoredEditorSize, StoredPreset, StoredPresetSnapshot};
 
 const UNMAPPED_CC: i32 = -1;
 
@@ -229,7 +229,10 @@ impl Default for NebulaParams {
 
         Self {
             #[cfg(not(target_os = "windows"))]
-            editor_state: EguiState::from_size(860, 640),
+            editor_state: {
+                let size = PersistentStore::load().editor_size();
+                EguiState::from_size(size.width.round() as u32, size.height.round() as u32)
+            },
             threshold: FloatParam::new(
                 "TKEO Sharpness",
                 50.0,

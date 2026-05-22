@@ -5,8 +5,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 use crate::analyzer::SpectrumData;
 use crate::{
-    MidiLearnShared, PersistentStore, StoredPreset, StoredPresetSnapshot, MIDI_PARAM_COUNT,
-    MIDI_PARAM_NAMES,
+    MidiLearnShared, PersistentStore, StoredEditorSize, StoredPreset, StoredPresetSnapshot,
+    MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
 };
 use nih_plug_egui::egui::{
     self, Color32, Context, FontFamily, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
@@ -330,6 +330,7 @@ pub struct NebulaGui {
     pub os_dropdown: bool,
     pub os_anchor: Pos2,
     pub preset_anchor: Pos2,
+    pub last_editor_size: (u32, u32),
 }
 impl NebulaGui {
     pub fn new(
@@ -342,6 +343,7 @@ impl NebulaGui {
             .into_iter()
             .map(|preset| (preset.name, ParamSnapshot::from_stored(&preset.snapshot)))
             .collect();
+        let editor_size = storage.editor_size();
         Self {
             spectrum,
             midi_learn,
@@ -370,6 +372,10 @@ impl NebulaGui {
             os_dropdown: false,
             os_anchor: Pos2::ZERO,
             preset_anchor: Pos2::ZERO,
+            last_editor_size: (
+                editor_size.width.round() as u32,
+                editor_size.height.round() as u32,
+            ),
         }
     }
 
@@ -387,6 +393,16 @@ impl NebulaGui {
 
     fn persist_midi_state(&self) {
         self.midi_learn.persist_as_saved(&self.storage);
+    }
+
+    fn persist_editor_size_if_changed(&mut self, size: (u32, u32)) {
+        if self.last_editor_size != size {
+            self.storage.save_editor_size(StoredEditorSize {
+                width: size.0 as f32,
+                height: size.1 as f32,
+            });
+            self.last_editor_size = size;
+        }
     }
 }
 
@@ -545,6 +561,7 @@ pub fn draw(
             draw_controls(ui, ctrl_r, params, &mut ch, gui, s);
             draw_spectrum(ui, spec_r, gui, params, &mut ch, s);
         });
+    gui.persist_editor_size_if_changed(egui_state.size());
 
     if gui.num_input.open {
         draw_content_dialog_num(ctx, gui, &mut ch, s);
