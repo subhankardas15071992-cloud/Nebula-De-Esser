@@ -624,7 +624,7 @@ impl NebulaDeEsser {
 }
 
 impl Plugin for NebulaDeEsser {
-    const NAME: &'static str = "Nebula DeEsser";
+    const NAME: &'static str = "Nebula De-Esser";
     const VENDOR: &'static str = "Nebula Audio";
     const URL: &'static str = "https://github.com/subhankardas15071992-cloud/Nebula-De-Esser";
     const EMAIL: &'static str = "support@nebula.audio";

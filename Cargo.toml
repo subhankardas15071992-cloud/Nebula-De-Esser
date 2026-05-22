@@ -3,7 +3,7 @@ name = "nebula_desser"
 version = "3.2.0"
 edition = "2021"
 authors = ["Nebula Audio"]
-description = "Nebula DeEsser - Rust de-esser plugin for CLAP and VST3"
+description = "Nebula De-Esser - Rust de-esser plugin for CLAP and VST3"
 license = "AGPL-3.0-or-later"
 
 [lib]

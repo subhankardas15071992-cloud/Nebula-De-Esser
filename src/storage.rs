@@ -157,25 +157,10 @@ pub(crate) struct PersistentStore {
 impl PersistentStore {
     pub(crate) fn load() -> Self {
         let path = storage_path();
-        let state = match fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<StoredStateFile>(&bytes) {
-                Ok(state) => state,
-                Err(err) => {
-                    eprintln!(
-                        "Nebula DeEsser: failed to parse persisted state at {}: {err}",
-                        path.display()
-                    );
-                    StoredStateFile::default()
-                }
-            },
-            Err(err) if err.kind() == ErrorKind::NotFound => StoredStateFile::default(),
-            Err(err) => {
-                eprintln!(
-                    "Nebula DeEsser: failed to read persisted state at {}: {err}",
-                    path.display()
-                );
-                StoredStateFile::default()
-            }
+        let state = match read_state_file(&path) {
+            Ok(Some(state)) => state,
+            Ok(None) => load_legacy_state(&path).unwrap_or_default(),
+            Err(()) => StoredStateFile::default(),
         };
 
         Self {
@@ -224,9 +209,52 @@ impl PersistentStore {
         f(&mut state);
         if let Err(err) = write_state_file(&self.path, &state) {
             eprintln!(
-                "Nebula DeEsser: failed to persist state at {}: {err}",
+                "Nebula De-Esser: failed to persist state at {}: {err}",
                 self.path.display()
             );
+        }
+    }
+}
+
+fn load_legacy_state(current_path: &Path) -> Option<StoredStateFile> {
+    let legacy_path = legacy_storage_path();
+    let state = match read_state_file(&legacy_path) {
+        Ok(Some(state)) => state,
+        Ok(None) | Err(()) => return None,
+    };
+
+    if let Err(err) = write_state_file(current_path, &state) {
+        eprintln!(
+            "Nebula De-Esser: failed to migrate persisted state from {} to {}: {err}",
+            legacy_path.display(),
+            current_path.display()
+        );
+    }
+
+    Some(state)
+}
+
+fn read_state_file(path: &Path) -> Result<Option<StoredStateFile>, ()> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            eprintln!(
+                "Nebula De-Esser: failed to read persisted state at {}: {err}",
+                path.display()
+            );
+            return Err(());
+        }
+    };
+
+    match serde_json::from_slice::<StoredStateFile>(&bytes) {
+        Ok(state) => Ok(Some(state)),
+        Err(err) => {
+            eprintln!(
+                "Nebula De-Esser: failed to parse persisted state at {}: {err}",
+                path.display()
+            );
+            Err(())
         }
     }
 }
@@ -253,6 +281,13 @@ fn write_state_file(path: &Path, state: &StoredStateFile) -> Result<(), String> 
 }
 
 fn storage_path() -> PathBuf {
+    storage_root()
+        .join("Nebula Audio")
+        .join("Nebula De-Esser")
+        .join("state.json")
+}
+
+fn legacy_storage_path() -> PathBuf {
     storage_root()
         .join("Nebula Audio")
         .join("Nebula DeEsser")

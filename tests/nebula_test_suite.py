@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nebula DeEsser v2.0.0 — Complete Automated Test Suite
+Nebula De-Esser v2.0.0 — Complete Automated Test Suite
 Implements exact DSP from dsp.rs in Python for auditable testing.
 Covers: audio evaluation, stress, performance, perceptual, and industry standard tests.
 """
@@ -1040,7 +1040,7 @@ def analyze_and_refine():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def final_report(refinements):
-    banner("FINAL TEST REPORT — NEBULA DEESSER v2.0.0")
+    banner("FINAL TEST REPORT — NEBULA DE-ESSER v2.0.0")
     passed=[r for r in results if r.passed and r.score>=0.85]
     warned=[r for r in results if r.passed and 0.70<=r.score<0.85]
     failed=[r for r in results if not r.passed or r.score<0.70]
@@ -1078,7 +1078,7 @@ def final_report(refinements):
 
     # Export JSON report
     report={
-        "plugin": "Nebula DeEsser v2.0.0",
+        "plugin": "Nebula De-Esser v2.0.0",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "summary": {"total":total,"passed":len(passed),"warned":len(warned),
                     "failed":len(failed),"avg_score":round(avg_score,2),"grade":grade},
@@ -1101,7 +1101,7 @@ def final_report(refinements):
 
 if __name__=="__main__":
     np.random.seed(42)
-    banner("NEBULA DEESSER v2.0.0 — AUTOMATED TEST SUITE")
+    banner("NEBULA DE-ESSER v2.0.0 — AUTOMATED TEST SUITE")
     print(f"{DIM}  DSP simulation mirrors dsp.rs exactly (f64 precision){RESET}")
     print(f"{DIM}  All tests run in-process with instrumented DSP model{RESET}")
 

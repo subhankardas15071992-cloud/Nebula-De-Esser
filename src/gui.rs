@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Nebula DeEsser — Windows 11 WinUI 3 Dark Design Language
+// Nebula De-Esser — Windows 11 WinUI 3 Dark Design Language
 // Mica base, Acrylic panels, CommandBar toolbar, WinUI controls throughout.
 // Scaling: all hardcoded pixel constants multiplied by `s` (scale factor).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -614,7 +614,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(tx + 24.0 * s, ty - 5.0 * s),
         egui::Align2::LEFT_CENTER,
-        "Nebula DeEsser",
+        "Nebula De-Esser",
         FontId::new(15.5 * s, FontFamily::Proportional),
         TEXT_PRI,
     );

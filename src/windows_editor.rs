@@ -172,7 +172,7 @@ impl Editor for NativeEditor {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 class_name(),
-                w!("Nebula DeEsser"),
+                w!("Nebula De-Esser"),
                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                 0,
                 0,
@@ -433,7 +433,7 @@ impl NativeWindowState {
 
         draw_text(
             rt,
-            "Nebula DeEsser",
+            "Nebula De-Esser",
             UiRect::new(44.0 * s, 9.0 * s, 220.0 * s, 22.0 * s),
             &formats.title,
             &brushes.text_primary,
