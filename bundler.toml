@@ -5,9 +5,9 @@
 #   [<cargo-package-name>]   ← must match [package] name in Cargo.toml exactly
 #   name = "<Display Name>"  ← used for the bundle folder name on all platforms
 #
-# Example: if name = "Nebula DeEsser", the bundles are named:
-#   Nebula DeEsser.clap
-#   Nebula DeEsser.vst3
+# Example: if name = "Nebula De-Esser", the bundles are named:
+#   Nebula De-Esser.clap
+#   Nebula De-Esser.vst3
 
 [nebula_desser]
-name = "Nebula DeEsser"
+name = "Nebula De-Esser"

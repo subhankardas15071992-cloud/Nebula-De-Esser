@@ -43,7 +43,7 @@ It is deliberately more complex than a utility de-esser because the target is no
 - **Mode-aware monitoring and analysis** - Filter Solo, Internal Trigger Hear, and the spectrum analyzer follow the selected Stereo/Mid/Side mode, so the user hears and sees the same component that is being targeted.
 - **New MIDI sidechain trigger** - The Sidechain selector now includes a MIDI mode. In this mode MIDI notes can deliberately drive de-essing amount, allowing phrase-by-phrase or section-by-section reduction control from the DAW.
 - **Persistent GUI size** - The EGUI and Direct2D editors now remember the user-set window size and reopen at that size in later DAW sessions.
-- **Unified plugin naming** - CLAP and VST3 bundles now use the same DAW-facing name: Nebula DeEsser.
+- **Unified bundle filenames** - CLAP and VST3 bundles now use the same filename convention: Nebula De-Esser.
 
 ---
 
@@ -332,8 +332,8 @@ Build directly with Cargo and the `xtask` bundle command (no helper scripts).
 ```bash
 cargo build --release
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula DeEsser.clap
-#         target/bundled/Nebula DeEsser.vst3
+# Output: target/bundled/Nebula De-Esser.clap
+#         target/bundled/Nebula De-Esser.vst3
 ```
 
 #### **Windows (x86_64 / MSVC)**
@@ -343,7 +343,7 @@ Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build To
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target\bundled\Nebula DeEsser.vst3
+# Output: target\bundled\Nebula De-Esser.vst3
 ```
 
 Windows releases are VST3-only. The Windows Direct2D editor works through VST3,
@@ -355,8 +355,8 @@ GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
 cargo build --release --target aarch64-apple-darwin
 cargo build --release --target x86_64-apple-darwin
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula DeEsser.clap
-#         target/bundled/Nebula DeEsser.vst3
+# Output: target/bundled/Nebula De-Esser.clap
+#         target/bundled/Nebula De-Esser.vst3
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -375,7 +375,7 @@ Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
-  xattr -dr com.apple.quarantine [path of the Nebula DeEsser.clap or Nebula DeEsser.vst3 file]
+  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]
 
 After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
 

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Nebula DeEsser v2.9 — macOS Universal Build (Native Apple Tools Only)
+# Nebula De-Esser v2.9 — macOS Universal Build (Native Apple Tools Only)
 # Builds a Universal CLAP plugin (Apple Silicon ARM64 + Intel x86_64)
 # Uses only native Apple tools - no Homebrew or external dependencies
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 PLUGIN_NAME="nebula_desser"
-PLUGIN_DISPLAY="Nebula DeEsser"
+PLUGIN_DISPLAY="Nebula De-Esser"
 PLUGIN_VERSION="2.9.0"
 PLUGIN_VERSION_DISPLAY="2.9"
 BUNDLE_ID="audio.nebula.deesser"
 
 echo "╔════════════════════════════════════════════════╗"
-echo "║  NEBULA DEESSER v2.9 — macOS Universal Build   ║"
+echo "║  NEBULA DE-ESSER v2.9 — macOS Universal Build  ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
 
