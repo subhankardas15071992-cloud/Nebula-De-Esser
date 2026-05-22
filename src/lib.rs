@@ -915,6 +915,7 @@ impl Plugin for NebulaDeEsser {
             stereo_link,
             stereo_mode,
             midi_trigger: 0.0,
+            midi_sidechain: sidechain_mode == SidechainMode::Midi,
         };
 
         let sidechain_buffers =

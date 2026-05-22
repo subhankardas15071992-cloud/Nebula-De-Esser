@@ -9,6 +9,7 @@ const SPECTRAL_OSP_BINS: usize = SPECTRAL_OSP_FFT_SIZE / 2 + 1;
 const SPECTRAL_OSP_BASIS: usize = 3;
 const SPECTRAL_OSP_COV_SIZE: usize = SPECTRAL_OSP_BINS * SPECTRAL_OSP_BINS;
 const SPECTRAL_OSP_POWER_ITERS: usize = 2;
+const MIDI_TRIGGER_MONITOR_HZ: f64 = 880.0;
 
 #[inline]
 pub fn db_to_lin(db: f64) -> f64 {
@@ -858,6 +859,7 @@ pub struct ProcessSettings {
     pub stereo_link: f64,
     pub stereo_mode: u32,
     pub midi_trigger: f64,
+    pub midi_sidechain: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -950,6 +952,7 @@ pub struct DeEsserDsp {
     spectral_cut_width: f64,
     spectral_cut_slope: f64,
     full_cut_depth_db: f64,
+    midi_monitor_phase: f64,
     channels: [ChannelState; 2],
 }
 
@@ -969,6 +972,7 @@ impl DeEsserDsp {
             spectral_cut_width: 0.5,
             spectral_cut_slope: 50.0,
             full_cut_depth_db: 0.0,
+            midi_monitor_phase: 0.0,
             channels: [
                 ChannelState::new(sample_rate),
                 ChannelState::new(sample_rate),
@@ -985,6 +989,7 @@ impl DeEsserDsp {
         for channel in &mut self.channels {
             channel.reset();
         }
+        self.midi_monitor_phase = 0.0;
     }
 
     pub fn latency_samples(&self) -> u32 {
@@ -1183,13 +1188,21 @@ impl DeEsserDsp {
         let transparency_r =
             transparency_shaping(subspace_r.orthogonal_ratio, psycho_r, formant_lock_r);
         let midi_trigger = settings.midi_trigger.clamp(0.0, 1.0);
-        let mut reduction_target_l = if midi_trigger > 0.0 {
+        let midi_monitor = if settings.midi_sidechain {
+            let phase = self.midi_monitor_phase;
+            self.midi_monitor_phase =
+                (phase + MIDI_TRIGGER_MONITOR_HZ / self.sample_rate.max(1.0)).fract();
+            (2.0 * PI * phase).sin() * midi_trigger * 0.5
+        } else {
+            0.0
+        };
+        let mut reduction_target_l = if settings.midi_sidechain || midi_trigger > 0.0 {
             midi_trigger
         } else {
             osp_target_l * transparency_l
         }
         .clamp(0.0, 1.0);
-        let mut reduction_target_r = if midi_trigger > 0.0 {
+        let mut reduction_target_r = if settings.midi_sidechain || midi_trigger > 0.0 {
             midi_trigger
         } else {
             osp_target_r * transparency_r
@@ -1234,8 +1247,19 @@ impl DeEsserDsp {
             self.sample_rate,
         );
 
-        let mut wet_l = if settings.trigger_hear {
+        let trigger_monitor_l = if settings.midi_sidechain {
+            midi_monitor
+        } else {
             detected_l
+        };
+        let trigger_monitor_r = if settings.midi_sidechain {
+            midi_monitor
+        } else {
+            detected_r
+        };
+
+        let mut wet_l = if settings.trigger_hear {
+            trigger_monitor_l
         } else if settings.filter_solo {
             detected_l * db_to_lin(reduction_db_l)
         } else {
@@ -1243,7 +1267,7 @@ impl DeEsserDsp {
         };
 
         let mut wet_r = if settings.trigger_hear {
-            detected_r
+            trigger_monitor_r
         } else if settings.filter_solo {
             detected_r * db_to_lin(reduction_db_r)
         } else {
@@ -1271,7 +1295,9 @@ impl DeEsserDsp {
 
         let detection_db_l = lin_to_db(detect_env_l);
         let detection_db_r = lin_to_db(detect_env_r);
-        let detection_db = if process_ms_mode {
+        let detection_db = if settings.midi_sidechain {
+            lin_to_db(midi_trigger)
+        } else if process_ms_mode {
             if process_side_mode {
                 detection_db_r
             } else {
@@ -1716,6 +1742,116 @@ mod tests {
         assert!(frame.reduction_db < -1.0);
         assert!(frame.wet_l.is_finite());
         assert!(frame.wet_r.is_finite());
+    }
+
+    #[test]
+    fn trigger_hear_uses_supplied_sidechain_input() {
+        let sample_rate = 48_000.0;
+        let settings = ProcessSettings {
+            threshold_db: 0.0,
+            max_reduction_db: -12.0,
+            mode_relative: false,
+            trigger_hear: true,
+            ..ProcessSettings::default()
+        };
+
+        let mut main_only = DeEsserDsp::new(sample_rate);
+        main_only.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let mut main_leak_peak = 0.0_f64;
+        for sample_idx in 0..4096 {
+            let phase = 2.0 * std::f64::consts::PI * 7_000.0 * sample_idx as f64 / sample_rate;
+            let main = phase.sin() * 0.8;
+            let frame = main_only.process_frame(main, main, 0.0, 0.0, settings);
+            main_leak_peak = main_leak_peak.max(frame.wet_l.abs()).max(frame.wet_r.abs());
+        }
+
+        let mut external = DeEsserDsp::new(sample_rate);
+        external.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let mut external_peak = 0.0_f64;
+        for sample_idx in 0..4096 {
+            let phase = 2.0 * std::f64::consts::PI * 7_000.0 * sample_idx as f64 / sample_rate;
+            let sidechain = phase.sin() * 0.8;
+            let frame = external.process_frame(0.0, 0.0, sidechain, sidechain, settings);
+            external_peak = external_peak.max(frame.wet_l.abs()).max(frame.wet_r.abs());
+        }
+
+        assert!(main_leak_peak < 1.0e-9);
+        assert!(external_peak > 0.01);
+    }
+
+    #[test]
+    fn midi_sidechain_trigger_hear_outputs_midi_monitor_only() {
+        let sample_rate = 48_000.0;
+        let mut idle = DeEsserDsp::new(sample_rate);
+        idle.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let idle_settings = ProcessSettings {
+            trigger_hear: true,
+            midi_sidechain: true,
+            midi_trigger: 0.0,
+            ..ProcessSettings::default()
+        };
+        let mut idle_peak = 0.0_f64;
+        let mut idle_frame = ProcessFrame::default();
+        for sample_idx in 0..4096 {
+            let phase = 2.0 * std::f64::consts::PI * 7_000.0 * sample_idx as f64 / sample_rate;
+            let detector_input = phase.sin() * 0.8;
+            idle_frame = idle.process_frame(
+                detector_input,
+                detector_input,
+                detector_input,
+                detector_input,
+                idle_settings,
+            );
+            idle_peak = idle_peak
+                .max(idle_frame.wet_l.abs())
+                .max(idle_frame.wet_r.abs());
+        }
+
+        let mut active = DeEsserDsp::new(sample_rate);
+        active.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let active_settings = ProcessSettings {
+            trigger_hear: true,
+            midi_sidechain: true,
+            midi_trigger: 1.0,
+            ..ProcessSettings::default()
+        };
+        let mut active_peak = 0.0_f64;
+        let mut active_frame = ProcessFrame::default();
+        for _ in 0..512 {
+            active_frame = active.process_frame(0.0, 0.0, 0.0, 0.0, active_settings);
+            active_peak = active_peak
+                .max(active_frame.wet_l.abs())
+                .max(active_frame.wet_r.abs());
+        }
+
+        assert!(idle_peak < 1.0e-9);
+        assert!(idle_frame.detection_db <= -119.0);
+        assert!(active_peak > 0.1);
+        assert!(active_frame.detection_db > -0.1);
+    }
+
+    #[test]
+    fn midi_sidechain_idle_does_not_fallback_to_audio_detector() {
+        let sample_rate = 48_000.0;
+        let mut dsp = DeEsserDsp::new(sample_rate);
+        dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let settings = ProcessSettings {
+            threshold_db: 0.0,
+            max_reduction_db: -12.0,
+            mode_relative: false,
+            midi_sidechain: true,
+            midi_trigger: 0.0,
+            ..ProcessSettings::default()
+        };
+
+        let mut frame = ProcessFrame::default();
+        for sample_idx in 0..8192 {
+            let phase = 2.0 * std::f64::consts::PI * 7_000.0 * sample_idx as f64 / sample_rate;
+            let detector_input = phase.sin() * 0.8;
+            frame = dsp.process_frame(0.5, 0.5, detector_input, detector_input, settings);
+        }
+
+        assert!(frame.reduction_db > -0.1);
     }
 
     #[test]

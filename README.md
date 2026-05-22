@@ -26,6 +26,7 @@ Nebula De-Esser is for users who want obsessive, transparent control rather than
 - polished arena rock, metal, pop, AOR, and glossy backing-vocal production
 - vocals where the air band and harmonic shine must survive de-essing
 - mastering or mix-bus cases where only the Mid, only the Side, or the full Stereo image needs de-essing
+- deliberate producer-driven sibilance riding using MIDI notes instead of relying only on automatic detection
 - bright stacked vocals, falsettos, breathy singers, and dense harmonies where normal de-essers can dull the performance
 - archival or stereo-mix cleanup where the vocal cannot be separated cleanly from the instrumental
 
@@ -40,7 +41,20 @@ It is deliberately more complex than a utility de-esser because the target is no
 - **Clearer plugin identity** - The README now states the intended use case directly: Nebula De-Esser is a specialist transparent de-esser for air-preserving, high-gloss vocal control, not a generic hard-clamp de-esser.
 - **Corrected Mid/Side de-essing behavior** - Stereo Link now works from 0-100% in every mode. In Stereo mode it controls stereo linking across the full stereo image. In Mid mode it controls Mid-only de-essing amount. In Side mode it controls Side-only de-essing amount.
 - **Mode-aware monitoring and analysis** - Filter Solo, Internal Trigger Hear, and the spectrum analyzer follow the selected Stereo/Mid/Side mode, so the user hears and sees the same component that is being targeted.
+- **New MIDI sidechain trigger** - The Sidechain selector now includes a MIDI mode. In this mode MIDI notes can deliberately drive de-essing amount, allowing phrase-by-phrase or section-by-section reduction control from the DAW.
 - **Persistent GUI size** - The EGUI and Direct2D editors now remember the user-set window size and reopen at that size in later DAW sessions.
+
+---
+
+## 🎹 **MIDI Sidechain Trigger**
+
+The MIDI sidechain trigger is a new feature in Nebula De-Esser. It is different from MIDI Learn: MIDI Learn maps CC controls to parameters, while **Sidechain = MIDI** uses MIDI notes as the actual de-essing trigger.
+
+This is useful when the producer or engineer wants to choose exactly where de-essing happens instead of leaving every decision to automatic sibilance detection. In a DAW, route or send MIDI notes to Nebula De-Esser, switch the Sidechain selector to MIDI, then place notes only on the phrases, words, or sections that need extra control. Note velocity controls trigger strength, so a quiet verse, loud chorus, backing-vocal stack, or aggressive ad-lib can each drive a different amount of reduction.
+
+This workflow mirrors deliberate studio-console de-essing moves: an engineer can ride the de-esser only when the performance needs it, push harder on exposed esses, back off when the vocal needs more bite, or treat different song sections with different intent. It is especially useful when the goal is polished transparent control without flattening the whole vocal track.
+
+When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an audible MIDI trigger monitor signal so the user can confirm where and how strongly the MIDI trigger is firing. Since MIDI is not audio, this monitor tone represents the MIDI trigger envelope rather than the vocal or external sidechain input.
 
 ---
 
