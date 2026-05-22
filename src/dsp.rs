@@ -1073,19 +1073,17 @@ impl DeEsserDsp {
         settings: ProcessSettings,
     ) -> ProcessFrame {
         let stereo_mode = settings.stereo_mode.min(2);
-        let stereo_link_raw = settings.stereo_link.clamp(0.0, 2.0);
-        let stereo_link = stereo_link_raw.min(1.0);
-        let ms_focus = (stereo_link_raw - 1.0).clamp(0.0, 1.0);
-        let process_ms_focus = stereo_mode != 0 && ms_focus > 0.0;
-        let process_side_focus = stereo_mode == 2;
+        let stereo_link = settings.stereo_link.clamp(0.0, 1.0);
+        let process_ms_mode = stereo_mode != 0;
+        let process_side_mode = stereo_mode == 2;
         let max_reduction_db = settings.max_reduction_db.abs().max(1.0e-6);
 
-        let (audio_l, audio_r) = if process_ms_focus {
+        let (audio_l, audio_r) = if process_ms_mode {
             lr_to_ms(input_l, input_r)
         } else {
             (input_l, input_r)
         };
-        let (sc_l, sc_r) = if process_ms_focus {
+        let (sc_l, sc_r) = if process_ms_mode {
             lr_to_ms(sidechain_l, sidechain_r)
         } else {
             (sidechain_l, sidechain_r)
@@ -1138,10 +1136,13 @@ impl DeEsserDsp {
 
         let linked_detect = (detected_env_l + detected_env_r) * 0.5;
         let linked_full = (full_env_l + full_env_r) * 0.5;
-        let detect_env_l = detected_env_l * (1.0 - stereo_link) + linked_detect * stereo_link;
-        let detect_env_r = detected_env_r * (1.0 - stereo_link) + linked_detect * stereo_link;
-        let full_env_l = full_env_l * (1.0 - stereo_link) + linked_full * stereo_link;
-        let full_env_r = full_env_r * (1.0 - stereo_link) + linked_full * stereo_link;
+        let stereo_link_blend = if process_ms_mode { 0.0 } else { stereo_link };
+        let detect_env_l =
+            detected_env_l * (1.0 - stereo_link_blend) + linked_detect * stereo_link_blend;
+        let detect_env_r =
+            detected_env_r * (1.0 - stereo_link_blend) + linked_detect * stereo_link_blend;
+        let full_env_l = full_env_l * (1.0 - stereo_link_blend) + linked_full * stereo_link_blend;
+        let full_env_r = full_env_r * (1.0 - stereo_link_blend) + linked_full * stereo_link_blend;
 
         let comparison_l = if settings.use_wide_range {
             // Wide = full-signal analysis. Decide using overall voice behavior.
@@ -1195,11 +1196,13 @@ impl DeEsserDsp {
         }
         .clamp(0.0, 1.0);
 
-        if process_ms_focus {
-            if process_side_focus {
-                reduction_target_l *= 1.0 - ms_focus;
+        if process_ms_mode {
+            if process_side_mode {
+                reduction_target_l = 0.0;
+                reduction_target_r *= stereo_link;
             } else {
-                reduction_target_r *= 1.0 - ms_focus;
+                reduction_target_l *= stereo_link;
+                reduction_target_r = 0.0;
             }
         }
 
@@ -1231,7 +1234,7 @@ impl DeEsserDsp {
             self.sample_rate,
         );
 
-        let wet_l = if settings.trigger_hear {
+        let mut wet_l = if settings.trigger_hear {
             detected_l
         } else if settings.filter_solo {
             detected_l * db_to_lin(reduction_db_l)
@@ -1239,7 +1242,7 @@ impl DeEsserDsp {
             spectral_wet_l
         };
 
-        let wet_r = if settings.trigger_hear {
+        let mut wet_r = if settings.trigger_hear {
             detected_r
         } else if settings.filter_solo {
             detected_r * db_to_lin(reduction_db_r)
@@ -1247,15 +1250,44 @@ impl DeEsserDsp {
             spectral_wet_r
         };
 
-        let (wet_l, wet_r) = if process_ms_focus {
+        if process_ms_mode && (settings.trigger_hear || settings.filter_solo) {
+            if process_side_mode {
+                wet_l = 0.0;
+            } else {
+                wet_r = 0.0;
+            }
+        }
+
+        let (wet_l, wet_r) = if process_ms_mode {
             ms_to_lr(wet_l, wet_r)
         } else {
             (wet_l, wet_r)
         };
-        let (dry_l, dry_r) = if process_ms_focus {
+        let (dry_l, dry_r) = if process_ms_mode {
             ms_to_lr(spectral_dry_l, spectral_dry_r)
         } else {
             (spectral_dry_l, spectral_dry_r)
+        };
+
+        let detection_db_l = lin_to_db(detect_env_l);
+        let detection_db_r = lin_to_db(detect_env_r);
+        let detection_db = if process_ms_mode {
+            if process_side_mode {
+                detection_db_r
+            } else {
+                detection_db_l
+            }
+        } else {
+            (detection_db_l + detection_db_r) * 0.5
+        };
+        let reduction_db = if process_ms_mode {
+            if process_side_mode {
+                reduction_db_r
+            } else {
+                reduction_db_l
+            }
+        } else {
+            (reduction_db_l + reduction_db_r) * 0.5
         };
 
         ProcessFrame {
@@ -1263,8 +1295,8 @@ impl DeEsserDsp {
             wet_r,
             dry_l,
             dry_r,
-            detection_db: (lin_to_db(detect_env_l) + lin_to_db(detect_env_r)) * 0.5,
-            reduction_db: (reduction_db_l + reduction_db_r) * 0.5,
+            detection_db,
+            reduction_db,
         }
     }
 
@@ -1684,6 +1716,76 @@ mod tests {
         assert!(frame.reduction_db < -1.0);
         assert!(frame.wet_l.is_finite());
         assert!(frame.wet_r.is_finite());
+    }
+
+    #[test]
+    fn mid_side_mode_uses_link_as_selected_component_amount() {
+        let mut dsp = DeEsserDsp::new(48_000.0);
+        dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+        let muted_mid = ProcessSettings {
+            max_reduction_db: -12.0,
+            stereo_link: 0.0,
+            stereo_mode: 1,
+            midi_trigger: 1.0,
+            ..ProcessSettings::default()
+        };
+        let full_mid = ProcessSettings {
+            stereo_link: 1.0,
+            ..muted_mid
+        };
+
+        let mut muted_frame = ProcessFrame::default();
+        for _ in 0..1024 {
+            muted_frame = dsp.process_frame(0.5, 0.5, 0.0, 0.0, muted_mid);
+        }
+
+        dsp.reset();
+
+        let mut full_frame = ProcessFrame::default();
+        for _ in 0..1024 {
+            full_frame = dsp.process_frame(0.5, 0.5, 0.0, 0.0, full_mid);
+        }
+
+        assert!(muted_frame.reduction_db > -0.1);
+        assert!(full_frame.reduction_db < -1.0);
+    }
+
+    #[test]
+    fn mid_side_monitor_outputs_only_selected_component() {
+        fn monitor_peak(trigger_hear: bool, filter_solo: bool, stereo_mode: u32) -> f64 {
+            let mut dsp = DeEsserDsp::new(48_000.0);
+            dsp.update_filters(4_000.0, 12_000.0, 0.5, 1.0, 50.0, 12.0);
+            let settings = ProcessSettings {
+                threshold_db: 0.0,
+                max_reduction_db: -12.0,
+                mode_relative: false,
+                trigger_hear,
+                filter_solo,
+                stereo_link: 1.0,
+                stereo_mode,
+                ..ProcessSettings::default()
+            };
+
+            let mut peak = 0.0_f64;
+            for sample_idx in 0..4096 {
+                let phase = 2.0 * std::f64::consts::PI * 6_000.0 * sample_idx as f64 / 48_000.0;
+                let side_only = phase.sin() * 0.5;
+                let frame =
+                    dsp.process_frame(side_only, -side_only, side_only, -side_only, settings);
+                peak = peak.max(frame.wet_l.abs()).max(frame.wet_r.abs());
+            }
+            peak
+        }
+
+        let trigger_mid_peak = monitor_peak(true, false, 1);
+        let trigger_side_peak = monitor_peak(true, false, 2);
+        let solo_mid_peak = monitor_peak(false, true, 1);
+        let solo_side_peak = monitor_peak(false, true, 2);
+
+        assert!(trigger_side_peak > 0.01);
+        assert!(solo_side_peak > 0.01);
+        assert!(trigger_mid_peak < trigger_side_peak * 0.01);
+        assert!(solo_mid_peak < solo_side_peak * 0.01);
     }
 
     #[test]

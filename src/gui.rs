@@ -165,7 +165,7 @@ impl ParamSnapshot {
             lookahead_enabled: p.lookahead_enabled,
             lookahead_ms: p.lookahead_ms,
             trigger_hear: p.trigger_hear,
-            stereo_link: p.stereo_link,
+            stereo_link: p.stereo_link.clamp(0.0, 1.0),
             stereo_mode: p.stereo_mode,
             sidechain_mode: p.sidechain_mode,
             vocal_mode: p.vocal_mode,
@@ -222,7 +222,7 @@ impl ParamSnapshot {
             lookahead_enabled: snapshot.lookahead_enabled,
             lookahead_ms: snapshot.lookahead_ms as f64,
             trigger_hear: snapshot.trigger_hear,
-            stereo_link: snapshot.stereo_link as f64,
+            stereo_link: snapshot.stereo_link.clamp(0.0, 1.0) as f64,
             stereo_mode: snapshot.effective_stereo_mode() as u32,
             sidechain_mode: snapshot.effective_sidechain_mode() as u32,
             vocal_mode: snapshot.vocal_mode,
@@ -252,7 +252,7 @@ impl ParamSnapshot {
             lookahead_enabled: self.lookahead_enabled,
             lookahead_ms: self.lookahead_ms as f32,
             trigger_hear: self.trigger_hear,
-            stereo_link: self.stereo_link as f32,
+            stereo_link: self.stereo_link.clamp(0.0, 1.0) as f32,
             stereo_mode: self.stereo_mode.clamp(0, 2) as i32,
             stereo_mid_side: self.stereo_mode == 2,
             sidechain_mode: self.sidechain_mode.clamp(0, 2) as i32,
@@ -1383,9 +1383,9 @@ fn draw_controls(
         ),
         (
             "Stereo Lnk",
-            p.stereo_link,
+            p.stereo_link.clamp(0.0, 1.0),
             0.0,
-            if p.stereo_mode == 0 { 1.0 } else { 2.0 },
+            1.0,
             match p.stereo_mode {
                 1 => "midlink",
                 2 => "sidelink",
@@ -1593,7 +1593,7 @@ fn draw_controls(
                         _ => 0,
                     };
                     ch.stereo_mode = Some(next_mode);
-                    if next_mode == 0 && p.stereo_link > 1.0 {
+                    if p.stereo_link > 1.0 {
                         ch.stereo_link = Some(1.0);
                     }
                 }
@@ -1914,17 +1914,9 @@ fn fmt_knob(v: f64, unit: &str) -> String {
             let pct = if v <= 1.0 { v * 100.0 } else { v };
             format!("{pct:.0}%")
         }
-        "link" | "midlink" | "sidelink" => {
-            if v <= 1.0 {
-                format!("{:.0}%", v * 100.0)
-            } else if unit == "midlink" {
-                format!("Mid {:.0}%", (v - 1.0) * 100.0)
-            } else if unit == "sidelink" {
-                format!("Side {:.0}%", (v - 1.0) * 100.0)
-            } else {
-                "100%".into()
-            }
-        }
+        "midlink" => format!("Mid {:.0}%", v.clamp(0.0, 1.0) * 100.0),
+        "sidelink" => format!("Side {:.0}%", v.clamp(0.0, 1.0) * 100.0),
+        "link" => format!("{:.0}%", v.clamp(0.0, 1.0) * 100.0),
         "dB/oct" => format!("{:.1}", v),
         "pan" => {
             if v.abs() < 0.01 {
