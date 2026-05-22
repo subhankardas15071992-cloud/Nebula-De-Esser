@@ -40,13 +40,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
-    LoadCursorW, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    LoadCursorW, RegisterClassW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, DLGC_WANTALLKEYS, DLGC_WANTCHARS, GWLP_USERDATA, HMENU,
-    IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_DPICHANGED,
-    WM_DPICHANGED_AFTERPARENT, WM_DPICHANGED_BEFOREPARENT, WM_ERASEBKGND, WM_GETDLGCODE,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-    WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_VISIBLE,
+    IDC_ARROW, IDC_SIZENWSE, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR,
+    WM_DPICHANGED, WM_DPICHANGED_AFTERPARENT, WM_DPICHANGED_BEFOREPARENT, WM_ERASEBKGND,
+    WM_GETDLGCODE, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_SIZE, WM_TIMER, WNDCLASSW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows_numerics::Vector2;
 
@@ -58,6 +58,9 @@ use super::{
 
 const BASE_W: f32 = 860.0;
 const BASE_H: f32 = 640.0;
+const MIN_WINDOW_SCALE: f32 = 0.65;
+const MAX_WINDOW_SCALE: f32 = 3.0;
+const RESIZE_GRIP_SIZE: f32 = 24.0;
 const DEFAULT_DPI: u32 = 96;
 const TIMER_ID: usize = 7401;
 const TIMER_MS: u32 = 33;
@@ -90,6 +93,8 @@ pub(super) fn create_editor(
         storage,
         scale_bits: AtomicU32::new(1.0_f32.to_bits()),
         size_scale_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+        window_width_bits: Arc::new(AtomicU32::new(BASE_W.to_bits())),
+        window_height_bits: Arc::new(AtomicU32::new(BASE_H.to_bits())),
     }))
 }
 
@@ -101,6 +106,8 @@ struct NativeEditor {
     storage: Arc<PersistentStore>,
     scale_bits: AtomicU32,
     size_scale_bits: Arc<AtomicU32>,
+    window_width_bits: Arc<AtomicU32>,
+    window_height_bits: Arc<AtomicU32>,
 }
 
 impl Editor for NativeEditor {
@@ -125,8 +132,12 @@ impl Editor for NativeEditor {
         self.size_scale_bits
             .store(size_scale.to_bits(), Ordering::Release);
 
-        let scaled_width = (BASE_W * render_scale).round() as i32;
-        let scaled_height = (BASE_H * render_scale).round() as i32;
+        let user_w = f32::from_bits(self.window_width_bits.load(Ordering::Acquire))
+            .clamp(BASE_W * MIN_WINDOW_SCALE, BASE_W * MAX_WINDOW_SCALE);
+        let user_h = f32::from_bits(self.window_height_bits.load(Ordering::Acquire))
+            .clamp(BASE_H * MIN_WINDOW_SCALE, BASE_H * MAX_WINDOW_SCALE);
+        let scaled_width = (user_w * render_scale).round() as i32;
+        let scaled_height = (user_h * render_scale).round() as i32;
         let (width, height) = client_size(parent_hwnd)
             .filter(|(width, height)| *width > 100 && *height > 100)
             .map(|(width, height)| {
@@ -146,6 +157,8 @@ impl Editor for NativeEditor {
             self.midi_learn.clone(),
             self.storage.clone(),
             self.size_scale_bits.clone(),
+            self.window_width_bits.clone(),
+            self.window_height_bits.clone(),
             context,
             parent_hwnd,
             host_scale,
@@ -192,9 +205,13 @@ impl Editor for NativeEditor {
     fn size(&self) -> (u32, u32) {
         let size_scale =
             f32::from_bits(self.size_scale_bits.load(Ordering::Acquire)).clamp(1.0, 3.0);
+        let user_w = f32::from_bits(self.window_width_bits.load(Ordering::Acquire))
+            .clamp(BASE_W * MIN_WINDOW_SCALE, BASE_W * MAX_WINDOW_SCALE);
+        let user_h = f32::from_bits(self.window_height_bits.load(Ordering::Acquire))
+            .clamp(BASE_H * MIN_WINDOW_SCALE, BASE_H * MAX_WINDOW_SCALE);
         (
-            (BASE_W * size_scale).round() as u32,
-            (BASE_H * size_scale).round() as u32,
+            (user_w * size_scale).round() as u32,
+            (user_h * size_scale).round() as u32,
         )
     }
 
@@ -238,6 +255,8 @@ struct NativeWindowState {
     midi_learn: Arc<MidiLearnShared>,
     storage: Arc<PersistentStore>,
     size_scale_bits: Arc<AtomicU32>,
+    window_width_bits: Arc<AtomicU32>,
+    window_height_bits: Arc<AtomicU32>,
     context: Arc<dyn GuiContext>,
     d2d_factory: Option<ID2D1Factory>,
     dwrite_factory: Option<IDWriteFactory>,
@@ -245,6 +264,7 @@ struct NativeWindowState {
     text_formats: Option<TextFormats>,
     smooth_mags: Vec<f32>,
     drag: Option<DragState>,
+    resize_drag: Option<ResizeDragState>,
     drag_snapshot: Option<ParamSnapshot>,
     numeric_input: Option<NumericInput>,
     preset_save_open: bool,
@@ -272,6 +292,8 @@ impl NativeWindowState {
         midi_learn: Arc<MidiLearnShared>,
         storage: Arc<PersistentStore>,
         size_scale_bits: Arc<AtomicU32>,
+        window_width_bits: Arc<AtomicU32>,
+        window_height_bits: Arc<AtomicU32>,
         context: Arc<dyn GuiContext>,
         parent_hwnd: HWND,
         host_scale: f32,
@@ -291,6 +313,8 @@ impl NativeWindowState {
             midi_learn,
             storage,
             size_scale_bits,
+            window_width_bits,
+            window_height_bits,
             context,
             d2d_factory: None,
             dwrite_factory: None,
@@ -298,6 +322,7 @@ impl NativeWindowState {
             text_formats: None,
             smooth_mags: vec![-120.0; 1025],
             drag: None,
+            resize_drag: None,
             drag_snapshot: None,
             numeric_input: None,
             preset_save_open: false,
@@ -371,6 +396,7 @@ impl NativeWindowState {
             UiRect::new(0.0, layout.full.h * 0.8, layout.full.w, layout.full.h * 0.2),
             &brushes.mica_bot,
         );
+        draw_resize_grip(rt, layout, brushes);
     }
 
     fn draw_header(
@@ -1262,6 +1288,18 @@ impl NativeWindowState {
             return;
         };
         let layout = Layout::new(w, h, self.render_scale());
+        if resize_grip_rect(&layout).contains(x, y) {
+            self.resize_drag = Some(ResizeDragState {
+                start_x: x,
+                start_y: y,
+                start_w: layout.full.w,
+                start_h: layout.full.h,
+            });
+            let _ = unsafe { SetCapture(self.hwnd) };
+            invalidate(self.hwnd);
+            return;
+        }
+
         if self.handle_overlay_click(x, y, &layout) {
             invalidate(self.hwnd);
             return;
@@ -1334,6 +1372,12 @@ impl NativeWindowState {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) {
+        if let Some(drag) = self.resize_drag {
+            self.update_resize_drag(drag, x, y);
+            invalidate(self.hwnd);
+            return;
+        }
+
         if let Some(drag) = self.drag {
             match drag.mode {
                 DragMode::Horizontal => {
@@ -1348,6 +1392,13 @@ impl NativeWindowState {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32) {
+        if self.resize_drag.take().is_some() {
+            let _ = unsafe { ReleaseCapture() };
+            self.resize_to_parent();
+            invalidate(self.hwnd);
+            return;
+        }
+
         if let Some(drag) = self.drag.take() {
             match drag.mode {
                 DragMode::Horizontal => {
@@ -1364,6 +1415,19 @@ impl NativeWindowState {
             }
             invalidate(self.hwnd);
         }
+    }
+
+    fn update_resize_drag(&mut self, drag: ResizeDragState, x: f32, y: f32) {
+        let next_w = (drag.start_w + (x - drag.start_x))
+            .clamp(BASE_W * MIN_WINDOW_SCALE, BASE_W * MAX_WINDOW_SCALE);
+        let next_h = (drag.start_h + (y - drag.start_y))
+            .clamp(BASE_H * MIN_WINDOW_SCALE, BASE_H * MAX_WINDOW_SCALE);
+        self.window_width_bits
+            .store(next_w.to_bits(), Ordering::Release);
+        self.window_height_bits
+            .store(next_h.to_bits(), Ordering::Release);
+        let _ = self.context.request_resize();
+        self.resize_to_parent();
     }
 
     fn mouse_right_down(&mut self, x: f32, y: f32) {
@@ -1514,8 +1578,14 @@ impl NativeWindowState {
             return;
         };
         let (desired_width, desired_height) = self.desired_pixel_size();
-        let target_width = parent_width.max(desired_width).max(1);
-        let target_height = parent_height.max(desired_height).max(1);
+        let (target_width, target_height) = if self.resize_drag.is_some() {
+            (desired_width.max(1), desired_height.max(1))
+        } else {
+            (
+                parent_width.max(desired_width).max(1),
+                parent_height.max(desired_height).max(1),
+            )
+        };
         if target_width == current_width && target_height == current_height {
             return;
         }
@@ -1571,9 +1641,13 @@ impl NativeWindowState {
 
     fn desired_pixel_size(&self) -> (u32, u32) {
         let scale = self.render_scale();
+        let user_w = f32::from_bits(self.window_width_bits.load(Ordering::Acquire))
+            .clamp(BASE_W * MIN_WINDOW_SCALE, BASE_W * MAX_WINDOW_SCALE);
+        let user_h = f32::from_bits(self.window_height_bits.load(Ordering::Acquire))
+            .clamp(BASE_H * MIN_WINDOW_SCALE, BASE_H * MAX_WINDOW_SCALE);
         (
-            (BASE_W * scale).round().max(1.0) as u32,
-            (BASE_H * scale).round().max(1.0) as u32,
+            (user_w * scale).round().max(1.0) as u32,
+            (user_h * scale).round().max(1.0) as u32,
         )
     }
 
@@ -2710,6 +2784,33 @@ const fn color(r: u8, g: u8, b: u8, a: u8) -> D2D1_COLOR_F {
     }
 }
 
+fn resize_grip_rect(layout: &Layout) -> UiRect {
+    let size = (RESIZE_GRIP_SIZE * layout.s).max(14.0);
+    UiRect::new(
+        layout.full.right() - size,
+        layout.full.bottom() - size,
+        size,
+        size,
+    )
+}
+
+fn draw_resize_grip(rt: &ID2D1HwndRenderTarget, layout: &Layout, brushes: &Brushes) {
+    let rect = resize_grip_rect(layout);
+    let s = layout.s.max(0.6);
+    for i in 0..3 {
+        let offset = (6.0 + i as f32 * 6.0) * s;
+        draw_line(
+            rt,
+            rect.right() - offset,
+            rect.bottom() - 3.0 * s,
+            rect.right() - 3.0 * s,
+            rect.bottom() - offset,
+            &brushes.text_secondary,
+            1.0 * s,
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Layout {
     full: UiRect,
@@ -3424,6 +3525,14 @@ struct DragState {
     pointer_offset: f32,
     start_y: f32,
     start_value: f32,
+}
+
+#[derive(Clone, Copy)]
+struct ResizeDragState {
+    start_x: f32,
+    start_y: f32,
+    start_w: f32,
+    start_h: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -4526,13 +4635,24 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
-                if state.drag.is_some() {
-                    let (x, y) = point_from_lparam(lparam);
-                    let (x, y) = state.logical_point(x, y);
+                let (x, y) = point_from_lparam(lparam);
+                let (x, y) = state.logical_point(x, y);
+                if state.drag.is_some() || state.resize_drag.is_some() {
                     state.mouse_move(x, y);
                     LRESULT(0)
                 } else {
-                    DefWindowProcW(hwnd, msg, wparam, lparam)
+                    let Some((w, h)) = state.logical_client_size() else {
+                        return DefWindowProcW(hwnd, msg, wparam, lparam);
+                    };
+                    let layout = Layout::new(w, h, state.render_scale());
+                    if resize_grip_rect(&layout).contains(x, y) {
+                        if let Ok(cursor) = LoadCursorW(None, IDC_SIZENWSE) {
+                            SetCursor(Some(cursor));
+                        }
+                        LRESULT(0)
+                    } else {
+                        DefWindowProcW(hwnd, msg, wparam, lparam)
+                    }
                 }
             }
             WM_LBUTTONUP => {
