@@ -52,8 +52,9 @@ use windows_numerics::Vector2;
 
 use super::analyzer::SpectrumData;
 use super::{
-    u32_to_f32, Meters, MidiLearnShared, NebulaParams, PersistentStore, StoredEditorSize,
-    StoredPreset, StoredPresetSnapshot, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
+    clamp_max_frequency, clamp_min_frequency, normalize_frequency_pair, u32_to_f32, Meters,
+    MidiLearnShared, NebulaParams, PersistentStore, StoredEditorSize, StoredPreset,
+    StoredPresetSnapshot, MIDI_PARAM_COUNT, MIDI_PARAM_NAMES,
 };
 
 const BASE_W: f32 = 860.0;
@@ -171,7 +172,7 @@ impl Editor for NativeEditor {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 class_name(),
-                w!("Nebula De-Esser"),
+                w!("Nebula DeEsser"),
                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                 0,
                 0,
@@ -432,7 +433,7 @@ impl NativeWindowState {
 
         draw_text(
             rt,
-            "Nebula De-Esser",
+            "Nebula DeEsser",
             UiRect::new(44.0 * s, 9.0 * s, 220.0 * s, 22.0 * s),
             &formats.title,
             &brushes.text_primary,
@@ -1731,7 +1732,11 @@ impl NativeWindowState {
     fn target_clamp(&self, target: ControlTarget, value: f32) -> f32 {
         let (min, max) = self.target_range(target);
         let value = value.clamp(min, max);
-        if matches!(
+        if target == ControlTarget::MinFreq {
+            clamp_min_frequency(value, self.params.max_freq.value())
+        } else if target == ControlTarget::MaxFreq {
+            clamp_max_frequency(value, self.params.min_freq.value())
+        } else if matches!(
             target,
             ControlTarget::BasisMode
                 | ControlTarget::SidechainMode
@@ -1792,6 +1797,13 @@ impl NativeWindowState {
         with_param(target, &self.params, |param| {
             setter.set_parameter(param, value)
         });
+    }
+
+    fn set_frequency_pair_plain(&self, min_freq: f32, max_freq: f32) {
+        let setter = ParamSetter::new(self.context.as_ref());
+        let (min_freq, max_freq) = normalize_frequency_pair(min_freq, max_freq);
+        setter.set_parameter(&self.params.min_freq, min_freq);
+        setter.set_parameter(&self.params.max_freq, max_freq);
     }
 
     fn set_target_from_x(&self, target: ControlTarget, track: UiRect, x: f32) {
@@ -1860,8 +1872,7 @@ impl NativeWindowState {
     fn apply_snapshot(&self, snapshot: &ParamSnapshot) {
         self.set_target_plain(ControlTarget::Threshold, snapshot.threshold);
         self.set_target_plain(ControlTarget::MaxReduction, snapshot.max_reduction);
-        self.set_target_plain(ControlTarget::MinFreq, snapshot.min_freq);
-        self.set_target_plain(ControlTarget::MaxFreq, snapshot.max_freq);
+        self.set_frequency_pair_plain(snapshot.min_freq, snapshot.max_freq);
         self.set_target_plain(
             ControlTarget::ModeRelative,
             if snapshot.mode_relative { 1.0 } else { 0.0 },

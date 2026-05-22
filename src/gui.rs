@@ -564,7 +564,7 @@ pub fn draw(
     gui.persist_editor_size_if_changed(egui_state.size());
 
     if gui.num_input.open {
-        draw_content_dialog_num(ctx, gui, &mut ch, s);
+        draw_content_dialog_num(ctx, gui, params, &mut ch, s);
     }
     if gui.preset_save_popup {
         draw_content_dialog_preset(ctx, gui, params, &mut ch, s);
@@ -614,7 +614,7 @@ fn draw_nav_header(painter: egui::Painter, rect: Rect, bypass: bool, s: f32) {
     painter.text(
         Pos2::new(tx + 24.0 * s, ty - 5.0 * s),
         egui::Align2::LEFT_CENTER,
-        "Nebula De-Esser",
+        "Nebula DeEsser",
         FontId::new(15.5 * s, FontFamily::Proportional),
         TEXT_PRI,
     );
@@ -1848,7 +1848,7 @@ fn knob_row(
                 let nv = (*min
                     + (n - resp.drag_delta().y * 0.006).clamp(0.0, 1.0) as f64 * (*max - *min))
                     .clamp(*min, *max);
-                apply_ch(tgt, nv, ch);
+                apply_ch(tgt, nv, ch, p);
             }
             if resp.drag_stopped() {
                 if let Some(snap) = gui.drag_snap.take() {
@@ -1863,7 +1863,7 @@ fn knob_row(
                     let n = ((*val - *min) / (*max - *min)) as f32;
                     let nv = (*min + (n + sc * 0.008).clamp(0.0, 1.0) as f64 * (*max - *min))
                         .clamp(*min, *max);
-                    apply_ch(tgt, nv, ch);
+                    apply_ch(tgt, nv, ch, p);
                 }
             }
             if resp.secondary_clicked() {
@@ -1931,7 +1931,16 @@ fn fmt_knob(v: f64, unit: &str) -> String {
     }
 }
 
-fn apply_ch(t: &NumTarget, v: f64, ch: &mut GuiChanges) {
+fn clamp_freq_knob_value(t: &NumTarget, v: f64, p: &GuiParams) -> f64 {
+    match t {
+        NumTarget::MinFreq => v.clamp(1.0, (p.max_freq - 1.0).max(1.0)),
+        NumTarget::MaxFreq => v.clamp((p.min_freq + 1.0).min(24_000.0), 24_000.0),
+        _ => v,
+    }
+}
+
+fn apply_ch(t: &NumTarget, v: f64, ch: &mut GuiChanges, p: &GuiParams) {
+    let v = clamp_freq_knob_value(t, v, p);
     match t {
         NumTarget::Threshold => ch.threshold = Some(v),
         NumTarget::MaxReduction => ch.max_reduction = Some(v),
@@ -2249,7 +2258,13 @@ fn freq_node(pa: &egui::Painter, c: Pos2, col: Color32, lbl: &str, s: f32) {
 }
 
 // ─── ContentDialog — Numeric Input ───────────────────────────────────────────
-fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChanges, s: f32) {
+fn draw_content_dialog_num(
+    ctx: &Context,
+    gui: &mut NebulaGui,
+    params: &GuiParams,
+    ch: &mut GuiChanges,
+    s: f32,
+) {
     let sc = ctx.screen_rect();
     let pop = Rect::from_center_size(sc.center(), Vec2::new(240.0 * s, 120.0 * s));
     let fr = Rect::from_center_size(
@@ -2357,14 +2372,14 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
             if ui.memory(|mem| mem.has_focus(text_id))
                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
             {
-                apply_num(gui, ch);
+                apply_num(gui, params, ch);
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 gui.num_input.open = false;
                 gui.num_input_focus_pending = false;
             }
             if ui.allocate_rect(ok, Sense::click()).clicked() {
-                apply_num(gui, ch);
+                apply_num(gui, params, ch);
             }
             if ui.allocate_rect(cx_, Sense::click()).clicked() {
                 gui.num_input.open = false;
@@ -2373,10 +2388,10 @@ fn draw_content_dialog_num(ctx: &Context, gui: &mut NebulaGui, ch: &mut GuiChang
         });
 }
 
-fn apply_num(gui: &mut NebulaGui, ch: &mut GuiChanges) {
+fn apply_num(gui: &mut NebulaGui, params: &GuiParams, ch: &mut GuiChanges) {
     if let Ok(v) = gui.num_input.value_str.trim().parse::<f64>() {
         let v = v.clamp(gui.num_input.min, gui.num_input.max);
-        apply_ch(&gui.num_input.target, v, ch);
+        apply_ch(&gui.num_input.target, v, ch, params);
     }
     gui.num_input.open = false;
     gui.num_input_focus_pending = false;

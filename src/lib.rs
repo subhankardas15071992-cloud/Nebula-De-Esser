@@ -27,6 +27,53 @@ use storage::{PersistentStore, StoredMidiState};
 pub(crate) use storage::{StoredEditorSize, StoredPreset, StoredPresetSnapshot};
 
 const UNMAPPED_CC: i32 = -1;
+const PARAM_FREQ_MIN_HZ: f32 = 1.0;
+const PARAM_FREQ_MAX_HZ: f32 = 24_000.0;
+const PARAM_FREQ_MIN_GAP_HZ: f32 = 1.0;
+
+fn clamp_min_frequency(value: f32, current_max: f32) -> f32 {
+    value.clamp(
+        PARAM_FREQ_MIN_HZ,
+        (current_max - PARAM_FREQ_MIN_GAP_HZ).max(PARAM_FREQ_MIN_HZ),
+    )
+}
+
+fn clamp_max_frequency(value: f32, current_min: f32) -> f32 {
+    value.clamp(
+        (current_min + PARAM_FREQ_MIN_GAP_HZ).min(PARAM_FREQ_MAX_HZ),
+        PARAM_FREQ_MAX_HZ,
+    )
+}
+
+fn normalize_frequency_pair(min_freq: f32, max_freq: f32) -> (f32, f32) {
+    let mut min_freq = min_freq.clamp(PARAM_FREQ_MIN_HZ, PARAM_FREQ_MAX_HZ);
+    let mut max_freq = max_freq.clamp(PARAM_FREQ_MIN_HZ, PARAM_FREQ_MAX_HZ);
+
+    if min_freq > max_freq - PARAM_FREQ_MIN_GAP_HZ {
+        max_freq = (min_freq + PARAM_FREQ_MIN_GAP_HZ).min(PARAM_FREQ_MAX_HZ);
+        min_freq = (max_freq - PARAM_FREQ_MIN_GAP_HZ).max(PARAM_FREQ_MIN_HZ);
+    }
+
+    (min_freq, max_freq)
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn constrain_frequency_change(
+    current_min: f32,
+    current_max: f32,
+    new_min: Option<f32>,
+    new_max: Option<f32>,
+) -> (Option<f32>, Option<f32>) {
+    match (new_min, new_max) {
+        (Some(min_freq), Some(max_freq)) => {
+            let (min_freq, max_freq) = normalize_frequency_pair(min_freq, max_freq);
+            (Some(min_freq), Some(max_freq))
+        }
+        (Some(min_freq), None) => (Some(clamp_min_frequency(min_freq, current_max)), None),
+        (None, Some(max_freq)) => (None, Some(clamp_max_frequency(max_freq, current_min))),
+        (None, None) => (None, None),
+    }
+}
 
 #[inline]
 fn f32_to_u32(value: f32) -> u32 {
@@ -1147,8 +1194,14 @@ fn apply_midi_mapping(
         MIDI_INPUT_PAN => set_param!(params.input_pan, value * 2.0 - 1.0),
         MIDI_OUTPUT_LEVEL => set_param!(params.output_level, -100.0 + value * 200.0),
         MIDI_OUTPUT_PAN => set_param!(params.output_pan, value * 2.0 - 1.0),
-        MIDI_MIN_FREQ => set_param!(params.min_freq, 1.0 + value * 23_999.0),
-        MIDI_MAX_FREQ => set_param!(params.max_freq, 1.0 + value * 23_999.0),
+        MIDI_MIN_FREQ => set_param!(
+            params.min_freq,
+            clamp_min_frequency(1.0 + value * 23_999.0, params.max_freq.value())
+        ),
+        MIDI_MAX_FREQ => set_param!(
+            params.max_freq,
+            clamp_max_frequency(1.0 + value * 23_999.0, params.min_freq.value())
+        ),
         MIDI_LOOKAHEAD => set_param!(params.lookahead_ms, value * 20.0),
         _ => {}
     }
@@ -1178,8 +1231,14 @@ fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, sett
 
     set_float!(changes.threshold, params.threshold);
     set_float!(changes.max_reduction, params.max_reduction);
-    set_float!(changes.min_freq, params.min_freq);
-    set_float!(changes.max_freq, params.max_freq);
+    let (min_freq, max_freq) = constrain_frequency_change(
+        params.min_freq.value(),
+        params.max_freq.value(),
+        changes.min_freq.map(|value| value as f32),
+        changes.max_freq.map(|value| value as f32),
+    );
+    set_float!(min_freq.map(f64::from), params.min_freq);
+    set_float!(max_freq.map(f64::from), params.max_freq);
     set_bool!(changes.mode_relative, params.mode_relative);
     if let Some(basis_mode) = changes.basis_mode {
         setter.begin_set_parameter(&params.basis_mode);
@@ -1300,7 +1359,8 @@ fn sidechain_frame<T: AsRef<[f32]>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        fold_down_mono, sidechain_frame, ACTIVE_AUDIO_IO_LAYOUTS, SHARED_AUDIO_IO_LAYOUTS,
+        constrain_frequency_change, fold_down_mono, normalize_frequency_pair, sidechain_frame,
+        ACTIVE_AUDIO_IO_LAYOUTS, SHARED_AUDIO_IO_LAYOUTS,
     };
 
     #[test]
@@ -1369,5 +1429,29 @@ mod tests {
 
         assert_eq!(left, -0.5);
         assert_eq!(right, -0.5);
+    }
+
+    #[test]
+    fn frequency_knob_changes_stop_at_the_other_frequency() {
+        assert_eq!(
+            constrain_frequency_change(4_000.0, 12_000.0, Some(18_000.0), None),
+            (Some(11_999.0), None)
+        );
+        assert_eq!(
+            constrain_frequency_change(4_000.0, 12_000.0, None, Some(2_000.0)),
+            (None, Some(4_001.0))
+        );
+    }
+
+    #[test]
+    fn paired_frequency_restore_preserves_valid_ranges() {
+        assert_eq!(
+            constrain_frequency_change(1_000.0, 5_000.0, Some(10_000.0), Some(14_000.0)),
+            (Some(10_000.0), Some(14_000.0))
+        );
+        assert_eq!(
+            normalize_frequency_pair(25_000.0, 2_000.0),
+            (23_999.0, 24_000.0)
+        );
     }
 }

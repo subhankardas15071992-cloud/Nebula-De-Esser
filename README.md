@@ -1,4 +1,4 @@
-# NEBULA DE-ESSER
+# NEBULA DEESSER
 
 **Specialist 64-bit CLAP & VST3 De-esser Plugin**
 Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Pure Native Builds
@@ -7,11 +7,11 @@ Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Pur
 
 ## 🎯 **Overview**
 
-Nebula De-Esser is a specialist de-esser built for transparent, air-preserving vocal control. It is not intended to be the simplest possible modern clamp-style de-esser. Its purpose is closer to the polished late-80s and early-90s studio approach: bright vocals stay open, expensive, and harmonically alive while sharp sibilants are tucked back with as little damage as possible to the vocal air and upper harmonics.
+Nebula DeEsser is a specialist de-esser built for transparent, air-preserving vocal control. It is not intended to be the simplest possible modern clamp-style de-esser. Its purpose is closer to the polished late-80s and early-90s studio approach: bright vocals stay open, expensive, and harmonically alive while sharp sibilants are tucked back with as little damage as possible to the vocal air and upper harmonics.
 
 The plugin uses a hybrid adaptive spectral design. Conventional control stages such as filtered detection, envelope following, threshold-style reduction targets, smoothing, psychoacoustic weighting, and formant protection decide when and how strongly the processor should act. The actual reduction is then handled by an OSP-style spectral projection/residual stage, which is designed to attenuate the harsh sibilant component without simply dulling the whole top end.
 
-In practical terms, Nebula De-Esser is a niche finishing tool for engineers who want meticulous transparent de-essing, mastering-style Mid/Side control, and high-gloss vocal polish. If the desired sound is obvious clamp, lisp, saturation, or aggressive modern compression, this plugin can still be pushed, but that is not its main identity.
+In practical terms, Nebula DeEsser is a niche finishing tool for engineers who want meticulous transparent de-essing, mastering-style Mid/Side control, and high-gloss vocal polish. If the desired sound is obvious clamp, lisp, saturation, or aggressive modern compression, this plugin can still be pushed, but that is not its main identity.
 
 **Important Announcement** - The AUv2 build is being discontinued because while it works on all DAWs it is unstable on Logic Pro, which is the main target for the AUv2 build. So, at this point there's no reason to keep the AUv2 build. Hence it's being discontinued.
 
@@ -21,7 +21,7 @@ Version 3.2.0 clarifies the plugin's purpose as a specialist transparent de-esse
 
 ## 🎚️ **Who This Plugin Is For**
 
-Nebula De-Esser is for users who want obsessive, transparent control rather than fast one-knob cleanup. It is especially suited to:
+Nebula DeEsser is for users who want obsessive, transparent control rather than fast one-knob cleanup. It is especially suited to:
 
 - polished arena rock, metal, pop, AOR, and glossy backing-vocal production
 - vocals where the air band and harmonic shine must survive de-essing
@@ -38,19 +38,20 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 ### 🎛️ **Purpose clarification, Mid/Side behavior, and GUI size persistence**
 
-- **Clearer plugin identity** - The README now states the intended use case directly: Nebula De-Esser is a specialist transparent de-esser for air-preserving, high-gloss vocal control, not a generic hard-clamp de-esser.
+- **Clearer plugin identity** - The README now states the intended use case directly: Nebula DeEsser is a specialist transparent de-esser for air-preserving, high-gloss vocal control, not a generic hard-clamp de-esser.
 - **Corrected Mid/Side de-essing behavior** - Stereo Link now works from 0-100% in every mode. In Stereo mode it controls stereo linking across the full stereo image. In Mid mode it controls Mid-only de-essing amount. In Side mode it controls Side-only de-essing amount.
 - **Mode-aware monitoring and analysis** - Filter Solo, Internal Trigger Hear, and the spectrum analyzer follow the selected Stereo/Mid/Side mode, so the user hears and sees the same component that is being targeted.
 - **New MIDI sidechain trigger** - The Sidechain selector now includes a MIDI mode. In this mode MIDI notes can deliberately drive de-essing amount, allowing phrase-by-phrase or section-by-section reduction control from the DAW.
 - **Persistent GUI size** - The EGUI and Direct2D editors now remember the user-set window size and reopen at that size in later DAW sessions.
+- **Unified plugin naming** - CLAP and VST3 bundles now use the same DAW-facing name: Nebula DeEsser.
 
 ---
 
 ## 🎹 **MIDI Sidechain Trigger**
 
-The MIDI sidechain trigger is a new feature in Nebula De-Esser. It is different from MIDI Learn: MIDI Learn maps CC controls to parameters, while **Sidechain = MIDI** uses MIDI notes as the actual de-essing trigger.
+The MIDI sidechain trigger is a new feature in Nebula DeEsser. It is different from MIDI Learn: MIDI Learn maps CC controls to parameters, while **Sidechain = MIDI** uses MIDI notes as the actual de-essing trigger.
 
-This is useful when the producer or engineer wants to choose exactly where de-essing happens instead of leaving every decision to automatic sibilance detection. In a DAW, route or send MIDI notes to Nebula De-Esser, switch the Sidechain selector to MIDI, then place notes only on the phrases, words, or sections that need extra control. Note velocity controls trigger strength, so a quiet verse, loud chorus, backing-vocal stack, or aggressive ad-lib can each drive a different amount of reduction.
+This is useful when the producer or engineer wants to choose exactly where de-essing happens instead of leaving every decision to automatic sibilance detection. In a DAW, route or send MIDI notes to Nebula DeEsser, switch the Sidechain selector to MIDI, then place notes only on the phrases, words, or sections that need extra control. Note velocity controls trigger strength, so a quiet verse, loud chorus, backing-vocal stack, or aggressive ad-lib can each drive a different amount of reduction.
 
 This workflow mirrors deliberate studio-console de-essing moves: an engineer can ride the de-esser only when the performance needs it, push harder on exposed esses, back off when the vocal needs more bite, or treat different song sections with different intent. It is especially useful when the goal is polished transparent control without flattening the whole vocal track.
 
@@ -97,7 +98,7 @@ When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an a
 - **Filter Menu replaced with new Basis menu** - It now has three options, "Odd" estimates the “voiced” basis from odd non-spiky frames, "Even" estimates the “voiced” basis from even non-spiky frames, "Both" estimates the “voiced” basis from non-spiky frames. For most purposes using both is recommended.
 - **Preset Manager Fixed** - The Preset Manager is now fully functional.
 - **AUv2 Format** - The plugin is now available in AUv2 format using clap-wrapper.
-- **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows variant EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula De-Esser.
+- **Windows variant** - The Windows variant has been fixed, the problem was with EGUI. For Windows variant EGUI has been replaced by native Direct2D based GUI. Its not only stable now, but it consumes far less resources than the macOS and Linux variants, and it looks far more polished than the macOS and Linux variants. In easy words, the Windows variant is now the best variant of Nebula DeEsser.
 
 ---
 
@@ -146,7 +147,7 @@ When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an a
 
 ### 🧠 **Brand-New Core Algorithm**
 
-Nebula De-Esser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
+Nebula DeEsser now runs an **Orthogonal Subspace Projection** pipeline for reduction control, driven by **Teager-Kaiser Energy Operator (TKEO)** dynamics instead of legacy spectral compression.
 
 - **Adaptive subspace tracking** with slow eigenvector adaptation for stable, non-jittery behavior
 - **Multi-resolution analysis** (short / medium / long windows) to respond to both transients and sustained consonants
@@ -331,8 +332,8 @@ Build directly with Cargo and the `xtask` bundle command (no helper scripts).
 ```bash
 cargo build --release
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula De-Esser.clap
-#         target/bundled/Nebula De-Esser.vst3
+# Output: target/bundled/Nebula DeEsser.clap
+#         target/bundled/Nebula DeEsser.vst3
 ```
 
 #### **Windows (x86_64 / MSVC)**
@@ -342,7 +343,7 @@ Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build To
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target\bundled\Nebula De-Esser.vst3
+# Output: target\bundled\Nebula DeEsser.vst3
 ```
 
 Windows releases are VST3-only. The Windows Direct2D editor works through VST3,
@@ -354,8 +355,8 @@ GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
 cargo build --release --target aarch64-apple-darwin
 cargo build --release --target x86_64-apple-darwin
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula De-Esser.clap
-#         target/bundled/Nebula De-Esser.vst3
+# Output: target/bundled/Nebula DeEsser.clap
+#         target/bundled/Nebula DeEsser.vst3
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -374,7 +375,7 @@ Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
-  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]
+  xattr -dr com.apple.quarantine [path of the Nebula DeEsser.clap or Nebula DeEsser.vst3 file]
 
 After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
 
