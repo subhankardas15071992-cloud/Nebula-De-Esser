@@ -174,6 +174,8 @@ impl Editor for MetalEditor {
                 target,
                 timer: nil,
                 controls: Vec::new(),
+                det_meter_label: nil,
+                red_meter_label: nil,
                 window_width_bits: self.window_width_bits.clone(),
                 window_height_bits: self.window_height_bits.clone(),
             });
@@ -258,6 +260,8 @@ struct MetalWindowState {
     target: id,
     timer: id,
     controls: Vec<ControlBinding>,
+    det_meter_label: id,
+    red_meter_label: id,
     window_width_bits: Arc<AtomicU32>,
     window_height_bits: Arc<AtomicU32>,
 }
@@ -304,6 +308,12 @@ struct ControlBinding {
 
 impl MetalWindowState {
     unsafe fn build_controls(&mut self) {
+        self.add_panel(18.0, 76.0, 268.0, 290.0);
+        self.add_panel(298.0, 76.0, 268.0, 290.0);
+        self.add_panel(578.0, 76.0, 264.0, 290.0);
+        self.add_panel(18.0, 382.0, 548.0, 142.0);
+        self.add_panel(578.0, 382.0, 264.0, 142.0);
+
         let title = format!(
             "Nebula De-Esser   |   v{}.{}",
             env!("CARGO_PKG_VERSION_MAJOR"),
@@ -322,117 +332,104 @@ impl MetalWindowState {
 
         self.add_button(TAG_BYPASS, 690.0, 22.0, 140.0, 28.0, "Bypass");
 
-        self.add_section(24.0, 82.0, "Detection");
-        self.add_slider(TAG_THRESHOLD, 24.0, 112.0, 250.0, "TKEO Sharp", 0.0, 100.0);
-        self.add_slider(TAG_MIN_FREQ, 24.0, 164.0, 250.0, "Min Freq", 1.0, 24_000.0);
-        self.add_slider(TAG_MAX_FREQ, 24.0, 216.0, 250.0, "Max Freq", 1.0, 24_000.0);
+        self.add_section(34.0, 92.0, "Detection");
+        self.add_knob(TAG_THRESHOLD, 34.0, 122.0, 66.0, "TKEO Sharp", 0.0, 100.0);
+        self.add_knob(TAG_MIN_FREQ, 112.0, 122.0, 66.0, "Min Freq", 1.0, 24_000.0);
+        self.add_knob(TAG_MAX_FREQ, 190.0, 122.0, 66.0, "Max Freq", 1.0, 24_000.0);
         self.add_popup(
             TAG_BASIS_MODE,
-            24.0,
-            272.0,
-            120.0,
+            34.0,
+            232.0,
+            104.0,
             "Basis",
             &["Odd", "Even", "Both"],
         );
-        self.add_button(TAG_MODE_RELATIVE, 158.0, 272.0, 116.0, 24.0, "Relative");
-        self.add_button(TAG_WIDE_RANGE, 24.0, 314.0, 116.0, 24.0, "Wide");
-        self.add_button(TAG_FILTER_SOLO, 158.0, 314.0, 116.0, 24.0, "Filter Solo");
+        self.add_button(TAG_MODE_RELATIVE, 150.0, 254.0, 104.0, 24.0, "Relative");
+        self.add_button(TAG_WIDE_RANGE, 34.0, 304.0, 104.0, 24.0, "Wide");
+        self.add_button(TAG_FILTER_SOLO, 150.0, 304.0, 104.0, 24.0, "Filter Solo");
+        self.det_meter_label = self.add_label(34.0, 336.0, 220.0, 16.0, "Detect --", 10.0, false);
 
-        self.add_section(306.0, 82.0, "Reduction");
-        self.add_slider(
+        self.add_section(314.0, 92.0, "Reduction");
+        self.add_knob(
             TAG_MAX_REDUCTION,
-            306.0,
-            112.0,
-            250.0,
+            314.0,
+            122.0,
+            66.0,
             "Max Reduction",
             -100.0,
             0.0,
         );
-        self.add_slider(TAG_CUT_WIDTH, 306.0, 164.0, 250.0, "Cut Width", 0.0, 1.0);
-        self.add_slider(TAG_CUT_DEPTH, 306.0, 216.0, 250.0, "Cut Depth", 0.0, 1.0);
-        self.add_slider(TAG_CUT_SLOPE, 306.0, 268.0, 250.0, "Cut Slope", 0.0, 100.0);
-        self.add_slider(TAG_MIX, 306.0, 320.0, 250.0, "Mix", 0.0, 1.0);
+        self.add_knob(TAG_CUT_WIDTH, 392.0, 122.0, 66.0, "Cut Width", 0.0, 1.0);
+        self.add_knob(TAG_CUT_DEPTH, 470.0, 122.0, 66.0, "Cut Depth", 0.0, 1.0);
+        self.add_knob(TAG_CUT_SLOPE, 354.0, 232.0, 66.0, "Cut Slope", 0.0, 100.0);
+        self.add_knob(TAG_MIX, 432.0, 232.0, 66.0, "Mix", 0.0, 1.0);
+        self.red_meter_label =
+            self.add_label(314.0, 336.0, 220.0, 16.0, "Reduction --", 10.0, false);
 
-        self.add_section(588.0, 82.0, "Stereo + Trigger");
-        self.add_slider(
-            TAG_STEREO_LINK,
-            588.0,
-            112.0,
-            238.0,
-            "Stereo Link",
-            0.0,
-            1.0,
-        );
+        self.add_section(596.0, 92.0, "Stereo + Trigger");
+        self.add_knob(TAG_STEREO_LINK, 596.0, 122.0, 66.0, "Stereo Link", 0.0, 1.0);
+        self.add_knob(TAG_LOOKAHEAD_MS, 674.0, 122.0, 66.0, "Lookahead", 0.0, 20.0);
         self.add_popup(
             TAG_STEREO_MODE,
-            588.0,
-            168.0,
-            238.0,
+            596.0,
+            232.0,
+            104.0,
             "Stereo Mode",
             &["Stereo", "Mid", "Side"],
         );
         self.add_popup(
             TAG_SIDECHAIN_MODE,
-            588.0,
-            222.0,
-            238.0,
+            714.0,
+            232.0,
+            104.0,
             "Sidechain",
             &["Internal", "External", "MIDI"],
         );
-        self.add_button(TAG_TRIGGER_HEAR, 588.0, 274.0, 112.0, 24.0, "Trigger Hear");
-        self.add_button(TAG_VOCAL_MODE, 714.0, 274.0, 112.0, 24.0, "Vocal");
+        self.add_button(TAG_TRIGGER_HEAR, 596.0, 304.0, 104.0, 24.0, "Trigger Hear");
+        self.add_button(TAG_VOCAL_MODE, 714.0, 304.0, 104.0, 24.0, "Vocal");
         self.add_button(
             TAG_LOOKAHEAD_ENABLED,
-            588.0,
-            316.0,
-            112.0,
+            596.0,
+            336.0,
+            104.0,
             24.0,
             "Lookahead",
         );
-        self.add_slider(
-            TAG_LOOKAHEAD_MS,
-            588.0,
-            354.0,
-            238.0,
-            "Lookahead ms",
-            0.0,
-            20.0,
-        );
 
-        self.add_section(24.0, 382.0, "I/O");
-        self.add_slider(
+        self.add_section(34.0, 398.0, "I/O");
+        self.add_knob(
             TAG_INPUT_LEVEL,
-            24.0,
-            412.0,
-            250.0,
+            34.0,
+            426.0,
+            60.0,
             "Input Level",
             -100.0,
             100.0,
         );
-        self.add_slider(TAG_INPUT_PAN, 24.0, 464.0, 250.0, "Input Pan", -1.0, 1.0);
-        self.add_slider(
+        self.add_knob(TAG_INPUT_PAN, 126.0, 426.0, 60.0, "Input Pan", -1.0, 1.0);
+        self.add_knob(
             TAG_OUTPUT_LEVEL,
-            306.0,
-            412.0,
-            250.0,
+            314.0,
+            426.0,
+            60.0,
             "Output Level",
             -100.0,
             100.0,
         );
-        self.add_slider(TAG_OUTPUT_PAN, 306.0, 464.0, 250.0, "Output Pan", -1.0, 1.0);
+        self.add_knob(TAG_OUTPUT_PAN, 406.0, 426.0, 60.0, "Output Pan", -1.0, 1.0);
         self.add_popup(
             TAG_OVERSAMPLING,
-            588.0,
-            412.0,
-            238.0,
+            596.0,
+            410.0,
+            104.0,
             "Oversampling",
             &["Off", "2x", "4x", "6x", "8x"],
         );
         self.add_slider(
             TAG_GUI_SCALE,
-            588.0,
-            464.0,
-            238.0,
+            596.0,
+            472.0,
+            220.0,
             "GUI Size",
             MIN_WINDOW_SCALE as f64,
             MAX_WINDOW_SCALE as f64,
@@ -441,6 +438,19 @@ impl MetalWindowState {
 
     unsafe fn add_section(&self, x: f64, y: f64, text: &str) {
         self.add_label(x, y, 240.0, 20.0, text, 13.0, true);
+    }
+
+    unsafe fn add_panel(&self, x: f64, y: f64, w: f64, h: f64) {
+        let panel = NSView::initWithFrame_(NSView::alloc(nil), frame_from_top(x, y, w, h));
+        panel.setWantsLayer(YES);
+        let layer: id = msg_send![panel, layer];
+        let fill_color: id = msg_send![ns_color(0.035, 0.02, 0.095, 0.86), CGColor];
+        let border_color: id = msg_send![ns_color(0.0, 0.55, 0.72, 0.48), CGColor];
+        let _: () = msg_send![layer, setBackgroundColor: fill_color];
+        let _: () = msg_send![layer, setBorderColor: border_color];
+        let _: () = msg_send![layer, setBorderWidth: 1.0f64];
+        let _: () = msg_send![layer, setCornerRadius: 8.0f64];
+        self.add_child(panel);
     }
 
     unsafe fn add_label(
@@ -497,9 +507,41 @@ impl MetalWindowState {
         });
     }
 
+    unsafe fn add_knob(
+        &mut self,
+        tag: isize,
+        x: f64,
+        y: f64,
+        size: f64,
+        label: &str,
+        min: f64,
+        max: f64,
+    ) {
+        self.add_label(x - 8.0, y, size + 30.0, 16.0, label, 10.0, false);
+        let knob: id = msg_send![class!(NSSlider), alloc];
+        let knob: id = msg_send![knob, initWithFrame: frame_from_top(x, y + 19.0, size, size)];
+        let _: () = msg_send![knob, setSliderType: 1isize];
+        let _: () = msg_send![knob, setMinValue: min];
+        let _: () = msg_send![knob, setMaxValue: max];
+        let _: () = msg_send![knob, setContinuous: YES];
+        let _: () = msg_send![knob, setTag: tag];
+        let _: () = msg_send![knob, setTarget: self.target];
+        let _: () = msg_send![knob, setAction: sel!(controlChanged:)];
+        self.add_child(knob);
+
+        let value_label =
+            self.add_label(x - 8.0, y + size + 24.0, size + 24.0, 16.0, "", 10.0, false);
+        self.controls.push(ControlBinding {
+            tag,
+            control: knob,
+            value_label,
+        });
+    }
+
     unsafe fn add_button(&mut self, tag: isize, x: f64, y: f64, w: f64, h: f64, label: &str) {
         let button = NSButton::initWithFrame_(NSButton::alloc(nil), frame_from_top(x, y, w, h));
         let _: () = msg_send![button, setButtonType: 3isize];
+        let _: () = msg_send![button, setBezelStyle: 6isize];
         let _: () = msg_send![button, setTitle: ns_string(label)];
         let _: () = msg_send![button, setTag: tag];
         let _: () = msg_send![button, setTarget: self.target];
@@ -625,6 +667,17 @@ impl MetalWindowState {
                 };
                 let _: () = msg_send![binding.value_label, setStringValue: ns_string(&value)];
             }
+        }
+
+        let detection = u32_to_f32(self.meters.det_bits.load(Ordering::Relaxed));
+        let reduction = -u32_to_f32(self.meters.red_bits.load(Ordering::Relaxed));
+        if self.det_meter_label != nil {
+            let value = format!("Detect  {:.1} dB", detection);
+            let _: () = msg_send![self.det_meter_label, setStringValue: ns_string(&value)];
+        }
+        if self.red_meter_label != nil {
+            let value = format!("Reduction  {:.1} dB", reduction);
+            let _: () = msg_send![self.red_meter_label, setStringValue: ns_string(&value)];
         }
     }
 
