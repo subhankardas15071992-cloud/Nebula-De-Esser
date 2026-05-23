@@ -39,9 +39,10 @@ It is deliberately more complex than a utility de-esser because the target is no
 ### 🎛️ **Purpose clarification, Mid/Side behavior, and GUI size persistence**
 
 - **Clearer plugin identity** - The README now states the intended use case directly: Nebula De-Esser is a specialist transparent de-esser for air-preserving, high-gloss vocal control, not a generic hard-clamp de-esser.
-- **Corrected Mid/Side de-essing behavior** - Stereo Link now works from 0-100% in every mode. In Stereo mode it controls stereo linking across the full stereo image. In Mid mode it controls Mid-only de-essing amount. In Side mode it controls Side-only de-essing amount.
+- **Corrected Mid/Side de-essing behavior** - Stereo Link now works from 0-100% in every mode. In Stereo mode it controls stereo linking across the full stereo image. In Mid mode it controls Mid-only de-essing amount. In Side mode it controls Side-only de-essing amount. Slider to switch between modes is provided in the lowermost row. The Direct2D variant has ambient highlighting system for the slider, the EGUI variant has a plain slider switch.
 - **Mode-aware monitoring and analysis** - Filter Solo, Internal Trigger Hear, and the spectrum analyzer follow the selected Stereo/Mid/Side mode, so the user hears and sees the same component that is being targeted.
 - **New MIDI sidechain trigger** - The Sidechain selector now includes a MIDI mode. In this mode MIDI notes can deliberately drive de-essing amount, allowing phrase-by-phrase or section-by-section reduction control from the DAW.
+-**Freely resizeable plugin window now available on the the Direct2D variant too** - The free resizeability feature that was earlier available only in the EGUI variant is now available for the Direct2D variant too. Again, due to the nature of Direct2D the overall resizing is smoother on it than EGUI.
 - **Persistent GUI size** - The EGUI and Direct2D editors now remember the user-set window size and reopen at that size in later DAW sessions.
 - **Unified bundle filenames** - CLAP and VST3 bundles now use the same filename convention: Nebula De-Esser.
 
@@ -58,15 +59,11 @@ This workflow mirrors deliberate studio-console de-essing moves: an engineer can
 When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an audible MIDI trigger monitor signal so the user can confirm where and how strongly the MIDI trigger is firing. Since MIDI is not audio, this monitor tone represents the MIDI trigger envelope rather than the vocal or external sidechain input.
 
 ---
-
 **Screenshot - macOS and Linux variant that uses EGUI:**
-<img width="863" height="673" alt="image" src="https://github.com/user-attachments/assets/7e2c0cc7-0064-46a9-941f-9ce7c2a8e33f" />
-
+<img width="902" height="661" alt="image" src="https://github.com/user-attachments/assets/b217382d-1dc5-4bb6-9462-00209ab21558" />
 ---
-
 **Screenshot - Windows variant that uses Direct2D:**
-<img width="860" height="698" alt="image" src="https://github.com/user-attachments/assets/f5340183-a1db-4d2b-9fa4-2a359b55fab7" />
-
+<img width="824" height="637" alt="image" src="https://github.com/user-attachments/assets/59bab929-04da-4475-9ecb-b34c045779b5" />
 ---
 
 ## ✨ **What's New in v3.1.0**
