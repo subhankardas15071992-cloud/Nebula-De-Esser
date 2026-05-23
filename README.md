@@ -1,7 +1,7 @@
 # NEBULA DE-ESSER
 
 **Specialist 64-bit CLAP & VST3 De-esser Plugin**
-Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Pure Native Builds
+Written in Rust · nih-plug · Metal (macOS) · egui (Linux) · Direct2D (Windows) · Pure Native Builds
 
 ---
 
@@ -15,7 +15,7 @@ In practical terms, Nebula De-Esser is a niche finishing tool for engineers who 
 
 **Important Announcement** - The AUv2 build is being discontinued because while it works on all DAWs it is unstable on Logic Pro, which is the main target for the AUv2 build. So, at this point there's no reason to keep the AUv2 build. Hence it's being discontinued.
 
-Version 3.2.0 clarifies the plugin's purpose as a specialist transparent de-esser, improves Mid/Side behavior so Mid and Side modes directly process only the selected component, and persists the resizable GUI window size between DAW sessions.
+Version 3.3.0 moves macOS to a dedicated native Metal editor while keeping EGUI for Linux and Direct2D for Windows.
 
 ---
 
@@ -31,6 +31,15 @@ Nebula De-Esser is for users who want obsessive, transparent control rather than
 - archival or stereo-mix cleanup where the vocal cannot be separated cleanly from the instrumental
 
 It is deliberately more complex than a utility de-esser because the target is not just "less S." The target is controlled sibilance while preserving the impression of an open, expensive top end.
+
+---
+
+## ✨ **What's New in v3.3.0**
+
+### 🎛️ **Native macOS Metal editor**
+
+- **Native macOS Metal editor** - macOS now uses a dedicated AppKit/CAMetalLayer editor. Linux remains on EGUI for maximum host compatibility, and Windows continues to use the native Direct2D editor.
+- **Platform-specific GUI stack** - Nebula De-Esser now uses Metal on macOS, EGUI on Linux, and Direct2D on Windows instead of sharing EGUI between macOS and Linux.
 
 ---
 
@@ -59,7 +68,7 @@ This workflow mirrors deliberate studio-console de-essing moves: an engineer can
 When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an audible MIDI trigger monitor signal so the user can confirm where and how strongly the MIDI trigger is firing. Since MIDI is not audio, this monitor tone represents the MIDI trigger envelope rather than the vocal or external sidechain input.
 
 ---
-**Screenshot - macOS and Linux variant that uses EGUI:**
+**Screenshot - Linux variant that uses EGUI:**
 <img width="902" height="661" alt="image" src="https://github.com/user-attachments/assets/b217382d-1dc5-4bb6-9462-00209ab21558" />
 ---
 **Screenshot - Windows variant that uses Direct2D:**

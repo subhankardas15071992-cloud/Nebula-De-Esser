@@ -999,10 +999,12 @@ dependencies = [
 
 [[package]]
 name = "nebula_desser"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
+ "cocoa",
  "nih_plug",
  "nih_plug_egui",
+ "objc",
  "parking_lot",
  "rand",
  "rustfft",
