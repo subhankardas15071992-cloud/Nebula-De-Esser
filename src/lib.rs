@@ -6,18 +6,16 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nih_plug_egui::egui;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
 
 pub mod analyzer;
 pub mod dsp;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod gui;
-#[cfg(target_os = "macos")]
-mod macos_metal_editor;
 pub mod metrics;
 mod storage;
 #[cfg(target_os = "windows")]
@@ -25,11 +23,11 @@ mod windows_editor;
 
 use analyzer::SpectrumAnalyzer;
 use dsp::{db_to_lin, BasisMode, DeEsserDsp, ProcessFrame, ProcessSettings};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use gui::{draw, GuiParams, NebulaGui};
 pub(crate) use storage::StoredEditorSize;
 use storage::{PersistentStore, StoredMidiState};
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) use storage::{StoredPreset, StoredPresetSnapshot};
 
 const UNMAPPED_CC: i32 = -1;
@@ -51,7 +49,7 @@ fn clamp_max_frequency(value: f32, current_min: f32) -> f32 {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 fn normalize_frequency_pair(min_freq: f32, max_freq: f32) -> (f32, f32) {
     let mut min_freq = min_freq.clamp(PARAM_FREQ_MIN_HZ, PARAM_FREQ_MAX_HZ);
     let mut max_freq = max_freq.clamp(PARAM_FREQ_MIN_HZ, PARAM_FREQ_MAX_HZ);
@@ -64,7 +62,7 @@ fn normalize_frequency_pair(min_freq: f32, max_freq: f32) -> (f32, f32) {
     (min_freq, max_freq)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn constrain_frequency_change(
     current_min: f32,
     current_max: f32,
@@ -217,7 +215,7 @@ impl MidiLearnShared {
 
 #[derive(Params)]
 struct NebulaParams {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
 
@@ -282,7 +280,7 @@ impl Default for NebulaParams {
         };
 
         Self {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             editor_state: {
                 let size = PersistentStore::load().editor_size();
                 EguiState::from_size(size.width.round() as u32, size.height.round() as u32)
@@ -650,7 +648,7 @@ impl Plugin for NebulaDeEsser {
         self.params.clone()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let params = self.params.clone();
@@ -734,17 +732,6 @@ impl Plugin for NebulaDeEsser {
         }))
         .ok()
         .flatten()
-    }
-
-    #[cfg(target_os = "macos")]
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        macos_metal_editor::create_editor(
-            self.params.clone(),
-            self.analyzer.get_shared(),
-            self.meters.clone(),
-            self.midi_learn.clone(),
-            self.storage.clone(),
-        )
     }
 
     #[cfg(target_os = "windows")]
@@ -1225,7 +1212,7 @@ fn apply_midi_mapping(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn apply_gui_changes(changes: &gui::GuiChanges, params: &Arc<NebulaParams>, setter: &ParamSetter) {
     macro_rules! set_float {
         ($field:expr, $param:expr) => {
