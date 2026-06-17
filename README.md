@@ -1,6 +1,6 @@
 # NEBULA DE-ESSER
 
-**Specialist 64-bit CLAP & VST3 De-esser Plugin**
+**Specialist 64-bit De-esser Plugin**
 Written in Rust · nih-plug · egui (macOS & Linux) · Direct2D (Windows) · Pure Native Builds
 
 ---
@@ -36,10 +36,11 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 ## ✨ **What's New in v3.3.0**
 
-### 🏗️ **Separate native builds**
+### 🏗️ **Separate native builds and discontinuation of CLAP format**
 
 - **Separate macOS binaries** - macOS releases are now split into Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`) binaries instead of being merged into one large universal binary.
 - **Windows 11 ARM64 build** - The native Windows ARM64 VST3 build is now available.
+- **Discontinuation of CLAP format** - It was observed that the CLAP format of the plugin caused major stuttering in the audio thread. So for the time being it's being discontinued till the CLAP audio thread stutter issue of nih-plug is fixed.
 
 ---
 
@@ -431,7 +432,7 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in major DAWs supporting VST3 on Windows and VST3 and CLAP on macOS and Linux.**
+**Ready for professional use in major DAWs supporting VST3 on Windows, macOS and Linux.**
 
 ---
 
