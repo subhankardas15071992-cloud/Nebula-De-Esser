@@ -70,10 +70,10 @@ When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an a
 
 ---
 **Screenshot - macOS and Linux variant that uses EGUI:**
-<img width="902" height="661" alt="image" src="https://github.com/user-attachments/assets/b217382d-1dc5-4bb6-9462-00209ab21558" />
+<img width="924" height="669" alt="image" src="https://github.com/user-attachments/assets/48968118-b907-4544-b5c9-68a461fdbb30" />
 ---
 **Screenshot - Windows variant that uses Direct2D:**
-<img width="824" height="637" alt="image" src="https://github.com/user-attachments/assets/59bab929-04da-4475-9ecb-b34c045779b5" />
+<img width="689" height="526" alt="image" src="https://github.com/user-attachments/assets/1a9bbde7-6727-4496-bbd3-82c87a3af373" />
 ---
 
 ## ✨ **What's New in v3.1.0**
