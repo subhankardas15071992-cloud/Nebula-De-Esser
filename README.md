@@ -36,11 +36,10 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 ## ✨ **What's New in v3.3.0**
 
-### 🏗️ **Separate native release builds**
+### 🏗️ **Separate native builds**
 
-- **Separate macOS binaries** - macOS releases are now split into Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`) artifacts instead of being merged into one universal binary.
-- **Windows 11 ARM64 build** - GitHub Actions now builds a native Windows ARM64 VST3 artifact on the `windows-11-arm` runner alongside the existing x86_64 Windows VST3 artifact.
-- **Updated version label** - The plugin package version is now 3.3.0, so the GUI header displays `v3.3`.
+- **Separate macOS binaries** - macOS releases are now split into Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`) binaries instead of being merged into one large universal binary.
+- **Windows 11 ARM64 build** - The native Windows ARM64 VST3 build is now available.
 
 ---
 
