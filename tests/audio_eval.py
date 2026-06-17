@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ═══════════════════════════════════════════════════════════════════════════════
-  NEBULA DE-ESSER v2.0.0 — Comprehensive Audio & Stress Test Suite
+  NEBULA DE-ESSER v3.3.0 — Comprehensive Audio & Stress Test Suite
   Mirrors the Rust DSP exactly in Python/NumPy for black-box + white-box tests
 ═══════════════════════════════════════════════════════════════════════════════
 """

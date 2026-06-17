@@ -15,7 +15,7 @@ In practical terms, Nebula De-Esser is a niche finishing tool for engineers who 
 
 **Important Announcement** - The AUv2 build is being discontinued because while it works on all DAWs it is unstable on Logic Pro, which is the main target for the AUv2 build. So, at this point there's no reason to keep the AUv2 build. Hence it's being discontinued.
 
-Version 3.2.0 clarifies the plugin's purpose as a specialist transparent de-esser, improves Mid/Side behavior so Mid and Side modes directly process only the selected component, and persists the resizable GUI window size between DAW sessions.
+Version 3.3.0 keeps the transparent de-essing engine intact while changing release packaging: macOS now ships separate Apple Silicon and Intel builds instead of one universal binary, and Windows now ships both x86_64 and Windows 11 ARM64 VST3 builds.
 
 ---
 
@@ -31,6 +31,16 @@ Nebula De-Esser is for users who want obsessive, transparent control rather than
 - archival or stereo-mix cleanup where the vocal cannot be separated cleanly from the instrumental
 
 It is deliberately more complex than a utility de-esser because the target is not just "less S." The target is controlled sibilance while preserving the impression of an open, expensive top end.
+
+---
+
+## ✨ **What's New in v3.3.0**
+
+### 🏗️ **Separate native release builds**
+
+- **Separate macOS binaries** - macOS releases are now split into Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`) artifacts instead of being merged into one universal binary.
+- **Windows 11 ARM64 build** - GitHub Actions now builds a native Windows ARM64 VST3 artifact on the `windows-11-arm` runner alongside the existing x86_64 Windows VST3 artifact.
+- **Updated version label** - The plugin package version is now 3.3.0, so the GUI header displays `v3.3`.
 
 ---
 
@@ -333,27 +343,32 @@ cargo run --release --package xtask -- bundle nebula_desser --release
 #         target/bundled/Nebula De-Esser.vst3
 ```
 
-#### **Windows (x86_64 / MSVC)**
-Requires the Rust `x86_64-pc-windows-msvc` target and the Visual Studio Build Tools C++ toolchain.
+#### **Windows (x86_64 or ARM64 / MSVC)**
+Requires the matching Rust target and the Visual Studio Build Tools C++ toolchain.
 
 ```powershell
 rustup target add x86_64-pc-windows-msvc
-cargo build --release --target x86_64-pc-windows-msvc
-cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target\bundled\Nebula De-Esser.vst3
+cargo run --release --package xtask -- bundle nebula_desser --release --target x86_64-pc-windows-msvc
+# Output: target\x86_64-pc-windows-msvc\bundled\Nebula De-Esser.vst3
+
+rustup target add aarch64-pc-windows-msvc
+cargo run --release --package xtask -- bundle nebula_desser --release --target aarch64-pc-windows-msvc
+# Output: target\aarch64-pc-windows-msvc\bundled\Nebula De-Esser.vst3
 ```
 
 Windows releases are VST3-only. The Windows Direct2D editor works through VST3,
 while the current upstream nih-plug CLAP wrapper reports failure from embedded
 GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
 
-#### **macOS (Universal Binary: arm64 + x86_64)**
+#### **macOS (Separate Apple Silicon and Intel builds)**
 ```bash
-cargo build --release --target aarch64-apple-darwin
-cargo build --release --target x86_64-apple-darwin
-cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula De-Esser.clap
-#         target/bundled/Nebula De-Esser.vst3
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo run --release --package xtask -- bundle nebula_desser --release --target aarch64-apple-darwin
+cargo run --release --package xtask -- bundle nebula_desser --release --target x86_64-apple-darwin
+# Output: target/aarch64-apple-darwin/bundled/Nebula De-Esser.clap
+#         target/aarch64-apple-darwin/bundled/Nebula De-Esser.vst3
+#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.clap
+#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.vst3
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -365,8 +380,9 @@ https://subhankar42.gumroad.com/l/adounr
 Note:
 For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
 
-The macOS zip contains CLAP and VST3 plugins. The Linux zip contains CLAP
-and VST3 plugins. The Windows zip contains the VST3 plugin.
+The macOS zips contain CLAP and VST3 plugins, split by Apple Silicon and Intel.
+The Linux zip contains CLAP and VST3 plugins. The Windows zips contain VST3
+plugins, split by x86_64 and ARM64.
 
 Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".

@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 # nih_plug_xtask lives inside the nih-plug mono-repo and provides the
-# implementation of `cargo xtask bundle` and `cargo xtask bundle-universal`.
+# implementation of `cargo xtask bundle`.
 # Pin to the same git source (and, ideally, the same rev) that the plugin
 # itself uses for nih_plug so both crates resolve to the same git checkout
 # and Cargo does not download the repository twice.

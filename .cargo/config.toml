@@ -4,6 +4,6 @@
 #
 # `run --package xtask --` compiles and runs the xtask/ crate in this
 # workspace, forwarding all trailing arguments to it.  The nih_plug_xtask
-# library then interprets those arguments (bundle, bundle-universal, …).
+# library then interprets those arguments, such as `bundle`.
 [alias]
 xtask = "run --package xtask --"
