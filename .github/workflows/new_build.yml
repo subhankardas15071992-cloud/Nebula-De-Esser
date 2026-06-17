@@ -1,0 +1,230 @@
+##############################################################################
+#  Nebula De-Esser — CI Build Pipeline (FIXED)
+#
+#  Fixes applied:
+#    [A] Artifact path: nih_plug_xtask always writes bundles to
+#        target/bundled/ regardless of --target. The previous workflow
+#        was looking at target/<triple>/bundled/, which is always empty.
+#        This was the root cause of the macOS "No files were found" errors
+#        and would also have broken the Windows upload steps once the
+#        build step succeeded.
+#
+#    [B] Cargo network resilience on Windows runners: GitHub Actions
+#        Windows runners are notorious for flaky/slow connections to
+#        crates.io. CARGO_NET_RETRY / CARGO_NET_TIMEOUT / RUSTUP_MAX_RETRIES
+#        are now set globally to make the download stage resilient to
+#        curl timeouts (the "Operation too slow. Less than 10 bytes/sec
+#        transferred the last 30 seconds" error).
+#
+#    [C] Cache: added ~/.cargo/git/checkouts/ so the nih-plug git
+#        checkout does not have to be re-extracted on every run.
+##############################################################################
+
+name: Build (CLAP + VST3, Windows VST3)
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Make cargo resilient to flaky crates.io downloads, especially on
+  # the Windows GitHub-hosted runners. Default is 3 retries / 30 s timeout.
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_TIMEOUT: "300"
+  CARGO_HTTP_LOW_SPEED_LIMIT: "1000"
+  CARGO_HTTP_LOW_SPEED_TIMEOUT: "300"
+  RUSTUP_MAX_RETRIES: "10"
+
+
+jobs:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  macOS — Separate native artifacts (arm64 and x86_64)
+  # ════════════════════════════════════════════════════════════════════════════
+  build-macos:
+    name: "macOS — ${{ matrix.label }}"
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Apple Silicon
+            target: aarch64-apple-darwin
+            artifact: Nebula-De-Esser_macOS-Apple-Silicon
+          - label: Intel
+            target: x86_64-apple-darwin
+            artifact: Nebula-De-Esser_macOS-Intel
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable + macOS target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.cargo/git/checkouts/
+          key: macos-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-${{ matrix.target }}-cargo-
+
+      - name: Build — macOS ${{ matrix.label }} (CLAP + VST3)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "10.13"
+        run: cargo xtask bundle nebula_desser --release --target ${{ matrix.target }}
+
+      # FIX [A]: nih_plug_xtask writes to target/bundled/, NOT
+      # target/<triple>/bundled/. The --target flag only changes where the
+      # raw .dylib is built, not where the final .clap/.vst3 bundle ends up.
+      - name: Upload macOS ${{ matrix.label }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/bundled/
+          if-no-files-found: error
+          retention-days: 90
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Windows — x86_64 and Windows 11 ARM64
+  # ════════════════════════════════════════════════════════════════════════════
+  build-windows:
+    name: "Windows — ${{ matrix.label }}"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: Nebula-De-Esser_Windows-x86_64
+          - label: ARM64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact: Nebula-De-Esser_Windows-ARM64
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry\index\
+            ~\.cargo\registry\cache\
+            ~\.cargo\git\db\
+            ~\.cargo\git\checkouts\
+          key: windows-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-${{ matrix.target }}-cargo-
+
+      - name: Force Python UTF-8 output (Windows)
+        shell: pwsh
+        run: echo "PYTHONUTF8=1" >> $env:GITHUB_ENV
+
+      - name: Build — Windows ${{ matrix.label }} (VST3 only)
+        run: cargo xtask bundle nebula_desser --release --target ${{ matrix.target }}
+
+      # FIX [A]: same path fix as macOS — bundles live in target\bundled\,
+      # not target\<triple>\bundled\.
+      - name: Keep Windows artifact VST3-only
+        shell: pwsh
+        run: |
+          $bundled = "target\bundled"
+          Get-ChildItem -Path $bundled -Filter *.clap -Directory -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force
+          if (-not (Get-ChildItem -Path $bundled -Filter *.vst3 -Directory -ErrorAction SilentlyContinue)) {
+            throw "Expected a VST3 bundle in $bundled"
+          }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target\bundled\
+          if-no-files-found: error
+          retention-days: 90
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Linux — 64-bit
+  # ════════════════════════════════════════════════════════════════════════════
+  build-linux:
+    name: "Linux — 64-bit"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libgl-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcb-icccm4-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xkb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libatk1.0-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libasound2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.cargo/git/checkouts/
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Build — Linux x86_64 (CLAP + VST3)
+        run: cargo xtask bundle nebula_desser --release
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nebula-De-Esser_Linux-x86_64
+          path: target/bundled/
+          if-no-files-found: error
+          retention-days: 90
