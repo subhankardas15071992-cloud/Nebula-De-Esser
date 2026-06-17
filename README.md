@@ -73,7 +73,7 @@ When **Trigger Hear** is enabled in MIDI sidechain mode, the plugin outputs an a
 <img width="924" height="669" alt="image" src="https://github.com/user-attachments/assets/48968118-b907-4544-b5c9-68a461fdbb30" />
 ---
 **Screenshot - Windows variant that uses Direct2D:**
-<img width="689" height="526" alt="image" src="https://github.com/user-attachments/assets/1a9bbde7-6727-4496-bbd3-82c87a3af373" />
+<img width="924" height="705" alt="image" src="https://github.com/user-attachments/assets/bb8fb8f2-5c93-4a83-9abc-28a8aba56b59" />
 ---
 
 ## ✨ **What's New in v3.1.0**
