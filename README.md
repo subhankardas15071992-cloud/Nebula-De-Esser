@@ -438,3 +438,5 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 **Reporting Issues:**
 For reporting any issues create an issue on the Github repository.
+
+(Support for issues is only available for users who pay $15 or higher, free users and those who have paid less than $15 are expected to resolve issues on their own)
