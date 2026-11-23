@@ -8,6 +8,7 @@ use std::error::Error;
 use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{KeyButMask, NotifyMode};
 use x11rb::protocol::Event as XEvent;
 
 pub(super) struct EventLoop {
@@ -129,6 +130,22 @@ impl EventLoop {
         Ok(())
     }
 
+    /// Reports a pointer position from an event that carries one but whose baseview event type
+    /// does not. Immediate mode GUIs hit test clicks against the last known pointer position, and
+    /// hosts are not required to deliver a motion event before a click.
+    fn emit_cursor_moved(&mut self, x: i32, y: i32, state: KeyButMask) {
+        let physical_pos = PhyPoint::new(x, y);
+        let logical_pos = physical_pos.to_logical(&self.window.window_info);
+
+        self.handler.on_event(
+            &mut crate::Window::new(Window { inner: &self.window }),
+            Event::Mouse(MouseEvent::CursorMoved {
+                position: logical_pos,
+                modifiers: key_mods(state),
+            }),
+        );
+    }
+
     fn handle_xcb_event(&mut self, event: XEvent) {
         // For all the keyboard and mouse events, you can fetch
         // `x`, `y`, `detail`, and `state`.
@@ -191,16 +208,7 @@ impl EventLoop {
             // mouse
             ////
             XEvent::MotionNotify(event) => {
-                let physical_pos = PhyPoint::new(event.event_x as i32, event.event_y as i32);
-                let logical_pos = physical_pos.to_logical(&self.window.window_info);
-
-                self.handler.on_event(
-                    &mut crate::Window::new(Window { inner: &self.window }),
-                    Event::Mouse(MouseEvent::CursorMoved {
-                        position: logical_pos,
-                        modifiers: key_mods(event.state),
-                    }),
-                );
+                self.emit_cursor_moved(event.event_x as i32, event.event_y as i32, event.state);
             }
 
             XEvent::EnterNotify(event) => {
@@ -210,54 +218,67 @@ impl EventLoop {
                 );
                 // since no `MOTION_NOTIFY` event is generated when `ENTER_NOTIFY` is generated,
                 // we generate a CursorMoved as well, so the mouse position from here isn't lost
-                let physical_pos = PhyPoint::new(event.event_x as i32, event.event_y as i32);
-                let logical_pos = physical_pos.to_logical(&self.window.window_info);
-                self.handler.on_event(
-                    &mut crate::Window::new(Window { inner: &self.window }),
-                    Event::Mouse(MouseEvent::CursorMoved {
-                        position: logical_pos,
-                        modifiers: key_mods(event.state),
-                    }),
-                );
+                self.emit_cursor_moved(event.event_x as i32, event.event_y as i32, event.state);
             }
 
-            XEvent::LeaveNotify(_) => {
+            XEvent::LeaveNotify(event) => {
+                // A pointer grab or ungrab generates enter/leave events with `mode` set to
+                // `GRAB`/`UNGRAB`. Hosts that grab the pointer for their own drag gestures
+                // would otherwise make the GUI think the pointer left the window, clearing its
+                // pointer position and dropping the next click.
+                if event.mode == NotifyMode::GRAB || event.mode == NotifyMode::UNGRAB {
+                    return;
+                }
+
                 self.handler.on_event(
                     &mut crate::Window::new(Window { inner: &self.window }),
                     Event::Mouse(MouseEvent::CursorLeft),
                 );
             }
 
-            XEvent::ButtonPress(event) => match event.detail {
-                4..=7 => {
-                    self.handler.on_event(
-                        &mut crate::Window::new(Window { inner: &self.window }),
-                        Event::Mouse(MouseEvent::WheelScrolled {
-                            delta: match event.detail {
-                                4 => ScrollDelta::Lines { x: 0.0, y: 1.0 },
-                                5 => ScrollDelta::Lines { x: 0.0, y: -1.0 },
-                                6 => ScrollDelta::Lines { x: -1.0, y: 0.0 },
-                                7 => ScrollDelta::Lines { x: 1.0, y: 0.0 },
-                                _ => unreachable!(),
-                            },
-                            modifiers: key_mods(event.state),
-                        }),
-                    );
+            XEvent::ButtonPress(event) => {
+                // The position is part of the button event, but baseview's `ButtonPressed`
+                // event does not carry one. Report it first so immediate mode GUIs can hit
+                // test the click even when the host never sent a motion event.
+                self.emit_cursor_moved(event.event_x as i32, event.event_y as i32, event.state);
+
+                match event.detail {
+                    4..=7 => {
+                        self.handler.on_event(
+                            &mut crate::Window::new(Window { inner: &self.window }),
+                            Event::Mouse(MouseEvent::WheelScrolled {
+                                delta: match event.detail {
+                                    4 => ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                                    5 => ScrollDelta::Lines { x: 0.0, y: -1.0 },
+                                    6 => ScrollDelta::Lines { x: -1.0, y: 0.0 },
+                                    7 => ScrollDelta::Lines { x: 1.0, y: 0.0 },
+                                    _ => unreachable!(),
+                                },
+                                modifiers: key_mods(event.state),
+                            }),
+                        );
+                    }
+                    detail => {
+                        let button_id = mouse_id(detail);
+                        self.handler.on_event(
+                            &mut crate::Window::new(Window { inner: &self.window }),
+                            Event::Mouse(MouseEvent::ButtonPressed {
+                                button: button_id,
+                                modifiers: key_mods(event.state),
+                            }),
+                        );
+                    }
                 }
-                detail => {
-                    let button_id = mouse_id(detail);
-                    self.handler.on_event(
-                        &mut crate::Window::new(Window { inner: &self.window }),
-                        Event::Mouse(MouseEvent::ButtonPressed {
-                            button: button_id,
-                            modifiers: key_mods(event.state),
-                        }),
-                    );
-                }
-            },
+            }
 
             XEvent::ButtonRelease(event) => {
                 if !(4..=7).contains(&event.detail) {
+                    self.emit_cursor_moved(
+                        event.event_x as i32,
+                        event.event_y as i32,
+                        event.state,
+                    );
+
                     let button_id = mouse_id(event.detail);
                     self.handler.on_event(
                         &mut crate::Window::new(Window { inner: &self.window }),

@@ -112,4 +112,12 @@ impl GlContext {
     pub(crate) fn resize(&self, size: cocoa::foundation::NSSize) {
         self.context.resize(size);
     }
+
+    /// The `NSOpenGLView` this context renders into. Used by the parent `NSView`'s `hitTest:`
+    /// override to collapse hits on the render subview to the parent, so AppKit routes
+    /// `mouseDown:` on the first click in non-key windows.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn ns_view(&self) -> cocoa::base::id {
+        self.context.ns_view()
+    }
 }

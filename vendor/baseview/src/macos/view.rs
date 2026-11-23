@@ -61,6 +61,17 @@ macro_rules! add_mouse_button_class_method {
 
             let modifiers = unsafe { NSEvent::modifierFlags(event) };
 
+            // AppKit only reports mouse movement while the window is key, so a button event can
+            // arrive without any prior position. Immediate mode GUIs hit test clicks against the
+            // last known pointer position, which would make them drop that click. The position is
+            // part of the button event, so report it first. See baseview#370.
+            let position = unsafe { event_position(this, event) };
+
+            state.trigger_event(Event::Mouse(MouseEvent::CursorMoved {
+                position,
+                modifiers: make_modifiers(modifiers),
+            }));
+
             state.trigger_event(Event::Mouse($event_ty {
                 button: $button,
                 modifiers: make_modifiers(modifiers),
@@ -172,6 +183,7 @@ unsafe fn create_view_class() -> &'static Class {
         sel!(viewWillMoveToWindow:),
         view_will_move_to_window as extern "C" fn(&Object, Sel, id),
     );
+    class.add_method(sel!(hitTest:), hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id);
     class.add_method(
         sel!(updateTrackingAreas:),
         update_tracking_areas as extern "C" fn(&Object, Sel, id),
@@ -342,6 +354,46 @@ unsafe fn reinit_tracking_area(this: &Object, tracking_area: *mut Object) {
     ];
 }
 
+/// `hitTest:` override that collapses hits on baseview's internal OpenGL render subview to this
+/// NSView.
+///
+/// `src/gl/macos.rs` attaches an `NSOpenGLView` as a subview of this view so the GL context is
+/// isolated from event handling. The side effect is that `[NSView hitTest:]` returns the GL
+/// subview for every click inside our frame. `NSOpenGLView` inherits the default
+/// `acceptsFirstMouse:` which returns `NO`, so AppKit treats the first click in a non-key window
+/// as an activation click and never dispatches `mouseDown:`. That's the "first click dead zone"
+/// symptom reported in baseview#129 / #202 / #169.
+///
+/// Fix: if the hit lands on our own GL render subview (pointer equality against the
+/// `NSOpenGLView` stored in `GlContext`), collapse the result to `self`. AppKit then asks US
+/// about `acceptsFirstMouse:` (we return `YES`), and `mouseDown:` is dispatched on the first
+/// click. Hits on any other subview pass through unchanged -- we only redirect our own render
+/// child, not anything the consumer may add.
+///
+/// No-op without the `opengl` feature: there's no GL subview to collapse, so the override
+/// pass-through is equivalent to the default implementation.
+extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
+    let super_result: id = unsafe {
+        let superclass = msg_send![this, superclass];
+        msg_send![super(this, superclass), hitTest: point]
+    };
+    if super_result == nil {
+        return nil;
+    }
+
+    #[cfg(feature = "opengl")]
+    unsafe {
+        let state = WindowState::from_view(this);
+        if let Some(gl_context) = state.window_inner.gl_context.as_ref() {
+            if super_result == gl_context.ns_view() {
+                return this as *const _ as id;
+            }
+        }
+    }
+
+    super_result
+}
+
 extern "C" fn view_will_move_to_window(this: &Object, _self: Sel, new_window: id) {
     unsafe {
         let tracking_areas: *mut Object = msg_send![this, trackingAreas];
@@ -386,17 +438,22 @@ extern "C" fn update_tracking_areas(this: &Object, _self: Sel, _: id) {
     }
 }
 
+/// Converts an event's location into this view's coordinate space.
+unsafe fn event_position(this: &Object, event: id) -> Point {
+    let point: NSPoint = msg_send![
+        this,
+        convertPoint: NSEvent::locationInWindow(event)
+        fromView: nil
+    ];
+
+    Point { x: point.x, y: point.y }
+}
+
 extern "C" fn mouse_moved(this: &Object, _sel: Sel, event: id) {
     let state = unsafe { WindowState::from_view(this) };
 
-    let point: NSPoint = unsafe {
-        let point = NSEvent::locationInWindow(event);
-
-        msg_send![this, convertPoint:point fromView:nil]
-    };
+    let position = unsafe { event_position(this, event) };
     let modifiers = unsafe { NSEvent::modifierFlags(event) };
-
-    let position = Point { x: point.x, y: point.y };
 
     state.trigger_event(Event::Mouse(MouseEvent::CursorMoved {
         position,
@@ -406,6 +463,15 @@ extern "C" fn mouse_moved(this: &Object, _sel: Sel, event: id) {
 
 extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
     let state = unsafe { WindowState::from_view(this) };
+
+    let position = unsafe { event_position(this, event) };
+    let modifiers = unsafe { NSEvent::modifierFlags(event) };
+
+    // Scrolling also needs a known pointer position, for the same reason button events do.
+    state.trigger_event(Event::Mouse(MouseEvent::CursorMoved {
+        position,
+        modifiers: make_modifiers(modifiers),
+    }));
 
     let delta = unsafe {
         let x = NSEvent::scrollingDeltaX(event) as f32;
@@ -417,8 +483,6 @@ extern "C" fn scroll_wheel(this: &Object, _: Sel, event: id) {
             ScrollDelta::Lines { x, y }
         }
     };
-
-    let modifiers = unsafe { NSEvent::modifierFlags(event) };
 
     state.trigger_event(Event::Mouse(MouseEvent::WheelScrolled {
         delta,
