@@ -767,6 +767,7 @@ impl Plugin for NebulaDeEsser {
         self.midi_sidechain_active_notes = 0;
         self.midi_sidechain_velocity = 0.0;
         self.midi_sidechain_env = 0.0;
+        context.set_latency_samples(0);
         self.is_ready
             .store(true, std::sync::atomic::Ordering::Release);
         true
