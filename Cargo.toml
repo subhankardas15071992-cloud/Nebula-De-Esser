@@ -59,3 +59,10 @@ baseview = { path = "vendor/baseview" }
 
 [patch."https://github.com/BillyDM/egui-baseview.git"]
 egui-baseview = { path = "vendor/egui-baseview" }
+
+# Vendored so the VST3 wrapper can handle hosts that stop calling process() while leaving the
+# plugin active (see vendor/nih-plug/PATCHES.md).
+[patch."https://github.com/robbert-vdh/nih-plug.git"]
+nih_plug = { path = "vendor/nih-plug" }
+nih_plug_egui = { path = "vendor/nih-plug/nih_plug_egui" }
+nih_plug_xtask = { path = "vendor/nih-plug/nih_plug_xtask" }
