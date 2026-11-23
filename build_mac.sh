@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Nebula De-Esser v3.3 - macOS per-architecture bundle build.
+# Nebula De-Esser v3.4 - macOS per-architecture bundle build.
 # Builds separate CLAP + VST3 bundles for Apple Silicon and Intel macOS.
 
 set -euo pipefail
 
 PLUGIN_NAME="nebula_desser"
 PLUGIN_DISPLAY="Nebula De-Esser"
-PLUGIN_VERSION="3.3.0"
-PLUGIN_VERSION_DISPLAY="3.3"
+PLUGIN_VERSION="3.4.0"
+PLUGIN_VERSION_DISPLAY="3.4"
 
 if [[ "$#" -gt 0 ]]; then
     TARGETS=("$@")

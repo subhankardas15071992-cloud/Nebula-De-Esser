@@ -15,7 +15,7 @@ In practical terms, Nebula De-Esser is a niche finishing tool for engineers who 
 
 **Important Announcement** - The AUv2 build is being discontinued because while it works on all DAWs it is unstable on Logic Pro, which is the main target for the AUv2 build. So, at this point there's no reason to keep the AUv2 build. Hence it's being discontinued.
 
-Version 3.3.0 keeps the transparent de-essing engine intact while changing release packaging: macOS now ships separate Apple Silicon and Intel builds instead of one universal binary, and Windows now ships both x86_64 and Windows 11 ARM64 VST3 builds.
+Version 3.4.0 keeps the transparent de-essing engine intact and focuses on editor reliability: the GUI now stays responsive in hosts that smart-disable silent plugins, and the macOS/Linux editor input path has been repaired. The separate Apple Silicon, Intel, and Windows ARM64 packaging from 3.3.0 is unchanged.
 
 ---
 
@@ -31,6 +31,16 @@ Nebula De-Esser is for users who want obsessive, transparent control rather than
 - archival or stereo-mix cleanup where the vocal cannot be separated cleanly from the instrumental
 
 It is deliberately more complex than a utility de-esser because the target is not just "less S." The target is controlled sibilance while preserving the impression of an open, expensive top end.
+
+---
+
+## ✨ **What's New in v3.4.0**
+
+### 🖱️ **Editor reliability and smart-disable compatibility**
+
+- **GUI stays responsive when hosts smart-disable silent plugins** - Hosts such as Lynx Share can stop calling a plugin's process callback while keeping it active. Nebula now detects that state and applies GUI parameter changes immediately, so controls no longer appear frozen. The fix is in the bundled nih-plug VST3 wrapper and applies to both the egui and Direct2D editors.
+- **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs.
+- **Packaging unchanged** - The separate Apple Silicon and Intel macOS builds and the Windows x86_64 and ARM64 VST3 builds remain as introduced in 3.3.0.
 
 ---
 
