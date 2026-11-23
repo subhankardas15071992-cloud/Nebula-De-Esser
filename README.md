@@ -448,7 +448,7 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in major DAWs supporting VST3 and CLAP on macOS, Windows, and Linux.**
+**Ready for professional use in major DAWs supporting VST3 and CLAP on macOS and Linux, plus VST3 on Windows.**
 
 ---
 
