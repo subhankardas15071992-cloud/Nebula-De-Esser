@@ -1,0 +1,22 @@
+name: Clap Wrapper Format and Code Checks
+on: [pull_request]
+jobs:
+  formatting-check:
+    name: Clang Format Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        path:
+          - 'src'
+          - 'include'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run clang-format style check
+        uses: jidicula/clang-format-action@v4.11.0
+        with:
+          clang-format-version: '21'
+          check-path: ${{ matrix.path }}
+          # The action's default regex only matches extensions starting with c/C
+          # or h/H, so Objective-C(++) went unchecked. This is that default plus
+          # mm and m.
+          include-regex: '^.*\.((((c|C)(c|pp|xx|\+\+)?$)|((h|H)h?(pp|xx|\+\+)?$))|(ino|pde|proto|cu|mm|m))$'

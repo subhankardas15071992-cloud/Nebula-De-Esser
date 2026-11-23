@@ -1,0 +1,163 @@
+#define NOMINMAX 1
+
+/*
+    the macos helper
+    
+    provides services for all plugin instances regarding macos
+     - global timer object
+     - dispatch to UI thread
+     - get the bundle name
+ 
+*/
+
+#include <Foundation/Foundation.h>
+#ifdef CLAP_WRAPPER_BUILD_FOR_VST3
+#include "public.sdk/source/main/moduleinit.h"
+#endif
+#include "osutil.h"
+#include <vector>
+#include <iostream>
+#include <chrono>
+#include <dlfcn.h>
+
+#include "detail/os/fs.h"
+
+namespace os
+{
+
+class MacOSHelper
+{
+ public:
+  void init();
+  void terminate();
+  void attach(IPlugObject *plugobject);
+  void detach(IPlugObject *plugobject);
+
+ private:
+  static void timerCallback(CFRunLoopTimerRef t, void *info);
+  void executeDefered();
+  CFRunLoopTimerRef _timer = nullptr;
+  std::vector<IPlugObject *> _plugs;
+} gMacOSHelper;
+
+// standard specific extensions
+// ----------------------------------------------------------
+#ifdef CLAP_WRAPPER_BUILD_FOR_VST3
+static Steinberg::ModuleInitializer createMessageWindow([] { gMacOSHelper.init(); });
+static Steinberg::ModuleTerminator dropMessageWindow([] { gMacOSHelper.terminate(); });
+#endif
+// ----------------------------------------------------------
+
+void MacOSHelper::init()
+{
+}
+
+void MacOSHelper::terminate()
+{
+}
+
+void MacOSHelper::executeDefered()
+{
+  for (auto p : _plugs)
+  {
+    if (p) p->onIdle();
+  }
+}
+
+void MacOSHelper::timerCallback(CFRunLoopTimerRef /*t*/, void *info)
+{
+  auto self = static_cast<MacOSHelper *>(info);
+  self->executeDefered();
+}
+
+static float kIntervall = 10.f;
+
+void MacOSHelper::attach(IPlugObject *plugobject)
+{
+  if (_plugs.empty())
+  {
+    CFRunLoopTimerContext context = {};
+    context.info = this;
+    _timer =
+        CFRunLoopTimerCreate(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + (kIntervall * 0.001f),
+                             kIntervall * 0.001f, 0, 0, timerCallback, &context);
+    if (_timer) CFRunLoopAddTimer(CFRunLoopGetMain(), _timer, kCFRunLoopCommonModes);
+  }
+  _plugs.push_back(plugobject);
+}
+
+void MacOSHelper::detach(IPlugObject *plugobject)
+{
+  _plugs.erase(std::remove(_plugs.begin(), _plugs.end(), plugobject), _plugs.end());
+  if (_plugs.empty())
+  {
+    if (_timer)
+    {
+      CFRunLoopTimerInvalidate(_timer);
+      CFRelease(_timer);
+    }
+    _timer = nullptr;
+  }
+}
+
+}  // namespace os
+
+namespace os
+{
+// [UI Thread]
+void attach(IPlugObject *plugobject)
+{
+  gMacOSHelper.attach(plugobject);
+}
+
+// [UI Thread]
+void detach(IPlugObject *plugobject)
+{
+  gMacOSHelper.detach(plugobject);
+}
+
+uint64_t getTickInMS()
+{
+  // Wall-clock milliseconds since some fixed point — the CLAP timer extension
+  // schedules in real time. Deliberately not clock(): that is process CPU time
+  // summed over all threads, so it crawls while the process is idle (timers
+  // never fire) and can outrun real time while the audio threads are busy.
+  return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count());
+}
+
+fs::path getPluginPath()
+{
+  Dl_info info;
+  if (dladdr((void *)getPluginPath, &info))
+  {
+    fs::path binaryPath = info.dli_fname;
+    return binaryPath.parent_path().parent_path().parent_path();
+  }
+
+  return {};
+}
+
+std::string getParentFolderName()
+{
+  return getPluginPath().parent_path().stem();
+}
+
+std::string getBinaryName()
+{
+  return getPluginPath().stem();
+}
+
+std::string getHostAppName()
+{
+  NSBundle *mainBundle = [NSBundle mainBundle];
+  // AUHostingService and our own appex are both XPC! bundles
+  if ([[mainBundle objectForInfoDictionaryKey:@"CFBundlePackageType"] isEqualToString:@"XPC!"])
+    return {};
+  NSString *name = [mainBundle objectForInfoDictionaryKey:@"CFBundleName"];
+  if (!name) name = [[NSProcessInfo processInfo] processName];
+  return name ? std::string([name UTF8String]) : std::string();
+}
+
+}  // namespace os

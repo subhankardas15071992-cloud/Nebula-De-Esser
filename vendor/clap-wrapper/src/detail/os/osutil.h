@@ -1,0 +1,98 @@
+#pragma once
+
+/*
+    a minimalistic OS layer
+*/
+
+#include <atomic>
+#include <functional>
+#include <string>
+
+#include "log.h"
+#include "fs.h"
+
+namespace os
+{
+class State
+{
+  // the State class ensures that a specific function pair (like init/terminate) is only called in pairs.
+  // the bool _state reflects if the _on lambda has already been called
+  // on destruction, it makes sure that the _off lambda is definitely called.
+  //
+  // the construct should only be applied to when no state machine can cover this properly
+  // or your own code depends on correct calling sequences of an external code base and should
+  // help to implement defensive programming.
+
+ public:
+  State(std::function<void()> on, std::function<void()> off) : _on(on), _off(off)
+  {
+  }
+  ~State()
+  {
+    off();
+  }
+  void on()
+  {
+    if (!_state)
+    {
+      _on();
+    }
+    _state = true;
+  }
+  void off()
+  {
+    if (_state)
+    {
+      _off();
+    }
+    _state = false;
+  }
+
+ private:
+  bool _state = false;
+  std::function<void()> _on, _off;
+};
+
+class IPlugObject
+{
+ public:
+  virtual void onIdle() = 0;
+
+  // Windows drives onIdle() from a WM_TIMER on a message window and macOS from
+  // a CFRunLoopTimer on the main run loop, both of which already belong to the
+  // host's main thread. Linux has no such thread to hang a timer on, so its
+  // helper runs one of its own and asks here whether an object would rather be
+  // left alone -- which it would, while a host run loop is driving it instead.
+  virtual bool hasOwnIdleSource() const
+  {
+    return false;
+  }
+
+  virtual ~IPlugObject()
+  {
+  }
+};
+void attach(IPlugObject *plugobject);
+void detach(IPlugObject *plugobject);
+// Tells the Linux helper that some object's answer to hasOwnIdleSource() has
+// changed, so that it can pause its thread or wake it up again. Implemented on
+// Linux only, and called only from LIN paths.
+void idleSourceChanged();
+uint64_t getTickInMS();
+
+// Used for clap_plugin_entry.init(). Path to DSO (Linux, Windows), or the bundle (macOS).
+fs::path getPluginPath();
+std::string getParentFolderName();
+std::string getBinaryName();
+
+#if MAC
+// empty when loaded into an xpc service or appex, where the real host is unknowable
+std::string getHostAppName();
+#endif
+
+#ifdef WIN32
+void init();
+void terminate();
+#endif
+
+}  // namespace os

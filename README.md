@@ -13,9 +13,9 @@ The plugin uses a hybrid adaptive spectral design. Conventional control stages s
 
 In practical terms, Nebula De-Esser is a niche finishing tool for engineers who want meticulous transparent de-essing, mastering-style Mid/Side control, and high-gloss vocal polish. If the desired sound is obvious clamp, lisp, saturation, or aggressive modern compression, this plugin can still be pushed, but that is not its main identity.
 
-**Important Announcement** - The AUv2 build is being discontinued because while it works on all DAWs it is unstable on Logic Pro, which is the main target for the AUv2 build. So, at this point there's no reason to keep the AUv2 build. Hence it's being discontinued.
+**Audio Unit support is back** - AUv2 and AUv3 are now built through [clap-wrapper](https://github.com/free-audio/clap-wrapper) instead of the old bundle that merely renamed the CLAP binary and declared a factory function it did not contain. The wrapper loads the same CLAP engine used by the CLAP and VST3 builds, so the Audio Unit formats now get a real adapter, correct parameter/state handling, and the same editor. AUv3 requires full Xcode to build; AUv2 only needs the Command Line Tools.
 
-Version 3.4.0 keeps the transparent de-essing engine intact and focuses on editor reliability: the GUI now stays responsive in hosts that smart-disable silent plugins, and the macOS/Linux editor input path has been repaired. The separate Apple Silicon, Intel, and Windows ARM64 packaging from 3.3.0 is unchanged.
+Version 3.4.0 keeps the transparent de-essing engine intact and focuses on editor reliability: the GUI now stays responsive in hosts that smart-disable silent plugins, the macOS/Linux editor input path has been repaired, and macOS AUv2/AUv3 builds are available again through clap-wrapper. The separate Apple Silicon, Intel, and Windows ARM64 packaging from 3.3.0 is unchanged.
 
 ---
 
@@ -40,6 +40,7 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 - **GUI stays responsive when hosts smart-disable silent plugins** - Hosts such as Lynx Share can stop calling a plugin's process callback while keeping it active. Nebula now detects that state and applies GUI parameter changes immediately, so controls no longer appear frozen. The fix is in the bundled nih-plug VST3 wrapper and applies to both the egui and Direct2D editors.
 - **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs.
+- **AUv2 and AUv3 return through clap-wrapper** - The macOS build now produces a real `Nebula De-Esser.component` and an AUv3 host app containing `Nebula De-Esser.appex`. The wrapper embeds the CLAP inside each Audio Unit bundle, so the AU formats are self-contained and use the same DSP and editor. AUv2 is validated with Apple's `auval`; AUv3 is built on CI runners that have full Xcode.
 - **Packaging unchanged** - The separate Apple Silicon and Intel macOS builds and the Windows x86_64 and ARM64 VST3 builds remain as introduced in 3.3.0.
 
 ---
@@ -375,10 +376,67 @@ GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo run --release --package xtask -- bundle nebula_desser --release --target aarch64-apple-darwin
 cargo run --release --package xtask -- bundle nebula_desser --release --target x86_64-apple-darwin
-# Output: target/aarch64-apple-darwin/bundled/Nebula De-Esser.clap
-#         target/aarch64-apple-darwin/bundled/Nebula De-Esser.vst3
-#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.clap
-#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.vst3
+# Output: target/bundled/Nebula De-Esser.clap
+#         target/bundled/Nebula De-Esser.vst3
+```
+
+`nih_plug_xtask` always writes to `target/bundled/`, even for cross builds, so a
+second architecture overwrites the first. Use `./build_mac.sh` (below) to keep
+one `target/<arch>/bundled/` directory per architecture; it also builds the
+Audio Units.
+
+#### **macOS Audio Units (AUv2 and AUv3)**
+
+The AU builds use the vendored `clap-wrapper` to project the CLAP into Apple's
+Audio Unit formats. `build_mac.sh` automates the whole sequence:
+
+```bash
+# Builds CLAP + VST3 + AUv2 for both architectures, and AUv3 when full Xcode is installed.
+./build_mac.sh
+
+# Restrict to one architecture:
+./build_mac.sh aarch64-apple-darwin
+
+# CLAP + VST3 only:
+NEBULA_BUILD_AU=0 ./build_mac.sh
+```
+
+AUv2 needs CMake and the Command Line Tools. AUv3 additionally needs a full
+Xcode installation because the `.appex` has to be linked as an app-extension
+product by the Xcode generator. With only the Command Line Tools, AUv3 is
+skipped and AUv2 is still built. Set `NEBULA_BUILD_AUV3=1` to make a missing
+Xcode a hard error, or `NEBULA_BUILD_AUV3=0` to skip AUv3 deliberately.
+
+The AU targets can also be driven directly:
+
+```bash
+cmake -S cmake/macos-au -B target/x86_64-apple-darwin/au-build/auv2 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+  -DNEBULA_CLAP_BUNDLE="$PWD/target/x86_64-apple-darwin/bundled/Nebula De-Esser.clap"
+cmake --build target/x86_64-apple-darwin/au-build/auv2 --target nebula_auv2
+
+# AUv3 (full Xcode only):
+cmake -G Xcode -S cmake/macos-au -B target/x86_64-apple-darwin/au-build/auv3 \
+  -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+  -DNEBULA_BUILD_AUV3=ON \
+  -DNEBULA_CLAP_BUNDLE="$PWD/target/x86_64-apple-darwin/bundled/Nebula De-Esser.clap"
+cmake --build target/x86_64-apple-darwin/au-build/auv3 --config Release --target nebula_auv3_host
+```
+
+Outputs:
+
+```text
+target/<arch>/bundled/Nebula De-Esser.component     # AUv2
+target/<arch>/bundled/Nebula De-Esser AUv3.app      # AUv3 host app (contains the .appex)
+```
+
+Validate the AUv2 component on macOS after installing it:
+
+```bash
+cp -R "target/<arch>/bundled/Nebula De-Esser.component" ~/Library/Audio/Plug-Ins/Components/
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+auval -v aufx NDeS NbAu
 ```
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -390,17 +448,28 @@ https://subhankar42.gumroad.com/l/adounr
 Note:
 For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
 
-The macOS zips contain CLAP and VST3 plugins, split by Apple Silicon and Intel.
-The Linux zip contains CLAP and VST3 plugins. The Windows zips contain VST3
-plugins, split by x86_64 and ARM64.
+The macOS zips contain CLAP, VST3, AUv2, and AUv3 builds, split by Apple
+Silicon and Intel. The Linux zip contains CLAP and VST3 plugins. The Windows
+zips contain VST3 plugins, split by x86_64 and ARM64.
 
 Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
-  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]
+  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap, .vst3, or .component file]
 
-After that you can copy it to either /Library/Audio/Plug-Ins/CLAP or /Library/Audio/Plug-Ins/VST3 (if you want to install it for all users) or ~/Library/Audio/Plug-Ins/CLAP/ or ~/Library/Audio/Plug-Ins/VST3/ (if you want to install it for only the current user)
+After that you can copy the plugin to the matching folder:
+
+| Format | User install | All users |
+|--------|--------------|-----------|
+| CLAP | `~/Library/Audio/Plug-Ins/CLAP/` | `/Library/Audio/Plug-Ins/CLAP/` |
+| VST3 | `~/Library/Audio/Plug-Ins/VST3/` | `/Library/Audio/Plug-Ins/VST3/` |
+| AUv2 | `~/Library/Audio/Plug-Ins/Components/` | `/Library/Audio/Plug-Ins/Components/` |
+| AUv3 | `cp -R "Nebula De-Esser AUv3.app" /Applications/` then launch it once | same |
+
+AUv3 is shipped inside its host app. macOS registers the `.appex` when the app
+is first launched; after that the Audio Unit appears in AUv3 hosts. Moving or
+deleting the app unregisters it.
 
 ---
 
@@ -428,8 +497,17 @@ Nebula-De-Esser/
 │   └── src/main.rs
 ├── .cargo/
 │   └── config.toml
+├── cmake/
+│   └── macos-au/
+│       └── CMakeLists.txt   # AUv2/AUv3 targets through clap-wrapper
+├── vendor/
+│   ├── baseview/           # patched editor backend
+│   ├── nih-plug/           # patched VST3 wrapper
+│   ├── clap-wrapper/       # CLAP -> AUv2/AUv3 projection
+│   ├── clap-sdk/           # CLAP headers used by clap-wrapper
+│   └── AudioUnitSDK/       # Apple's AUv2 base classes
 ├── .github/
-│   └── workflows/build.yml
+│   └── workflows/new_build.yml
 ├── bundler.toml
 └── Cargo.toml
 ```
@@ -442,7 +520,7 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in major DAWs supporting VST3 on Windows, macOS and Linux.**
+**Ready for professional use in major DAWs supporting VST3, CLAP, AUv2, and AUv3 on macOS, plus VST3/CLAP on Windows and Linux.**
 
 ---
 

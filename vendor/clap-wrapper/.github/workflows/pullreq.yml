@@ -1,0 +1,301 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - next
+
+jobs:
+  build_feature:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-2022
+            name: Windows External SDK (VST3.7.7)
+            vst_ver: v3.7.7_build_19
+          - os: macos-latest
+            name: Mac External SDK  (VST3.7.7)
+            vst_ver: v3.7.7_build_19
+          - os: ubuntu-latest
+            name: Linux External SDK  (VST3.7.7)
+            vst_ver: v3.7.7_build_19
+
+          - os: windows-2022
+            name: Windows External SDK (VST3.8.0)
+            vst_ver: v3.8.0_build_66
+          - os: macos-latest
+            name: Mac External SDK  (VST3.8.0)
+            vst_ver: v3.8.0_build_66
+          - os: ubuntu-latest
+            name: Linux External SDK  (VST3.8.0)
+            vst_ver: v3.8.0_build_66
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Get Dependencies
+        run: |
+          mkdir deps
+          cd deps
+          git clone https://github.com/free-audio/clap
+          git clone https://github.com/audiosdk/aax
+          git clone https://github.com/steinbergmedia/vst3sdk
+          cd vst3sdk
+          # temporary workaround, switch to vst3 sdk 3.7.7
+          git switch --detach ${{ matrix.vst_ver }}
+          git submodule update --init --recursive
+          cd ../..
+
+      - name: Build project
+        run: |
+          cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCLAP_SDK_ROOT=deps/clap -DVST3_SDK_ROOT=deps/vst3sdk -DAAX_SDK_ROOT=deps/aax -DCLAP_WRAPPER_BUILD_AAX=TRUE -DCLAP_WRAPPER_OUTPUT_NAME=testplug
+          cmake --build ./build --config Debug
+
+      - name: Show Build Results
+        shell: bash
+        run: |
+          find build -name testplug.vst3 -print
+          find build -name testplug.component -print
+
+
+  build_feature_cpm_download:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-2022
+            cmakeargs: -A x64
+            install_ninja: false
+            run_aptget: false
+            name: Windows 64bit MSVC
+
+          - os: windows-2022
+            cmakeargs: -A x64 -T ClangCL  -G"Visual Studio 17 2022"
+            install_ninja: false
+            run_aptget: false
+            name: Windows 64bit VS ClangCL
+
+          - os: windows-2022
+            cmakeargs: -A arm64ec
+            install_ninja: false
+            run_aptget: false
+            name: Windows arm64ec MSVC
+
+          - os: windows-2022
+            cmakeargs: -A arm64
+            install_ninja: false
+            run_aptget: false
+            name: Windows arm64 MSVC
+
+          - os: windows-2022
+            cmakeargs: -A x64 -DCLAP_WRAPPER_CXX_STANDARD=20
+            install_ninja: false
+            run_aptget: false
+            name: Windows 64bit C++20 MSVC
+
+          - os: windows-2022
+            cmakeargs: -GNinja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc
+            install_ninja: true
+            run_aptget: false
+            name: Windows gcc/minGW
+
+          #- os: windows-2022
+          #  cmakeargs: -GNinja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang
+          #  install_ninja: true
+          #  run_aptget: false
+          #  name: Windows clang
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_C_COMPILER=gcc-12
+            install_ninja: false
+            run_aptget: true
+            name: Linux gcc12
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_C_COMPILER=gcc-13
+            install_ninja: false
+            run_aptget: true
+            name: Linux gcc13
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCMAKE_CXX_COMPILER=g++-14 -DCMAKE_C_COMPILER=gcc-14
+            install_ninja: false
+            run_aptget: true
+            name: Linux ub-24 gcc14
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCLAP_WRAPPER_CXX_STANDARD=20 -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_C_COMPILER=gcc-12
+            install_ninja: false
+            run_aptget: true
+            name: Linux gcc12 C++20
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCLAP_WRAPPER_CXX_STANDARD=23 -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_C_COMPILER=gcc-12
+            install_ninja: false
+            run_aptget: true
+            name: Linux gcc12 C++23
+
+          - os: macos-latest
+            cmakeargs: -GNinja
+            install_ninja: true
+            run_aptget: false
+            name: MacOS Ninja
+
+          - os: macos-latest
+            cmakeargs: -G"Xcode"
+            install_ninja: false
+            run_aptget: false
+            name: MacOS Xcode
+
+          - os: macos-latest
+            cmakeargs: -G"Ninja Multi-Config"  -DCLAP_WRAPPER_CXX_STANDARD=20
+            install_ninja: true
+            run_aptget: false
+            name: MacOS Ninja Multi C++20
+
+          - os: macos-latest
+            cmakeargs: -G"Unix Makefiles"
+            install_ninja: false
+            run_aptget: false
+            name: MacOS Unix Makefiles
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apt Update
+        if: ${{ matrix.run_aptget }}
+        run: sudo apt-get update
+
+      - name: Get Deps
+        if: ${{ matrix.run_aptget }}
+        run: sudo apt-get install -y alsa alsa-tools libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libgtk-3-dev
+
+      #- name: Install Ninja
+      #  if: ${{ matrix.install_ninja }}
+      #  uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Build project
+        run: |
+          cmake -S . -B ./build ${{ matrix.cmakeargs }} -DCMAKE_BUILD_TYPE=Debug -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=TRUE -DCLAP_WRAPPER_BUILD_AUV2=TRUE  -DCLAP_WRAPPER_BUILD_STANDALONE=TRUE -DCLAP_WRAPPER_OUTPUT_NAME=downloadplug
+          cmake --build ./build --config Debug
+
+      - name: Show Build Results
+        shell: bash
+        run: |
+          find build -name downloadplug.vst3 -print
+          find build -name downloadplug.component -print
+
+
+  build_feature_clapfirst-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-2022
+            cmakeargs: -A x64
+            install_ninja: false
+            run_aptget: false
+            run_validator: false
+            vst3_validator: build/validator-build/bin/validator
+            vst3_path: ./build/clap-first-distortion_assets/VST3/ClapFirst Bad Distortion.vst3
+            name: ClapFirst Windows 64bit Single File MSVC
+
+
+          - os: windows-2022
+            cmakeargs: -A x64 -DEXAMPLE_USE_WINDOWS_FOLDER=TRUE
+            install_ninja: false
+            run_aptget: false
+            run_validator: true
+            vst3_validator: build/validator-build/bin/validator
+            vst3_path: ./build/clap-first-distortion_assets/VST3/ClapFirst Bad Distortion.vst3
+            name: ClapFirst Windows 64bit Folder MSVC
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_C_COMPILER=gcc-12
+            install_ninja: false
+            run_aptget: true
+            run_validator: true
+            vst3_validator: build/validator-build/bin/Debug/validator
+            vst3_path: ./build/clap-first-distortion_assets/ClapFirst Bad Distortion.vst3
+            name: ClapFirst Linux gcc12
+
+          - os: ubuntu-24.04
+            cmakeargs: -DCMAKE_CXX_COMPILER=g++-14 -DCMAKE_C_COMPILER=gcc-14
+            install_ninja: false
+            run_aptget: true
+            run_validator: true
+            vst3_validator: build/validator-build/bin/Debug/validator
+            vst3_path: ./build/clap-first-distortion_assets/ClapFirst Bad Distortion.vst3
+            name: ClapFirst Linux ub24 gcc14
+
+          - os: macos-latest
+            cmakeargs: -G"Xcode"
+            install_ninja: true
+            run_aptget: false
+            run_validator: true
+            vst3_validator: build/validator-build/bin/Debug/validator
+            vst3_path: ./build/clap-first-distortion_assets/Debug/ClapFirst Bad Distortion.vst3
+            auv2_path: ./build/clap-first-distortion_assets/Debug/ClapFirst Bad Distortion.component
+            name: ClapFirst MacOS Xcode
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apt Update
+        if: ${{ matrix.run_aptget }}
+        run: sudo apt-get update
+
+      - name: Get Deps
+        if: ${{ matrix.run_aptget }}
+        run: sudo apt-get install -y alsa alsa-tools libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libgtk-3-dev
+
+      - name: Install Ninja
+        if: ${{ matrix.install_ninja }}
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Build project
+        run: |
+          cmake -S . -B ./build ${{ matrix.cmakeargs }} -DCMAKE_BUILD_TYPE=Debug -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=TRUE -DCLAP_WRAPPER_BUILD_TESTS=TRUE
+          cmake --build ./build --config Debug --target clap-first-distortion_all
+
+      - name: Show Build Results
+        shell: bash
+        run: |
+          find build -name "ClapFirst*" -print
+
+      - name: Build VST3 validator
+        if: ${{ matrix.run_validator}}
+        shell: bash
+        run: |
+          cmake --build ./build --config Debug --target vst3_validator
+
+      - name: Run VST3 validator
+        shell: bash
+        if: ${{ matrix.run_validator}}
+        run: |
+          "${{ matrix.vst3_validator }}" "${{ matrix.vst3_path }}"
+
+      - name: Run auval
+        shell: bash
+        if: ${{ matrix.auv2_path }}
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components/
+          cp -R "${{ matrix.auv2_path }}" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -strict -v aufx BdDt FrAD
+          
+

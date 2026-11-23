@@ -1,0 +1,82 @@
+# This is a test of our clap-first makefiles we use in CI, and as such serves as
+# an example of doign this without helpers, with the absolute smalles cmake, and
+# so forth. A more fulsome example, using C++, setting up compiler options for
+# wider deployment, and so forth can be found at
+#
+# https://github.com/baconpaul/six-sines
+
+project(clap-first-distortion VERSION 0.9.0)
+
+set(PRODUCT_NAME "ClapFirst Bad Distortion")
+
+option(EXAMPLE_USE_WINDOWS_FOLDER "Make windows folder for this example" FALSE)
+
+# Step one is to create a static 'impl' library which contains a static
+# implementation of clap_init, clap_deinit and clap_get_factor. Here those
+# are all in one cpp file, but a common idiom is to have an -entry-impl file
+# separate from the rest of your clap, especially in multi-plugin claps.
+add_library(${PROJECT_NAME}-impl STATIC distortion_clap.cpp)
+target_link_libraries(${PROJECT_NAME}-impl PUBLIC clap clap-wrapper-extensions)
+
+# AUv3 appexes can only be produced by the Xcode generator
+set(EXAMPLE_PLUGIN_FORMATS CLAP VST3 AUV2 WCLAP)
+if (APPLE AND CMAKE_GENERATOR STREQUAL "Xcode")
+    list(APPEND EXAMPLE_PLUGIN_FORMATS AUV3)
+endif()
+
+# Then we use make_clapfirst_plugin, provided by the wrappers, to create the
+# project out of the impl and the cpp file which exports the entry
+make_clapfirst_plugins(
+        TARGET_NAME ${PROJECT_NAME}
+        IMPL_TARGET ${PROJECT_NAME}-impl
+
+        OUTPUT_NAME "${PRODUCT_NAME}"
+
+        ENTRY_SOURCE "distortion_clap_entry.cpp"
+
+        BUNDLE_IDENTIFIER "org.free-audio.clap-first-bad-distortion"
+        BUNDLE_VERSION ${PROJECT_VERSION}
+
+        COPY_AFTER_BUILD FALSE
+
+        # vst3 validator on windows needs this to be true to pass
+        WINDOWS_FOLDER_VST3 ${EXAMPLE_USE_WINDOWS_FOLDER}
+
+        PLUGIN_FORMATS ${EXAMPLE_PLUGIN_FORMATS}
+
+        ASSET_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${PROJECT_NAME}_assets
+
+        # You can set up the AUv2 for a single plugin here, or you can
+        # set it up with the auv2 extension in your clap
+        AUV2_MANUFACTURER_NAME "Free Audio"
+        AUV2_MANUFACTURER_CODE "FrAD"
+        AUV2_SUBTYPE_CODE "BdDt"
+        AUV2_INSTRUMENT_TYPE "aufx"
+
+        # You can add a target-per-standalone you want. Syntax here is
+        #   target-postfix output-name clap-id
+        # This allows you to make multiple standalones from a multi-plugin clap
+        # In this case, the standalone has no UI and is an audio to audio effect
+        # so it isn't very useful
+        # STANDALONE_CONFIGURATIONS
+        # standalone "${PRODUCT_NAME}" "org.free-audio.clap-first-bad-distortion"
+        #
+        # A link in one of these schemes, clicked in a browser, then opens the
+        # standalone and hands the plugin the url (open_url, standalone features),
+        # here clap-first-distortion://anything. See the README.
+        # STANDALONE_URL_SCHEMES clap-first-distortion
+        #
+        # What the standalone's window shows while the plugin and its gui are being
+        # made: the gui's size and background, and an image in the middle, which the
+        # gui's view then takes the place of. The plugin's entry can give these too,
+        # per plugin (clap_wrapper_plugin_factory_standalone_window). See the README.
+        # STANDALONE_WINDOW_SIZE 800x600
+        # STANDALONE_BACKGROUND_COLOR "#1e1e1e"
+        # STANDALONE_SPLASH_IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/logo@2x.png"
+        # STANDALONE_SPLASH_IMAGE_SCALE 2
+        #
+        # The category macOS files the standalone and the AUv3's host app under. Music
+        # if not given. See the README.
+        # STANDALONE_MACOS_APP_CATEGORY public.app-category.music
+)
+
