@@ -88,6 +88,14 @@ pub(crate) struct WrapperInner<P: Vst3Plugin> {
     /// A data structure that helps manage and create buffers for all of the plugin's inputs and
     /// outputs based on channel pointers provided by the host.
     pub buffer_manager: AtomicRefCell<BufferManager>,
+    /// Whether the buffer manager needs to be rebuilt at the start of the next process call.
+    ///
+    /// The buffer manager is mutably borrowed for the duration of a process call, but the host may
+    /// call `IAudioProcessor::setActive()` from another thread while that process call is still
+    /// running. Ardour does this when a plugin reports a latency change. Since the borrow cannot
+    /// be taken from that other thread without panicking, the rebuild is deferred to the next
+    /// process call on the audio thread instead.
+    pub pending_buffer_rebuild: AtomicBool,
     /// The incoming events for the plugin, if `P::ACCEPTS_MIDI` is set. If
     /// `P::SAMPLE_ACCURATE_AUTOMATION`, this is also read in lockstep with the parameter change
     /// block splitting.
@@ -319,6 +327,7 @@ impl<P: Vst3Plugin> WrapperInner<P> {
                 0,
                 AudioIOLayout::default(),
             )),
+            pending_buffer_rebuild: AtomicBool::new(false),
             input_events: AtomicRefCell::new(VecDeque::with_capacity(1024)),
             output_events: AtomicRefCell::new(VecDeque::with_capacity(1024)),
             note_expression_controller: AtomicRefCell::new(NoteExpressionController::default()),

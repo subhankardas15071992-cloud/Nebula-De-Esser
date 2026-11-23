@@ -392,10 +392,29 @@ impl<P: Vst3Plugin> IComponent for Wrapper<P> {
                     // This preallocates enough space so we can transform all of the host's raw
                     // channel pointers into a set of `Buffer` objects for the plugin's main and
                     // auxiliary IO
-                    *self.inner.buffer_manager.borrow_mut() = BufferManager::for_audio_io_layout(
-                        buffer_config.max_buffer_size as usize,
-                        audio_io_layout,
-                    );
+                    //
+                    // NOTE: Some hosts, most notably Ardour, call this function from another
+                    //       thread while the audio thread is in the middle of a process call. The
+                    //       buffer manager is mutably borrowed for the duration of that call, so
+                    //       instead of panicking here the rebuild is deferred to the next process
+                    //       call on the audio thread.
+                    match self.inner.buffer_manager.try_borrow_mut() {
+                        Ok(mut buffer_manager) => {
+                            *buffer_manager = BufferManager::for_audio_io_layout(
+                                buffer_config.max_buffer_size as usize,
+                                audio_io_layout,
+                            );
+                        }
+                        Err(_) => {
+                            nih_trace!(
+                                "The host tried to reinitialize the plugin during a process call. \
+                                 Deferring the buffer manager rebuild to the next process call."
+                            );
+                            self.inner
+                                .pending_buffer_rebuild
+                                .store(true, Ordering::SeqCst);
+                        }
+                    }
 
                     kResultOk
                 } else {
@@ -1179,6 +1198,19 @@ impl<P: Vst3Plugin> IAudioProcessor for Wrapper<P> {
                     ProcessEvent::NoteEvent(event) => event.timing(),
                 })
             });
+
+            // If the host re-initialized the plugin while a process call was still running (see
+            // `IComponent::set_active()`), then the buffer manager can only be rebuilt here on the
+            // audio thread now that the old borrow has been released.
+            if self.inner.pending_buffer_rebuild.swap(false, Ordering::SeqCst) {
+                let audio_io_layout = self.inner.current_audio_io_layout.load();
+                if let Some(buffer_config) = self.inner.current_buffer_config.load() {
+                    *self.inner.buffer_manager.borrow_mut() = BufferManager::for_audio_io_layout(
+                        buffer_config.max_buffer_size as usize,
+                        audio_io_layout,
+                    );
+                }
+            }
 
             let mut block_start = 0usize;
             let mut block_end;

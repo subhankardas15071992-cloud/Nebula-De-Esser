@@ -30,5 +30,31 @@ Changed files:
 - `src/wrapper/vst3/wrapper.rs`: updates the timestamp from `process()` and
   uses the helper in `set_param_normalized()`.
 
+## VST3/CLAP activation while the audio thread is processing
+
+Some hosts call `IComponent::setActive()` (VST3) or `clap_plugin::activate()`
+(CLAP) from a non-audio thread while the audio thread is still inside a
+`process()` call for the same plugin instance. Ardour does this on the GUI
+thread when a plugin reports a latency change (`restartComponent` with
+`kLatencyChanged`), which happens whenever Nebula's lookahead amount changes.
+
+The buffer manager is mutably borrowed for the duration of a process call, so
+the unconditional `borrow_mut()` in the activate path hit `atomic_refcell`'s
+"already mutably borrowed" panic. Because the panic crosses the host's C ABI
+callback it could not unwind, and the host aborted.
+
+The activate paths now use `try_borrow_mut()`. If the audio thread still holds
+the borrow, the rebuild is deferred: a `pending_buffer_rebuild` flag is set and
+the next `process()` call rebuilds the buffer manager on the audio thread
+before processing audio. The activation itself still succeeds.
+
+Changed files:
+
+- `src/wrapper/vst3/inner.rs`: adds `pending_buffer_rebuild`.
+- `src/wrapper/vst3/wrapper.rs`: defers the rebuild in `set_active()` and
+  performs it at the start of `process()`.
+- `src/wrapper/clap/wrapper.rs`: same change for `clap_plugin::activate()` and
+  `clap_plugin::process()`.
+
 The copy is otherwise kept in sync with the upstream revision above. The
 workspace manifest was trimmed to the crates Nebula De-Esser uses.

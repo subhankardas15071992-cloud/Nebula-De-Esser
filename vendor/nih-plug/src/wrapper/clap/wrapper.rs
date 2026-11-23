@@ -151,6 +151,13 @@ pub struct Wrapper<P: ClapPlugin> {
     /// A data structure that helps manage and create buffers for all of the plugin's inputs and
     /// outputs based on channel pointers provided by the host.
     buffer_manager: AtomicRefCell<BufferManager>,
+    /// Whether the buffer manager needs to be rebuilt at the start of the next process call.
+    ///
+    /// The buffer manager is mutably borrowed for the duration of a process call, but the host may
+    /// call `clap_plugin::activate()` from another thread while that process call is still
+    /// running. Since the borrow cannot be taken from that other thread without panicking, the
+    /// rebuild is deferred to the next process call on the audio thread instead.
+    pending_buffer_rebuild: AtomicBool,
     /// The plugin is able to restore state through a method on the `GuiContext`. To avoid changing
     /// parameters mid-processing and running into garbled data if the host also tries to load state
     /// at the same time the restoring happens at the end of each processing call. If this zero
@@ -559,6 +566,7 @@ impl<P: ClapPlugin> Wrapper<P> {
                 0,
                 AudioIOLayout::default(),
             )),
+            pending_buffer_rebuild: AtomicBool::new(false),
             updated_state_sender,
             updated_state_receiver,
 
@@ -1898,8 +1906,26 @@ impl<P: ClapPlugin> Wrapper<P> {
 
             // This preallocates enough space so we can transform all of the host's raw channel
             // pointers into a set of `Buffer` objects for the plugin's main and auxiliary IO
-            *wrapper.buffer_manager.borrow_mut() =
-                BufferManager::for_audio_io_layout(max_frames_count as usize, audio_io_layout);
+            //
+            // NOTE: The host may call this function from another thread while the audio thread is
+            //       in the middle of a process call. The buffer manager is mutably borrowed for
+            //       the duration of that call, so instead of panicking here the rebuild is
+            //       deferred to the next process call on the audio thread.
+            match wrapper.buffer_manager.try_borrow_mut() {
+                Ok(mut buffer_manager) => {
+                    *buffer_manager =
+                        BufferManager::for_audio_io_layout(max_frames_count as usize, audio_io_layout);
+                }
+                Err(_) => {
+                    nih_trace!(
+                        "The host tried to reinitialize the plugin during a process call. \
+                         Deferring the buffer manager rebuild to the next process call."
+                    );
+                    wrapper
+                        .pending_buffer_rebuild
+                        .store(true, Ordering::SeqCst);
+                }
+            }
 
             // Also store this for later, so we can reinitialize the plugin after restoring state
             wrapper.current_buffer_config.store(Some(buffer_config));
@@ -1979,6 +2005,19 @@ impl<P: ClapPlugin> Wrapper<P> {
             // The host may send new transport information as an event. In that case we'll also
             // split the buffer.
             let mut transport_info = process.transport;
+
+            // If the host re-initialized the plugin while a process call was still running (see
+            // `clap_plugin::activate()`), then the buffer manager can only be rebuilt here on the
+            // audio thread now that the old borrow has been released.
+            if wrapper.pending_buffer_rebuild.swap(false, Ordering::SeqCst) {
+                let audio_io_layout = wrapper.current_audio_io_layout.load();
+                if let Some(buffer_config) = wrapper.current_buffer_config.load() {
+                    *wrapper.buffer_manager.borrow_mut() = BufferManager::for_audio_io_layout(
+                        buffer_config.max_buffer_size as usize,
+                        audio_io_layout,
+                    );
+                }
+            }
 
             let result = loop {
                 if !process.in_events.is_null() {
