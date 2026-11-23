@@ -40,7 +40,7 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 - **GUI stays responsive when hosts smart-disable silent plugins** - Hosts such as Lynx Share can stop calling a plugin's process callback while keeping it active. Nebula now detects that state and applies GUI parameter changes immediately, so controls no longer appear frozen. The fix is in the bundled nih-plug VST3 wrapper and applies to both the egui and Direct2D editors.
 - **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs.
-- **AUv2 and AUv3 return through clap-wrapper** - The macOS build now produces a real `Nebula De-Esser.component` and an AUv3 host app containing `Nebula De-Esser.appex`. The wrapper embeds the CLAP inside each Audio Unit bundle, so the AU formats are self-contained and use the same DSP and editor. AUv2 is validated with Apple's `auval`; AUv3 is built on CI runners that have full Xcode.
+- **AUv2 returns through clap-wrapper and AUv3 joins in too** - The macOS build now produces a real `Nebula De-Esser.component` and an AUv3 host app containing `Nebula De-Esser.appex`. The wrapper embeds the CLAP inside each Audio Unit bundle, so the AU formats are self-contained and use the same DSP and editor. AUv2 is validated with Apple's `auval`; AUv3 is built on CI runners that have full Xcode.
 - **Packaging unchanged** - The separate Apple Silicon and Intel macOS builds and the Windows x86_64 and ARM64 VST3 builds remain as introduced in 3.3.0.
 
 ---
