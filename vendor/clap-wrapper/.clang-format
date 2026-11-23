@@ -1,0 +1,37 @@
+﻿---
+UseTab: Never
+---
+Language: Cpp
+ConstructorInitializerIndentWidth: 2 
+SpaceBeforeParens: ControlStatements
+BasedOnStyle: Google
+IndentWidth: 2
+AlignAfterOpenBracket: Align
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+BreakConstructorInitializers: BeforeComma
+BreakBeforeBraces: Allman
+ColumnLimit: 105 
+SortIncludes: false
+NamespaceIndentation: None
+ReflowComments: false
+AllowShortFunctionsOnASingleLine: None
+DerivePointerAlignment: false
+PointerAlignment: Right
+---
+Language: ObjC
+BasedOnStyle: Google
+ConstructorInitializerIndentWidth: 2 
+SpaceBeforeParens: ControlStatements
+IndentWidth: 2
+AlignAfterOpenBracket: Align
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+BreakConstructorInitializers: BeforeComma
+BreakBeforeBraces: Allman
+ColumnLimit: 105
+SortIncludes: false
+NamespaceIndentation: None
+ReflowComments: false
+AllowShortFunctionsOnASingleLine: None
+DerivePointerAlignment: false
+PointerAlignment: Right
+...

@@ -1,0 +1,612 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <functional>
+#include <sstream>
+
+#include "detail/clap/fsutil.h"
+#include "detail/os/fs.h"
+#include "detail/ara/araaudiounit.h"
+
+struct auInfo
+{
+  std::string name, vers, type, subt, manu, manunm, clapid, desc, clapname, bundlevers;
+  bool explicitMode{false};
+  std::vector<std::string> tags;
+
+  // Which CLAP plugin inside the bundle this is. Not the position in the
+  // AudioComponents array and not the entry point's number: one plugin may be
+  // registered under several identities, and the array then has more entries
+  // than the CLAP has plugins. It is what WrapAsAUV2 is handed to pick a
+  // plugin, so getting it from the array position silently instantiates the
+  // wrong one in a multi-plugin bundle.
+  int pluginIndex{0};
+
+  // An entry kept so that sessions naming an identity this plugin used to have
+  // still resolve. Identical to the primary entry but for the identity triple.
+  // \see CLAP_PLUGIN_FACTORY_INFO_AUV2_LEGACY
+  bool legacy{false};
+
+  const std::string factoryBase{"wrapAsAUV2_inst"};
+
+  // One entry point per plugin, named for the plugin rather than for where its
+  // entry happens to sit in the array. Every identity of a plugin shares it.
+  std::string factoryName() const
+  {
+    return factoryBase + std::to_string(pluginIndex) + "Factory";
+  }
+
+  uint32_t bundleversToVersion() const
+  {
+    uint16_t rev[3]{0, 0, 0};
+    auto sum = [&]()
+    {
+      std::cout << "    + Calculating version from bundle version " << rev[0] << " " << rev[1] << " "
+                << rev[2] << std::endl;
+      auto res = std::max((rev[0] << 16) + (rev[1] << 8) + rev[2], 1);
+      return res;
+    };
+    auto uv = bundlevers;
+    std::cout << "    + Using bundle version " << bundlevers << std::endl;
+
+    for (int i = 0; i < 3; ++i)
+    {
+      if (uv.empty())
+      {
+        return sum();
+      }
+      auto p = uv.find('.');
+
+      auto sub = uv.substr(0, p);
+      rev[i] = std::atoi(sub.c_str());
+      uv = uv.substr(p + 1);
+    }
+    return sum();
+  }
+
+  void writePListFragment(std::ostream &of) const
+  {
+    if (!clapid.empty())
+    {
+      of << "      <!-- entry for id '" << clapid << "' / plugin index " << pluginIndex << " -->\n";
+    }
+    else
+    {
+      of << "      <!-- entry for plugin index " << pluginIndex << ", clap id unknown -->\n";
+    }
+    of << "      <dict>\n"
+       << "        <key>name</key>\n"
+       << "        <string>" << manunm << ": " << name << "</string>\n"
+       << "        <key>description</key>\n"
+       << "        <string>" << desc << "</string>\n"
+       << "        <key>factoryFunction</key>\n"
+       << "        <string>" << factoryName() << "</string>\n"
+       << "        <key>manufacturer</key>\n"
+       << "        <string>" << manu << "</string>\n"
+       << "        <key>subtype</key>\n"
+       << "        <string>" << subt << "</string>\n"
+       << "        <key>type</key>\n"
+       << "        <string>" << type << "</string>\n"
+       << "        <key>version</key>\n"
+       << "        <integer>" << bundleversToVersion() << "</integer>\n"
+       << "        <key>sandboxSafe</key>\n"
+       << "        <true/>\n"
+       << "        <key>resourceUsage</key>\n"
+       << "        <dict>\n"
+       << "           <key>network.client</key>\n"
+       << "           <true/>\n"
+       << "           <key>temporary-exception.files.all.read-write</key>\n"
+       << "           <true/>\n"
+       << "        </dict>\n";
+
+    // No kAudioComponentFlag_Unsearchable. It reads like the right flag for a
+    // retired identity and it is not: Logic restores a session against the
+    // registry its own scan builds, that scan enumerates, and enumeration is
+    // exactly what the flag excludes -- so a hidden entry is findable through
+    // AudioComponentFindNext and unreachable from the sessions it exists for.
+    // Nothing is lost by listing it: the component type is what a host filters
+    // a slot by, so an aufx and an aumf of the same plugin never appear
+    // together. \see CLAP_PLUGIN_FACTORY_INFO_AUV2_LEGACY
+
+    if (!tags.empty())
+    {
+      of << "        <key>tags</key>\n"
+         << "        <array>\n";
+      for (auto tag : tags)  // purposefully take a copy so we can mutate case
+      {
+        if (tag[0] >= 'a' && tag[0] <= 'z')
+        {
+          // Upper case the first char
+          tag[0] = std::toupper(tag[0]);
+        }
+        of << "          <string>" << tag << "</string>\n";
+      }
+      of << "        </array>\n";
+    }
+    of << "      </dict>\n";
+  }
+};
+
+bool buildUnitsFromClap(const std::string &clapfile, const std::string &clapname, std::string manu,
+                        std::string manuName, std::string itype, std::string subt,
+                        std::vector<auInfo> &units)
+{
+  Clap::Library loader;
+  if (!loader.load(clapfile))
+  {
+    std::cout << "[ERROR] library.load of clapfile failed" << std::endl;
+    return false;
+  }
+
+  int idx{0};
+
+  if (manu.empty() && loader._pluginFactoryAUv2Info == nullptr)
+  {
+    std::cout << "[ERROR] No manufacturer provider and no auv2 info available" << std::endl;
+    return false;
+  }
+
+  if (manu.empty())
+  {
+    manu = loader._pluginFactoryAUv2Info->manufacturer_code;
+    manuName = loader._pluginFactoryAUv2Info->manufacturer_name;
+    std::cout << "  - using factory manufacturer '" << manuName << "' (" << manu << ")" << std::endl;
+  }
+
+  if (!itype.empty() && !subt.empty() && loader.plugins.size() > 1)
+  {
+    std::cout << "[ERROR] Multi-plugin claps must speciy itype and subtype via extension" << std::endl;
+  }
+
+  static const char *encoder = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+  for (const auto *clapPlug : loader.plugins)
+  {
+    auto u = auInfo();
+    bool doExport = true;
+
+    u.name = clapPlug->name;
+    u.clapname = clapname;
+    u.clapid = clapPlug->id;
+    u.vers = clapPlug->version;
+    u.desc = clapPlug->description;
+
+    static_assert(sizeof(size_t) == 8);
+    size_t idHash = std::hash<std::string>{}(clapPlug->id);
+    std::string stH;
+    // We have to make an ascii-representable 4 char string. Here's a way I guess.
+    for (int i = 0; i < 4; ++i)
+    {
+      auto q = idHash & ((1 << 6) - 1);
+      stH += encoder[q];
+      idHash = idHash >> 9;  // mix it up a bit
+    }
+
+    u.subt = subt.empty() ? stH : subt;
+    u.manu = manu;
+    u.manunm = manuName;
+
+    auto f = clapPlug->features[0];
+    if (!itype.empty())
+    {
+      u.type = itype;
+    }
+    else if (f == nullptr || strcmp(f, CLAP_PLUGIN_FEATURE_INSTRUMENT) == 0)
+    {
+      u.type = "aumu";
+    }
+    else if (strcmp(f, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT) == 0)
+    {
+      u.type = "aufx";
+    }
+    else if (strcmp(f, CLAP_PLUGIN_FEATURE_NOTE_EFFECT) == 0)
+    {
+      u.type = "aumi";
+    }
+    else
+    {
+      std::cout << "[WARNING] can't determine instrument type. Using aumu" << std::endl;
+      u.type = "aumu";
+    }
+
+    bool araCapable = false;
+    auto fp = clapPlug->features;
+    while (*fp)
+    {
+      u.tags.push_back(*fp);
+      if (strcmp(*fp, CLAP_PLUGIN_FEATURE_ARA_SUPPORTED) == 0 ||
+          strcmp(*fp, CLAP_PLUGIN_FEATURE_ARA_REQUIRED) == 0)
+        araCapable = true;
+      ++fp;
+    }
+
+    // ARA hosts look for the exact tag "ARA" in the system-wide AU cache, so it can
+    // not be the generic feature tag above (which has its first letter upper-cased).
+    // \see kARAAudioComponentTag in detail/ara/araaudiounit.h
+    if (!araCapable && loader._pluginFactoryARAInfo)
+    {
+      auto n = loader._pluginFactoryARAInfo->get_factory_count(loader._pluginFactoryARAInfo);
+      for (uint32_t i = 0; i < n && !araCapable; ++i)
+      {
+        auto id = loader._pluginFactoryARAInfo->get_plugin_id(loader._pluginFactoryARAInfo, i);
+        if (id && u.clapid == id) araCapable = true;
+      }
+    }
+    if (araCapable) u.tags.push_back(kARAAudioComponentTag);
+
+    if (loader._pluginFactoryAUv2Info)
+    {
+      clap_plugin_info_as_auv2_t v2inf;
+      auto res =
+          loader._pluginFactoryAUv2Info->get_auv2_info(loader._pluginFactoryAUv2Info, idx, &v2inf);
+      if (res)
+      {
+        if (v2inf.au_type[0] != 0)
+        {
+          u.type = v2inf.au_type;
+        }
+        if (v2inf.au_subt[0] != 0)
+        {
+          u.subt = v2inf.au_subt;
+        }
+      }
+      else
+      {
+        doExport = false;
+        std::cout << "  - Skipping Audio Unit Export for index " << idx << "/" << u.clapid << std::endl;
+      }
+    }
+
+    if (doExport)
+    {
+      u.pluginIndex = idx;
+      units.push_back(u);
+
+      // ...and every identity this plugin used to have, hidden, sharing the
+      // entry point. \see CLAP_PLUGIN_FACTORY_INFO_AUV2_LEGACY
+      if (auto *legacyFactory = loader._pluginFactoryAUv2Legacy)
+      {
+        auto const legacyCount(legacyFactory->count(legacyFactory, idx));
+        for (uint32_t n = 0; n < legacyCount; ++n)
+        {
+          clap_plugin_auv2_legacy_identity_t identity{};
+          if (!legacyFactory->get(legacyFactory, idx, n, &identity)) continue;
+
+          auto l = u;
+          l.legacy = true;
+          l.type = identity.au_type;
+          l.subt = identity.au_subt;
+          l.manu = identity.au_manu;
+
+          if (l.type.size() != 4 || l.subt.size() != 4 || l.manu.size() != 4)
+          {
+            std::cout << "[ERROR] Legacy identity " << n << " of '" << u.clapid
+                      << "' is not three four-character codes: got '" << l.type << "/" << l.subt << "/"
+                      << l.manu << "'" << std::endl;
+            return false;
+          }
+
+          std::cout << "    + legacy identity " << l.type << "/" << l.subt << "/" << l.manu << std::endl;
+          units.push_back(l);
+        }
+      }
+    }
+    idx++;
+  }
+  return true;
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 2) return 1;
+
+  std::cout << "clap-wrapper: auv2 configuration tool starting\n";
+
+  std::vector<auInfo> units;
+  if (std::string(argv[1]) == "--explicit")
+  {
+    if (argc != 8)
+    {
+      std::cout << "[ERROR] Configuration incorrect. Got " << argc << " arguments in explicit"
+                << std::endl;
+      return 5;
+    }
+    int idx = 2;
+    auInfo u;
+    u.explicitMode = true;
+    u.name = std::string(argv[idx++]);
+    u.clapname = u.name;
+    u.vers = std::string(argv[idx++]);
+    u.bundlevers = u.vers;
+    u.type = std::string(argv[idx++]);
+    u.subt = std::string(argv[idx++]);
+    u.manu = std::string(argv[idx++]);
+    u.manunm = std::string(argv[idx++]);
+    u.desc = u.name + " CLAP to AU Wrapper";
+
+    u.pluginIndex = 0;  // explicit mode describes exactly one plugin
+
+    std::cout << "  - single plugin explicit mode: " << u.name << " (" << u.type << "/" << u.subt << ")"
+              << std::endl;
+    units.push_back(u);
+  }
+  else if (std::string(argv[1]) == "--fromclap")
+  {
+    if (argc < 4)
+    {
+      std::cout << "[ERROR] Configuration incorrect. Got " << argc << " arguments in fromclap"
+                << std::endl;
+      return 6;
+    }
+    int idx = 2;
+    auto clapname = std::string(argv[idx++]);
+    auto clapfile = std::string(argv[idx++]);
+    auto bundlev = std::string(argv[idx++]);
+
+    auto nerr = [](const auto &a)
+    {
+      if (a == "errr")
+        return std::string();
+      else
+        return a;
+    };
+
+    auto mcode = nerr((idx < argc) ? std::string(argv[idx++]) : std::string());
+    auto mname = nerr((idx < argc) ? std::string(argv[idx++]) : std::string());
+    ;
+
+    auto itype = nerr((idx < argc) ? std::string(argv[idx++]) : std::string());
+    auto isubt = nerr((idx < argc) ? std::string(argv[idx++]) : std::string());
+
+    try
+    {
+      auto p = fs::path{clapfile};
+      if (fs::is_directory(p))
+      {
+        std::cout << "  - CLAP is a directory. Assuming bundle\n";
+      }
+      else
+      {
+        // This is a hack for now - we get to the dll
+        std::cout << "  - CLAP is a regular file. Assuming dll in bundle\n";
+        p = p.parent_path().parent_path().parent_path();
+        clapfile = p.u8string();
+      }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+      std::cout << "[ERROR] cant get path " << e.what() << std::endl;
+      return 3;
+    }
+
+    std::cout << "  - building information from CLAP directly\n"
+              << "  - source clap: '" << clapfile << "'" << std::endl;
+
+    if (!buildUnitsFromClap(clapfile, clapname, mcode, mname, itype, isubt, units))
+    {
+      std::cout << "[ERROR] Can't build units from CLAP" << std::endl;
+      return 4;
+    }
+
+    if (units.empty())
+    {
+      std::cout << "[ERROR] No units from clap file\n";
+      return 5;
+    }
+
+    for (auto &u : units)
+    {
+      u.bundlevers = bundlev;
+    }
+
+    std::cout << "  - clap file produced " << units.size() << " units" << std::endl;
+  }
+  else
+  {
+    std::cout << "[ERROR] Unknown Mode : " << argv[1] << std::endl;
+    return 2;
+  }
+
+  std::cout << "  - generating auv2_Info.plist from auv2_infoplist_top" << std::endl;
+  std::ifstream intop("auv2_infoplist_top");
+  if (!intop.is_open())
+  {
+    std::cerr << "[ERROR] Unable to open pre-generated file auv2_infoplist_top" << std::endl;
+    return 1;
+  }
+
+  std::ofstream of("auv2_Info.plist");
+  if (!of.is_open())
+  {
+    std::cerr << "[ERROR] Unable to open output file auv2_Info.plist" << std::endl;
+  }
+  of << intop.rdbuf();
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Two entries sharing an identity is not a warning. macOS resolves a
+  // component by its triple, so a duplicate makes which one a host gets
+  // undefined -- and the case that produces it is a legacy identity that was
+  // never actually retired, which means the plugin believes it migrated and did
+  // not. Fail the build and say which pair.
+  ////////////////////////////////////////////////////////////////////////////
+  for (size_t i = 0; i < units.size(); ++i)
+  {
+    for (size_t j = i + 1; j < units.size(); ++j)
+    {
+      auto const &a = units[i];
+      auto const &b = units[j];
+      if (a.type == b.type && a.subt == b.subt && a.manu == b.manu)
+      {
+        std::cout << "[ERROR] Two AudioComponents entries share the identity " << a.type << "/" << a.subt
+                  << "/" << a.manu << ".\n"
+                  << "        '" << a.name << "'" << (a.legacy ? " (legacy)" : " (primary)") << " and '"
+                  << b.name << "'" << (b.legacy ? " (legacy)" : " (primary)") << ".\n"
+                  << "        A legacy identity has to be one the plugin no longer uses." << std::endl;
+        return 6;
+      }
+    }
+  }
+
+  of << "    <key>AudioComponents</key>\n    <array>\n";
+  for (const auto &u : units)
+  {
+    std::cout << "    + " << u.name << " (" << u.type << "/" << u.subt << ") by " << u.manunm << " ("
+              << u.manu << ")" << std::endl;
+    u.writePListFragment(of);
+  }
+  of << "    </array>\n";
+  of << "  </dict>\n</plist>\n";
+  of.close();
+  std::cout << "  - auv2_Info.plist generated" << std::endl;
+
+  {
+    std::cout << "  - generating generated_entrypoints.hxx" << std::endl;
+    std::ofstream cppf("generated_entrypoints.hxx");
+    if (!cppf.is_open())
+    {
+      std::cout << "[ERROR] Unable to open generated_endpoints.hxx" << std::endl;
+      return 1;
+    }
+
+    cppf << "#pragma once\n";
+    cppf << "#include \"detail/auv2/auv2_base_classes.h\"\n\n";
+
+    for (const auto &u : units)
+    {
+      // Legacy entries name the primary's entry point in the plist and do not
+      // get one of their own; generating a second would be a redefinition.
+      if (u.legacy) continue;
+
+      auto on = u.factoryBase + std::to_string(u.pluginIndex);
+
+      auto args =
+          std::string("\"") + u.clapname + "\", \"" + u.clapid + "\", " + std::to_string(u.pluginIndex);
+
+#if 1
+      {
+        // No type is written into the entry point. WrapAsAUV2 reads it from the
+        // component description the host instantiated it with, which is the only
+        // source that stays right when one entry point answers to several types.
+        std::cout << "    + " << u.name << " entry " << on << " from WrapAsAUV2" << std::endl;
+        cppf << "struct " << on << " : free_audio::auv2_wrapper::WrapAsAUV2 {\n"
+             << "   " << on << "(AudioComponentInstance ci) :\n"
+             << "         free_audio::auv2_wrapper::WrapAsAUV2(" << args << ", ci) {}"
+             << "};\n"
+             << "AUSDK_COMPONENT_ENTRY(ausdk::AUMusicDeviceFactory, " << on << ");\n";
+      }
+#else
+      // TODO: this will be remove
+      if (u.type == "aumu")
+      {
+        std::cout << "    + " << u.name << " entry " << on << " from WrapAsAUV2" << std::endl;
+        cppf << "struct " << on << " : free_audio::auv2_wrapper::WrapAsAUV2 {\n"
+             << "   " << on << "(AudioComponentInstance ci) :\n"
+             << "         free_audio::auv2_wrapper::WrapAsAUV2(AUV2_Type::aumu_musicdevice," << args
+             << ", ci) {}"
+             << "};\n"
+             << "AUSDK_COMPONENT_ENTRY(ausdk::AUMusicDeviceFactory, " << on << ");\n";
+      }
+      else if (u.type == "aumi")
+      {
+        std::cout << "    + " << u.name << " entry " << on << " from ClapWrapper_AUV2_NoteEffect"
+                  << std::endl;
+        cppf << "struct " << on << " : free_audio::auv2_wrapper::ClapWrapper_AUV2_NoteEffect {\n"
+             << "   " << on << "(AudioComponentInstance ci) :\n"
+             << "         free_audio::auv2_wrapper::ClapWrapper_AUV2_NoteEffect(" << args << ", ci) {}"
+             << "};\n"
+             << "AUSDK_COMPONENT_ENTRY(ausdk::AUBaseFactory , " << on << ");\n";
+      }
+      else if (u.type == "aufx")
+      {
+        std::cout << "    + " << u.name << " entry " << on << " from ClapWrapper_AUV2_Effect"
+                  << std::endl;
+        cppf << "struct " << on << " : free_audio::auv2_wrapper::ClapWrapper_AUV2_Effect {\n"
+             << "   " << on << "(AudioComponentInstance ci) :\n"
+             << "         free_audio::auv2_wrapper::ClapWrapper_AUV2_Effect(" << args << ", ci) {}"
+             << "};\n"
+             << "AUSDK_COMPONENT_ENTRY(ausdk::AUBaseFactory, " << on << ");\n";
+      }
+#endif
+    }
+    cppf.close();
+    std::cout << "  - generated_entrypoints.hxx generated" << std::endl;
+  }
+  {
+    std::cout << "  - generating generated_cocoaclasses.hxx" << std::endl;
+    std::ofstream cppf("generated_cocoaclasses.hxx");
+    if (!cppf.is_open())
+    {
+      std::cout << "[ERROR] Unable to open generated_cocoaclasses.hxx" << std::endl;
+      return 1;
+    }
+
+    cppf << "#pragma once\n";
+    cppf << "\n// generated by auv2 build helper\n\n";
+
+    std::ostringstream fillOSS;
+    fillOSS << "bool fillAudioUnitCocoaView(AudioUnitCocoaViewInfo* viewInfo, "
+               "std::shared_ptr<Clap::Plugin> _plugin) {\n";
+
+    for (const auto &u : units)
+    {
+      // as above: the cocoa class is named from the CLAP id, so a legacy entry
+      // would generate the same class a second time
+      if (u.legacy) continue;
+
+      std::string strcid;
+
+      if (u.explicitMode)
+      {
+        strcid = u.name + " " + u.type + " " + u.subt + " " + u.manunm + " " + u.manu;
+      }
+      else
+      {
+        strcid = u.clapid;
+      }
+
+      for (auto &c : strcid)
+      {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'A') || (c >= '0' && c <= '9'))
+        {
+        }
+        else
+        {
+          c = '_';
+        }
+      }
+      auto on = u.factoryBase + "_cocoaUI_" + strcid;
+
+      {
+        std::cout << "    + " << on << " class " << u.clapid << std::endl;
+        cppf << "#define CLAP_WRAPPER_COCOA_CLASS_NSVIEW " << on << "_nsview" << std::endl;
+        cppf << "#define CLAP_WRAPPER_COCOA_CLASS " << on << std::endl;
+        cppf << "#define CLAP_WRAPPER_TIMER_CALLBACK timerCallback_" << on << std::endl;
+        cppf << "#define CLAP_WRAPPER_FILL_AUCV fillAUCV_" << on << std::endl;
+        cppf << "#define CLAP_WRAPPER_EDITOR_NAME \"" << u.name << " View\"" << std::endl;
+        cppf << "#include \"detail/auv2/wrappedview.asinclude.mm\"" << std::endl;
+        cppf << "#undef CLAP_WRAPPER_COCOA_CLASS_NSVIEW" << std::endl;
+        cppf << "#undef CLAP_WRAPPER_COCOA_CLASS" << std::endl;
+        cppf << "#undef CLAP_WRAPPER_TIMER_CALLBACK" << std::endl;
+        cppf << "#undef CLAP_WRAPPER_FILL_AUCV" << std::endl;
+        cppf << "#undef CLAP_WRAPPER_EDITOR_NAME" << std::endl;
+
+        if (u.explicitMode)
+        {
+          fillOSS << "    return fillAUCV_" << on << "(viewInfo);\n";
+        }
+        else
+        {
+          fillOSS << "\n  if (strcmp(_plugin->_plugin->desc->id,\"" << u.clapid << "\") == 0) {\n";
+          fillOSS << "    if (!_plugin->_ext._gui) return false;\n";
+          fillOSS << "    return fillAUCV_" << on << "(viewInfo);\n";
+          fillOSS << "  }\n";
+        }
+      }
+    }
+
+    fillOSS << "\n  return false;\n}\n\n";
+    cppf << fillOSS.str();
+    cppf.close();
+    std::cout << "  - generated_cocoaclasses.hxx generated" << std::endl;
+  }
+  return 0;
+}

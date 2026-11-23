@@ -1,0 +1,86 @@
+#include <iostream>
+
+#include "detail/standalone/standalone_details.h"
+#include "detail/standalone/entry.h"
+#include "detail/standalone/standalone_host.h"
+
+#if LIN && CLAP_WRAPPER_STANDALONE_X11
+#include "detail/standalone/linux/x11_gui.h"
+#endif
+
+// For now just a simple main. In the future this will branch out to
+// an [NSApplicationMain ] and so on depending on platform
+int main(int argc, char **argv)
+{
+  if (freeaudio::clap_wrapper::standalone::mainListAudioDevices(argc, argv)) return 0;
+
+  const clap_plugin_entry *entry{nullptr};
+#ifdef STATICALLY_LINKED_CLAP_ENTRY
+  extern const clap_plugin_entry clap_entry;
+  entry = &clap_entry;
+#else
+  // Library shenanigans t/k
+  std::string clapName{HOSTED_CLAP_NAME};
+  LOGINFO("Loading '{}'", clapName);
+
+  auto pts = Clap::getValidCLAPSearchPaths();
+
+  auto lib = Clap::Library();
+
+  for (const auto &searchPaths : pts)
+  {
+    auto clapPath = searchPaths / (clapName + ".clap");
+
+    if (fs::exists(clapPath) && !entry)
+    {
+      lib.load(clapPath);
+      entry = lib._pluginEntry;
+    }
+  }
+
+#endif
+
+#if LIN && CLAP_WRAPPER_STANDALONE_X11
+  freeaudio::clap_wrapper::standalone::linux_standalone::X11Gui x11Gui{};
+
+  x11Gui.initialize(freeaudio::clap_wrapper::standalone::getStandaloneHost());
+#endif
+
+  if (!entry)
+  {
+    std::cerr << "Clap Standalone: No Entry as configured" << std::endl;
+    return 3;
+  }
+
+  std::string pid{PLUGIN_ID};
+  int pindex{PLUGIN_INDEX};
+
+  auto plugin =
+      freeaudio::clap_wrapper::standalone::mainCreatePlugin(entry, pid, pindex, 1, (char **)argv);
+
+  // a link clicked in a browser launches the standalone with its url, by way of the
+  // installer's .desktop file. held until the gui is up. a standalone already running does
+  // not hear of it: this launch is another instance
+  auto *standaloneHost = freeaudio::clap_wrapper::standalone::getStandaloneHost();
+  for (const auto &url : freeaudio::clap_wrapper::standalone::ownUrlsInArgs(argc, argv))
+    standaloneHost->openUrl(url);
+
+  freeaudio::clap_wrapper::standalone::mainStartAudio();
+
+#if LIN && CLAP_WRAPPER_STANDALONE_X11
+  // a first run writes the settings it started with, so that there is a file to edit
+  if (!freeaudio::clap_wrapper::standalone::getStandaloneHost()->settingsLoaded) x11Gui.saveSettings();
+
+  x11Gui.setPlugin(plugin);
+  standaloneHost->beginUrlDelivery();
+  x11Gui.runloop();
+  x11Gui.saveSettings();
+  x11Gui.shutdown();
+#else
+  standaloneHost->beginUrlDelivery();
+  freeaudio::clap_wrapper::standalone::mainWait();
+#endif
+
+  plugin = nullptr;
+  freeaudio::clap_wrapper::standalone::mainFinish();
+}

@@ -3,11 +3,10 @@
 #
 #  Fixes applied:
 #    [A] Artifact path: nih_plug_xtask always writes bundles to
-#        target/bundled/ regardless of --target. The previous workflow
-#        was looking at target/<triple>/bundled/, which is always empty.
-#        This was the root cause of the macOS "No files were found" errors
-#        and would also have broken the Windows upload steps once the
-#        build step succeeded.
+#        target/bundled/ regardless of --target. build_mac.sh snapshots
+#        that output into target/<triple>/bundled/ after each architecture,
+#        so the two macOS builds cannot overwrite each other and the AU
+#        wrappers have a stable per-architecture CLAP to embed.
 #
 #    [B] Cargo network resilience on Windows runners: GitHub Actions
 #        Windows runners are notorious for flaky/slow connections to
@@ -20,7 +19,7 @@
 #        checkout does not have to be re-extracted on every run.
 ##############################################################################
 
-name: Build (CLAP + VST3, Windows VST3)
+name: Build (CLAP + VST3, macOS AUv2 + AUv3, Windows VST3)
 
 on:
   push:
@@ -82,19 +81,47 @@ jobs:
           key: macos-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-${{ matrix.target }}-cargo-
 
-      - name: Build — macOS ${{ matrix.label }} (CLAP + VST3)
+      - name: Ensure CMake
+        run: command -v cmake >/dev/null || brew install cmake
+
+      # build_mac.sh snapshots nih_plug_xtask's target/bundled/ output into
+      # target/<triple>/bundled/ before building the AU wrappers. Building
+      # both macOS architectures in one workspace would otherwise overwrite
+      # the first architecture with the second.
+      - name: Build — macOS ${{ matrix.label }} (CLAP + VST3 + AUv2 + AUv3)
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.13"
-        run: cargo xtask bundle nebula_desser --release --target ${{ matrix.target }}
+          NEBULA_BUILD_AUV3: "1"
+        run: ./build_mac.sh ${{ matrix.target }}
 
-      # FIX [A]: nih_plug_xtask writes to target/bundled/, NOT
-      # target/<triple>/bundled/. The --target flag only changes where the
-      # raw .dylib is built, not where the final .clap/.vst3 bundle ends up.
+      - name: Verify macOS Audio Unit bundles
+        run: |
+          set -euo pipefail
+          bundled="target/${{ matrix.target }}/bundled"
+          test -d "$bundled/Nebula De-Esser.component"
+          test -d "$bundled/Nebula De-Esser AUv3.app"
+          test -d "$bundled/Nebula De-Esser AUv3.app/Contents/PlugIns/Nebula De-Esser.appex/Contents/PlugIns/Nebula De-Esser.clap"
+          codesign --verify --deep --strict --verbose=2 "$bundled/Nebula De-Esser.component"
+          codesign --verify --deep --strict --verbose=2 "$bundled/Nebula De-Esser AUv3.app"
+
+      - name: Validate AUv2 with auval (native architecture)
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -m)" == "arm64" && "${{ matrix.target }}" == "aarch64-apple-darwin" ]] || [[ "$(uname -m)" == "x86_64" && "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
+            mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+            rm -rf "$HOME/Library/Audio/Plug-Ins/Components/Nebula De-Esser.component"
+            cp -R "target/${{ matrix.target }}/bundled/Nebula De-Esser.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            auval -v aufx NDeS NbAu
+          else
+            echo "Skipping auval for non-native target ${{ matrix.target }}"
+          fi
+
       - name: Upload macOS ${{ matrix.label }} artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/bundled/
+          path: target/${{ matrix.target }}/bundled/
           if-no-files-found: error
           retention-days: 90
 
