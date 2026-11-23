@@ -431,6 +431,11 @@ target/<arch>/bundled/Nebula De-Esser.component     # AUv2
 target/<arch>/bundled/Nebula De-Esser AUv3.app      # AUv3 host app (contains the .appex)
 ```
 
+The AU wrappers target macOS 11.0 and are ad-hoc signed by the build so that
+`codesign --verify --deep` succeeds and nested CLAP/appex code stays valid.
+That is enough for local installation; releases distributed to other machines
+still need a Developer ID signature and notarization.
+
 Validate the AUv2 component on macOS after installing it:
 
 ```bash
