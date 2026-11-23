@@ -286,13 +286,13 @@ static MIDIPortRef sMIDIInputPort = 0;
               << (compName ? [(__bridge NSString *)compName UTF8String] : "?") << std::endl;
     if (compName) CFRelease(compName);
 
-    __weak typeof(self) weakSelf = self;
+    __weak __typeof__(self) weakSelf = self;
     [AVAudioUnit instantiateWithComponentDescription:desc
                                              options:kAudioComponentInstantiation_LoadInProcess
                                    completionHandler:^(AVAudioUnit *_Nullable audioUnit,
                                                        NSError *_Nullable error) {
                                      dispatch_async(dispatch_get_main_queue(), ^{
-                                       __strong typeof(weakSelf) self = weakSelf;
+                                       __strong __typeof__(weakSelf) self = weakSelf;
                                        if (self) [self finishSetupWithAudioUnit:audioUnit error:error];
                                      });
                                    }];
