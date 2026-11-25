@@ -403,7 +403,7 @@ The AUv2 `.component` is self-contained: it embeds the matching VST3 under
 the embedded VST3 out of it.
 
 Note for macOS users:
-macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
+macOS Gatekeeper blocks the binary because it is ad-hoc signed rather than notarized with an Apple Developer ID. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
   xattr -dr com.apple.quarantine [path of the Nebula De-Esser.component or Nebula De-Esser.vst3 file]
