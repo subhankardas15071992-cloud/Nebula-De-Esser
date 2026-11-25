@@ -2,17 +2,14 @@
 #  Nebula De-Esser — CI Build Pipeline
 #
 #  Formats:
-#    macOS   — VST3 + AUv2 (Steinberg VST3 -> AUv2 wrapper)
+#    macOS   — VST3 (Apple Silicon and Intel)
 #    Windows — VST3 (x86_64 and ARM64)
 #    Linux   — VST3 (x86_64)
 #
-#  The AUv2 component embeds the matching VST3 at
-#  Contents/Resources/plugin.vst3, which is how Steinberg's official wrapper
-#  loads the plugin. Each macOS runner builds one architecture and uploads its
-#  own VST3 + .component pair.
+#  Each macOS runner builds one architecture and uploads its own VST3 bundle.
 ##############################################################################
 
-name: Build (VST3 + macOS AUv2)
+name: Build (VST3)
 
 on:
   push:
@@ -36,7 +33,7 @@ env:
 jobs:
 
   # ════════════════════════════════════════════════════════════════════════════
-  #  macOS — VST3 + AUv2, separate native artifacts (arm64 and x86_64)
+  #  macOS — VST3, separate native artifacts (arm64 and x86_64)
   # ════════════════════════════════════════════════════════════════════════════
   build-macos:
     name: "macOS — ${{ matrix.label }}"
@@ -47,11 +44,9 @@ jobs:
         include:
           - label: Apple Silicon
             target: aarch64-apple-darwin
-            runner_arch: ARM64
             artifact: Nebula-De-Esser_macOS-Apple-Silicon
           - label: Intel
             target: x86_64-apple-darwin
-            runner_arch: X64
             artifact: Nebula-De-Esser_macOS-Intel
 
     steps:
@@ -76,40 +71,19 @@ jobs:
           key: macos-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-${{ matrix.target }}-cargo-
 
-      - name: Ensure CMake
-        run: command -v cmake || brew install cmake
-
-      - name: Build VST3 + AUv2 — macOS ${{ matrix.label }}
+      - name: Build VST3 — macOS ${{ matrix.label }}
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.13"
           NEBULA_SKIP_TESTS: "1"
         run: ./build_mac.sh ${{ matrix.target }}
 
-      - name: Verify AUv2 component
+      - name: Verify macOS VST3 bundle
         run: |
           set -euo pipefail
-          component="target/${{ matrix.target }}/bundled/Nebula De-Esser.component"
-          test -d "$component"
-          test -x "$component/Contents/MacOS/Nebula De-Esser"
-          test -d "$component/Contents/Resources/plugin.vst3"
-          test -x "$component/Contents/Resources/plugin.vst3/Contents/MacOS/Nebula De-Esser"
-          plutil -lint "$component/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Print :AudioComponents:0:factoryFunction" "$component/Contents/Info.plist" | grep -qx AUWrapperFactory
-          /usr/libexec/PlistBuddy -c "Print :AudioComponents:0:type" "$component/Contents/Info.plist" | grep -qx aufx
-          /usr/libexec/PlistBuddy -c "Print :AudioComponents:0:subtype" "$component/Contents/Info.plist" | grep -qx NDeS
-          /usr/libexec/PlistBuddy -c "Print :AudioComponents:0:manufacturer" "$component/Contents/Info.plist" | grep -qx NbAu
-          codesign --verify --deep --strict --verbose=2 "$component"
-
-      - name: Validate AUv2 with auval (native architecture only)
-        if: matrix.runner_arch == runner.arch
-        run: |
-          set -euo pipefail
-          component="target/${{ matrix.target }}/bundled/Nebula De-Esser.component"
-          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/Nebula De-Esser.component"
-          cp -R "$component" "$HOME/Library/Audio/Plug-Ins/Components/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -v aufx NDeS NbAu
+          vst3="target/${{ matrix.target }}/bundled/Nebula De-Esser.vst3"
+          test -d "$vst3"
+          test -x "$vst3/Contents/MacOS/Nebula De-Esser"
+          test ! -e "target/${{ matrix.target }}/bundled/Nebula De-Esser.clap"
 
       - name: Upload macOS ${{ matrix.label }} artifact
         uses: actions/upload-artifact@v4

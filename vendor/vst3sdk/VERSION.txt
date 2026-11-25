@@ -1,9 +1,0 @@
-Steinberg VST 3 SDK
-Version: 3.8.1 (v3.8.1_build_84)
-Source: https://github.com/steinbergmedia/vst3sdk
-Vendored subtrees: base, pluginterfaces, public.sdk/source
-Submodule revisions:
-  base:          fcf9da0bd27a16f7f03773a3a39822f28f5c8477
-  pluginterfaces: 4f547e8e102b47de4a8b8aaf343c73b700786372
-  public.sdk:    586dc5e6c8012c3e4b01c79389375cbe96bdb1da
-License: see LICENSE.txt (MIT for this release)
