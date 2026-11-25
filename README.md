@@ -38,7 +38,9 @@ It is deliberately more complex than a utility de-esser because the target is no
 
 - **GUI stays responsive when hosts smart-disable silent plugins** - Hosts such as Lynx Share can stop calling a plugin's process callback while keeping it active. Nebula now detects that state and applies GUI parameter changes immediately, so controls no longer appear frozen. The fix is in the bundled nih-plug VST3 wrapper and applies to both the egui and Direct2D editors.
 - **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs.
-- **Packaging unchanged** - The separate Apple Silicon and Intel macOS builds and the Windows x86_64 and ARM64 VST3 builds remain as introduced in 3.3.0.
+- **AUv2 on macOS** - macOS builds now include an Audio Unit v2 (`.component`) alongside VST3. The AUv2 component uses Steinberg's official VST3-to-AUv2 wrapper and embeds the matching VST3, so both formats run the same engine and expose the same parameters.
+- **CLAP retired** - CLAP is no longer built on any platform. The audio-thread stuttering that led to the earlier Windows and macOS/Linux discontinuations remains a concern, so the plugin now ships as VST3 everywhere plus AUv2 on macOS.
+- **Separate native builds** - The separate Apple Silicon and Intel macOS builds and the Windows x86_64 and ARM64 VST3 builds remain as introduced in 3.3.0.
 
 ---
 
@@ -62,7 +64,7 @@ It is deliberately more complex than a utility de-esser because the target is no
 - **New MIDI sidechain trigger** - The Sidechain selector now includes a MIDI mode. In this mode MIDI notes can deliberately drive de-essing amount, allowing phrase-by-phrase or section-by-section reduction control from the DAW.
 - **Freely resizeable plugin window now available on the the Direct2D variant too** - The free resizeability feature that was earlier available only in the EGUI variant is now available for the Direct2D variant too. Again, due to the nature of Direct2D the overall resizing is smoother on it than EGUI.
 - **Persistent GUI size** - The EGUI and Direct2D editors now remember the user-set window size and reopen at that size in later DAW sessions.
-- **Unified bundle filenames** - CLAP and VST3 bundles now use the same filename convention: Nebula De-Esser.
+- **Unified bundle filenames** - Plugin bundles now use the same filename convention: Nebula De-Esser.
 
 ---
 
@@ -339,14 +341,13 @@ The Rust test suite includes deterministic objective audio metrics in `src/metri
 
 ## 🏗️ **Build Instructions (Pure Manual Code Build)**
 
-Build directly with Cargo and the `xtask` bundle command (no helper scripts).
+Build directly with Cargo and the `xtask` bundle command. On macOS, `build_mac.sh` additionally builds the AUv2 component with CMake.
 
 #### **Linux (x86_64)**
 ```bash
 cargo build --release
 cargo run --release --package xtask -- bundle nebula_desser --release
-# Output: target/bundled/Nebula De-Esser.clap
-#         target/bundled/Nebula De-Esser.vst3
+# Output: target/bundled/Nebula De-Esser.vst3
 ```
 
 #### **Windows (x86_64 or ARM64 / MSVC)**
@@ -362,21 +363,28 @@ cargo run --release --package xtask -- bundle nebula_desser --release --target a
 # Output: target\aarch64-pc-windows-msvc\bundled\Nebula De-Esser.vst3
 ```
 
-Windows releases are VST3-only. The Windows Direct2D editor works through VST3,
-while the current upstream nih-plug CLAP wrapper reports failure from embedded
-GUI show/hide callbacks on CLAP hosts that enforce the GUI lifecycle strictly.
+Windows releases are VST3-only.
 
-#### **macOS (Separate Apple Silicon and Intel builds)**
+#### **macOS (VST3 + AUv2, separate Apple Silicon and Intel builds)**
+Requires CMake in addition to the Rust toolchain:
+
 ```bash
+brew install cmake
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-cargo run --release --package xtask -- bundle nebula_desser --release --target aarch64-apple-darwin
-cargo run --release --package xtask -- bundle nebula_desser --release --target x86_64-apple-darwin
-# Output: target/bundled/Nebula De-Esser.clap
-#         target/bundled/Nebula De-Esser.vst3
+./build_mac.sh
+# Output: target/aarch64-apple-darwin/bundled/Nebula De-Esser.vst3
+#         target/aarch64-apple-darwin/bundled/Nebula De-Esser.component
+#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.vst3
+#         target/x86_64-apple-darwin/bundled/Nebula De-Esser.component
 ```
 
+`build_mac.sh` builds the VST3 with nih-plug, then builds the AUv2 component with
+Steinberg's official VST3-to-AUv2 wrapper from `vendor/vst3sdk` and embeds the
+matching VST3 at `Contents/Resources/plugin.vst3`. The component is ad-hoc
+signed so it can be validated locally with `auval -v aufx NDeS NbAu`.
+
 `nih_plug_xtask` always writes to `target/bundled/`, even for cross builds, so a
-second architecture overwrites the first. Use `./build_mac.sh` to keep one
+second architecture overwrites the first. `build_mac.sh` keeps one
 `target/<arch>/bundled/` directory per architecture.
 
 > VST3 now uses a **single fixed bus layout** (`Stereo + optional Sidechain`) on all platforms to reduce host layout-switch instability while preserving external sidechain functionality.
@@ -386,23 +394,25 @@ second architecture overwrites the first. Use `./build_mac.sh` to keep one
 https://subhankar42.gumroad.com/l/adounr
 
 Note:
-For users new to CLAP plugins, they can sometimes look like folders on macOS, but the name of the folder has ".clap" in it like a file extension. It's perfectly normal.
+The macOS zips contain VST3 and AUv2 builds, split by Apple Silicon and Intel.
+The Linux zip contains the VST3 plugin. The Windows zips contain VST3 plugins,
+split by x86_64 and ARM64.
 
-The macOS zips contain CLAP and VST3 builds, split by Apple Silicon and Intel.
-The Linux zip contains CLAP and VST3 plugins. The Windows zips contain VST3
-plugins, split by x86_64 and ARM64.
+The AUv2 `.component` is self-contained: it embeds the matching VST3 under
+`Contents/Resources/plugin.vst3`. Install the whole component and do not move
+the embedded VST3 out of it.
 
 Note for macOS users:
 macOS Gatekeeper blocks the binary because it has no code signature. Locally-built binaries are trusted automatically; externally built ones are flagged as "from the internet".
 
 To fix this problem after unzipping run the following command:
-  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.clap or Nebula De-Esser.vst3 file]
+  xattr -dr com.apple.quarantine [path of the Nebula De-Esser.component or Nebula De-Esser.vst3 file]
 
 After that you can copy the plugin to the matching folder:
 
 | Format | User install | All users |
 |--------|--------------|-----------|
-| CLAP | `~/Library/Audio/Plug-Ins/CLAP/` | `/Library/Audio/Plug-Ins/CLAP/` |
+| AUv2 (macOS) | `~/Library/Audio/Plug-Ins/Components/` | `/Library/Audio/Plug-Ins/Components/` |
 | VST3 | `~/Library/Audio/Plug-Ins/VST3/` | `/Library/Audio/Plug-Ins/VST3/` |
 
 ---
@@ -431,9 +441,13 @@ Nebula-De-Esser/
 │   └── src/main.rs
 ├── .cargo/
 │   └── config.toml
+├── cmake/
+│   └── macos-au/       # Steinberg VST3 -> AUv2 wrapper component
 ├── vendor/
-│   ├── baseview/           # patched editor backend
-│   └── nih-plug/           # patched VST3 wrapper
+│   ├── AudioUnitSDK/   # Apple Audio Unit base classes
+│   ├── baseview/       # patched editor backend
+│   ├── nih-plug/       # patched VST3 wrapper
+│   └── vst3sdk/        # Steinberg VST 3 SDK (auwrapper sources)
 ├── .github/
 │   └── workflows/new_build.yml
 ├── bundler.toml
@@ -448,7 +462,7 @@ GNU Affero General Public License v3.0 (AGPL-3.0-or-later) — free to use, modi
 
 ---
 
-**Ready for professional use in major DAWs supporting VST3 and CLAP on macOS and Linux, plus VST3 on Windows.**
+**Ready for professional use in major DAWs supporting VST3, plus AUv2 in macOS hosts such as Logic Pro, GarageBand, and Ableton Live.**
 
 ---
 

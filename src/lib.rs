@@ -1142,23 +1142,6 @@ impl Plugin for NebulaDeEsser {
     }
 }
 
-impl ClapPlugin for NebulaDeEsser {
-    const CLAP_ID: &'static str = "audio.nebula.deesser";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("Spectral-style de-esser with split/wide processing, sidechain, and lookahead");
-    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
-    const CLAP_SUPPORT_URL: Option<&'static str> = Some(Self::URL);
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::AudioEffect,
-        ClapFeature::Mono,
-        ClapFeature::Stereo,
-        ClapFeature::Deesser,
-        ClapFeature::Filter,
-        ClapFeature::Utility,
-        ClapFeature::Restoration,
-    ];
-}
-
 impl Vst3Plugin for NebulaDeEsser {
     const VST3_CLASS_ID: [u8; 16] = *b"NebulaDeEssrVST3";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
@@ -1169,11 +1152,8 @@ impl Vst3Plugin for NebulaDeEsser {
     ];
 }
 
-// The Windows Direct2D editor works through VST3. The upstream nih-plug CLAP
-// wrapper currently reports failure from its embedded GUI show/hide callbacks,
-// which causes strict Windows CLAP hosts to reject the editor.
-#[cfg(not(target_os = "windows"))]
-nih_export_clap!(NebulaDeEsser);
+// The plugin is distributed as VST3 only. nih-plug's CLAP wrapper is not
+// exported, so `cargo xtask bundle` will only produce a VST3 bundle.
 nih_export_vst3!(NebulaDeEsser);
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
