@@ -37,8 +37,8 @@ It is deliberately more complex than a utility de-esser because the target is no
 ### 🖱️ **Editor reliability and smart-disable compatibility**
 
 - **GUI stays responsive when hosts smart-disable silent plugins** - Hosts such as Lynx Share can stop calling a plugin's process callback while keeping it active. Nebula De-Esser now detects that state and applies GUI parameter changes immediately, so controls no longer appear frozen. The fix is in the bundled nih-plug VST3 wrapper and applies to both the egui and Direct2D editors.
-- **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs, this fixes the GUI unresponsiveness bug prevalent on all nih-plug plugins that use immediate mode GUIs (the Direct2D GUI never had this error)
-- **Stability fixes** - Additional stability fixes for few open source DAWs.
+- **macOS and Linux mouse/focus fixes** - The vendored baseview backend now handles first-click window focus and pointer-position events correctly, and ignores X11 leave events caused by pointer grabs, this fixes the GUI unresponsiveness bug prevalent on all nih-plug plugins that use immediate mode GUIs when used in modular DAWs like Bitwig Studio and MuTools MuLab (the Direct2D GUI never had this error that's why this error was not observed in Windows environment)
+- **Stability fixes** - Additional stability fixes to comply with latest Steinberg VST3 standards.
 
 ---
 
